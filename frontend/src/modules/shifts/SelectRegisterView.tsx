@@ -20,7 +20,7 @@ export const SelectRegisterView: React.FC = () => {
   const { registers, fetchRegisters, openShift, isLoading, error } = useShiftStore();
 
   const [selectedRegisterId, setSelectedRegisterId] = useState<string>('');
-  const [initialBalance, setInitialBalance] = useState<number>(100);
+  const [initialBalance, setInitialBalance] = useState<string>('100');
   const [notes, setNotes] = useState<string>('');
 
   useEffect(() => {
@@ -40,7 +40,8 @@ export const SelectRegisterView: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRegisterId) return;
-    await openShift(selectedRegisterId, Number(initialBalance), notes);
+    const num = parseFloat(initialBalance) || 0;
+    await openShift(selectedRegisterId, num, notes);
   };
 
   const quickAmounts = [50, 100, 150, 200, 300];
@@ -180,13 +181,13 @@ export const SelectRegisterView: React.FC = () => {
                 </span>
                 <input
                   type="number"
-                  step="0.10"
-                  min="0"
+                  step="any"
                   value={initialBalance}
-                  onChange={(e) => setInitialBalance(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setInitialBalance(e.target.value)}
+                  onFocus={(e) => e.target.select()}
                   placeholder="0.00"
                   required
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl pl-12 pr-4 py-3 text-lg font-bold text-white outline-none transition-all"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl pl-12 pr-4 py-3 text-lg font-bold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>
@@ -198,9 +199,9 @@ export const SelectRegisterView: React.FC = () => {
                 <button
                   type="button"
                   key={amt}
-                  onClick={() => setInitialBalance(amt)}
+                  onClick={() => setInitialBalance(String(amt))}
                   className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                    initialBalance === amt
+                    initialBalance === String(amt)
                       ? 'bg-indigo-600 border-indigo-500 text-white'
                       : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700/80 text-slate-300'
                   }`}

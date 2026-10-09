@@ -13,7 +13,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const { user } = useAuthStore();
   const { activeShift, closeShift, isLoading, error } = useShiftStore();
 
-  const [actualBalance, setActualBalance] = useState<number>(0);
+  const [actualBalance, setActualBalance] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [closeResult, setCloseResult] = useState<any>(null);
 
@@ -22,7 +22,8 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await closeShift(Number(actualBalance), notes);
+      const numericAmount = parseFloat(actualBalance) || 0;
+      const res = await closeShift(numericAmount, notes);
       setCloseResult(res);
     } catch (err) {
       console.error(err);
@@ -155,13 +156,13 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
                   </span>
                   <input
                     type="number"
-                    step="0.10"
-                    min="0"
+                    step="any"
                     value={actualBalance}
-                    onChange={(e) => setActualBalance(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => setActualBalance(e.target.value)}
+                    onFocus={(e) => e.target.select()}
                     placeholder="0.00"
                     required
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 rounded-2xl pl-12 pr-4 py-3.5 text-xl font-extrabold text-white outline-none transition-all"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 rounded-2xl pl-12 pr-4 py-3.5 text-xl font-extrabold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
                 </div>
               </div>
