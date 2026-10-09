@@ -123,3 +123,14 @@ export interface CartItem {
   isWholesaleApplied: boolean;
   subtotal: number;
 }
+
+export interface StoreConfig {
+  id: string;
+  name: string;
+  subtitle: string;
+  ruc: string;
+  phone: string;
+  address: string;
+  footerText: string;
+  updatedAt?: string;
+}

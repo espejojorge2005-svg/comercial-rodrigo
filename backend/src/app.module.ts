@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { CashShiftsModule } from './cash-shifts/cash-shifts.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { SalesModule } from './sales/sales.module.js';
+import { SettingsModule } from './settings/settings.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SalesModule } from './sales/sales.module.js';
     CashShiftsModule,
     ProductsModule,
     SalesModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

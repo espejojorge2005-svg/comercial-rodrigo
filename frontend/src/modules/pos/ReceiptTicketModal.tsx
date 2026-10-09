@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatCurrency } from '../../lib/utils.js';
+import { useConfigStore } from '../../store/useConfigStore.js';
 import { Printer, CheckCircle, ArrowRight, X } from 'lucide-react';
 
 interface ReceiptTicketModalProps {
@@ -13,6 +14,8 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   onClose,
   saleData,
 }) => {
+  const { config } = useConfigStore();
+
   if (!isOpen || !saleData) return null;
 
   const handlePrint = () => {
@@ -45,12 +48,14 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         >
           {/* Cabecera del ticket */}
           <div className="text-center border-b border-dashed border-slate-400 pb-3 mb-3">
-            <h4 className="text-base font-extrabold tracking-wider">COMERCIAL RODRIGO</h4>
-            <p className="text-[11px] text-slate-600 font-sans">VENTA POR MAYOR Y MENOR</p>
+            <h4 className="text-base font-extrabold tracking-wider">{config.name}</h4>
+            {config.subtitle && (
+              <p className="text-[11px] text-slate-600 font-sans">{config.subtitle}</p>
+            )}
             <p className="text-[10px] text-slate-500 mt-1">
-              RUC: 10458923011 • Tel: (01) 987-654-321
+              RUC: {config.ruc} {config.phone ? `• Tel: ${config.phone}` : ''}
             </p>
-            <p className="text-[10px] text-slate-500">Av. Principal 1234, Lima</p>
+            <p className="text-[10px] text-slate-500">{config.address}</p>
           </div>
 
           {/* Información de la venta */}
@@ -151,8 +156,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 
           {/* Pie de ticket */}
           <div className="text-center text-[10px] text-slate-500 border-t border-dashed border-slate-400 pt-3 mt-3">
-            <p className="font-bold">¡GRACIAS POR SU COMPRA!</p>
-            <p>Comercial Rodrigo siempre a su servicio</p>
+            <p className="font-bold whitespace-pre-line">{config.footerText}</p>
           </div>
         </div>
 

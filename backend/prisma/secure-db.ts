@@ -15,6 +15,7 @@ async function secureDatabase() {
     'Sale',
     'SaleDetail',
     'KardexMovement',
+    'StoreConfig',
   ];
 
   // 1. Habilitar Row Level Security (RLS) en todas las tablas

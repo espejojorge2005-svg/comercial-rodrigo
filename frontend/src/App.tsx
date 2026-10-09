@@ -8,9 +8,12 @@ import { PosView } from './modules/pos/PosView.js';
 import { InventoryView } from './modules/inventory/InventoryView.js';
 import { ShiftAuditView } from './modules/shifts/ShiftAuditView.js';
 
+import { useConfigStore } from './store/useConfigStore.js';
+
 export const App: React.FC = () => {
   const { user, token, initAuth } = useAuthStore();
   const { activeShift, fetchActiveShift, isLoading: shiftLoading } = useShiftStore();
+  const { fetchConfig } = useConfigStore();
   const [currentTab, setCurrentTab] = useState<string>('pos');
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
@@ -23,12 +26,13 @@ export const App: React.FC = () => {
     initialize();
   }, [initAuth]);
 
-  // Si el usuario está autenticado, verificar si tiene turno activo
+  // Si el usuario está autenticado, cargar turno y configuración de tienda
   useEffect(() => {
     if (token) {
       fetchActiveShift();
+      fetchConfig();
     }
-  }, [token, fetchActiveShift]);
+  }, [token, fetchActiveShift, fetchConfig]);
 
   // 1. Pantalla de Carga Inicial
   if (isInitializing) {

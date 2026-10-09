@@ -179,3 +179,15 @@ model KardexMovement {
   user          User         @relation(fields: [userId], references: [id])
   createdAt     DateTime     @default(now())
 }
+
+model StoreConfig {
+  id         String   @id @default("default")
+  name       String   @default("COMERCIAL RODRIGO")
+  subtitle   String   @default("VENTA POR MAYOR Y MENOR")
+  ruc        String   @default("10458923011")
+  phone      String   @default("(01) 987-654-321")
+  address    String   @default("Av. Principal 1234, Lima")
+  footerText String   @default("¡GRACIAS POR SU COMPRA! Comercial Rodrigo siempre a su servicio")
+  updatedAt  DateTime @updatedAt
+}
+

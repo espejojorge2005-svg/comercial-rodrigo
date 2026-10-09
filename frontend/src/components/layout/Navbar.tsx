@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore.js';
 import { useShiftStore } from '../../store/useShiftStore.js';
+import { useConfigStore } from '../../store/useConfigStore.js';
 import { CloseShiftModal } from '../../modules/shifts/CloseShiftModal.js';
+import { StoreSettingsModal } from '../../modules/settings/StoreSettingsModal.js';
 import {
   Store,
   ShoppingCart,
   Package,
   History,
+  Settings,
   LogOut,
   Lock,
   User as UserIcon,
@@ -20,7 +23,9 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
   const { user, logout } = useAuthStore();
   const { activeShift } = useShiftStore();
+  const { config } = useConfigStore();
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'ADMIN';
 
@@ -36,9 +41,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
               </div>
               <div className="hidden sm:block">
                 <div className="text-sm font-extrabold tracking-tight text-white leading-none">
-                  Comercial Rodrigo
+                  {config.name}
                 </div>
-                <div className="text-[10px] text-slate-400 font-medium">Sistema POS & Kardex</div>
+                <div className="text-[10px] text-slate-400 font-medium">
+                  {config.subtitle || 'Sistema POS & Kardex'}
+                </div>
               </div>
             </div>
 
@@ -98,6 +105,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
                   <History className="w-4 h-4" />
                   <span className="hidden sm:inline">Auditoría Cajas</span>
                 </button>
+
+                <button
+                  onClick={() => setIsSettingsModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer text-slate-400 hover:text-white hover:bg-slate-800/60"
+                  title="Configurar RUC, Dirección y Membrete de Tickets"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span className="hidden md:inline">Configuración</span>
+                </button>
               </>
             )}
           </nav>
@@ -145,6 +161,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
       <CloseShiftModal
         isOpen={isCloseModalOpen}
         onClose={() => setIsCloseModalOpen(false)}
+      />
+
+      {/* Modal de Configuración de Tienda y Tickets */}
+      <StoreSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
       />
     </>
   );
