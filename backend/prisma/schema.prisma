@@ -1,0 +1,181 @@
+// Prisma schema for Comercial Rodrigo
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  CAJERO
+}
+
+enum UnitType {
+  UNIT
+  KG
+  MTR
+  LT
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD
+  MIXED
+}
+
+enum MovementType {
+  PURCHASE
+  SALE
+  RETURN_SALE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+}
+
+enum CashMovementType {
+  INCOME
+  EXPENSE
+}
+
+model User {
+  id              String           @id @default(uuid())
+  name            String
+  username        String           @unique
+  password        String
+  role            Role             @default(CAJERO)
+  pin             String?          // PIN de 4-6 dígitos para autorizaciones (Admins)
+  isActive        Boolean          @default(true)
+  cashShifts      CashShift[]
+  sales           Sale[]
+  authorizedSales Sale[]           @relation("AdminAuthorizedSales")
+  kardexMovements KardexMovement[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model CashRegister {
+  id         String      @id @default(uuid())
+  name       String      // "Caja 1", "Caja 2"
+  identifier String      @unique // "POS-01", "POS-02"
+  isActive   Boolean     @default(true)
+  shifts     CashShift[]
+}
+
+model CashShift {
+  id              String          @id @default(uuid())
+  cashRegisterId  String
+  cashRegister    CashRegister    @relation(fields: [cashRegisterId], references: [id])
+  userId          String
+  user            User            @relation(fields: [userId], references: [id])
+  openedAt        DateTime        @default(now())
+  closedAt        DateTime?
+  initialBalance  Decimal         @db.Decimal(12, 2)
+  expectedBalance Decimal?        @db.Decimal(12, 2)
+  actualBalance   Decimal?        @db.Decimal(12, 2) // Ingresado en arqueo ciego
+  difference      Decimal?        @db.Decimal(12, 2) // Sobrante (+) o Faltante (-)
+  status          ShiftStatus     @default(OPEN)
+  notes           String?
+  sales           Sale[]
+  cashMovements   CashMovement[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model CashMovement {
+  id          String           @id @default(uuid())
+  cashShiftId String
+  cashShift   CashShift        @relation(fields: [cashShiftId], references: [id])
+  type        CashMovementType
+  amount      Decimal          @db.Decimal(12, 2)
+  reason      String
+  createdAt   DateTime         @default(now())
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+}
+
+model Product {
+  id              String           @id @default(uuid())
+  barcode         String?          @unique
+  name            String
+  categoryId      String
+  category        Category         @relation(fields: [categoryId], references: [id])
+  unitType        UnitType         @default(UNIT)
+  costPrice       Decimal          @db.Decimal(12, 2) // Oculto para CAJERO en la API
+  retailPrice     Decimal          @db.Decimal(12, 2) // Precio al por menor
+  wholesalePrice  Decimal          @db.Decimal(12, 2) // Precio al por mayor
+  wholesaleMinQty Decimal          @default(3) @db.Decimal(12, 3) // Cantidad mín. para activar precio mayorista
+  currentStock    Decimal          @default(0) @db.Decimal(12, 3)
+  minStock        Decimal          @default(5) @db.Decimal(12, 3)
+  isActive        Boolean          @default(true)
+  saleDetails     SaleDetail[]
+  kardexMovements KardexMovement[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Sale {
+  id               String        @id @default(uuid())
+  saleNumber       Int           @default(autoincrement())
+  cashShiftId      String
+  cashShift        CashShift     @relation(fields: [cashShiftId], references: [id])
+  userId           String
+  user             User          @relation(fields: [userId], references: [id])
+  customerName     String?       @default("Cliente Varios")
+  customerDocument String?
+  paymentMethod    PaymentMethod @default(CASH)
+  cashPaid         Decimal       @default(0) @db.Decimal(12, 2)
+  digitalPaid      Decimal       @default(0) @db.Decimal(12, 2)
+  totalAmount      Decimal       @db.Decimal(12, 2)
+  changeAmount     Decimal       @default(0) @db.Decimal(12, 2)
+  isVoided         Boolean       @default(false)
+  voidedReason     String?
+  voidedAt         DateTime?
+  voidedByAdminId  String?
+  voidedByAdmin    User?         @relation("AdminAuthorizedSales", fields: [voidedByAdminId], references: [id])
+  items            SaleDetail[]
+  createdAt        DateTime      @default(now())
+}
+
+model SaleDetail {
+  id                String   @id @default(uuid())
+  saleId            String
+  sale              Sale     @relation(fields: [saleId], references: [id])
+  productId         String
+  product           Product  @relation(fields: [productId], references: [id])
+  quantity          Decimal  @db.Decimal(12, 3)
+  unitPrice         Decimal  @db.Decimal(12, 2)
+  subtotal          Decimal  @db.Decimal(12, 2)
+  costPriceSnapshot Decimal  @db.Decimal(12, 2) // Guardado al momento de venta para reporte de utilidad exacta
+}
+
+model KardexMovement {
+  id            String       @id @default(uuid())
+  productId     String
+  product       Product      @relation(fields: [productId], references: [id])
+  movementType  MovementType
+  quantity      Decimal      @db.Decimal(12, 3)
+  previousStock Decimal      @db.Decimal(12, 3)
+  newStock      Decimal      @db.Decimal(12, 3)
+  unitCost      Decimal      @db.Decimal(12, 2)
+  referenceId   String?      // ID de venta o referencia
+  reason        String
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  createdAt     DateTime     @default(now())
+}
