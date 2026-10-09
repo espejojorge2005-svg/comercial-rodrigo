@@ -1,122 +1,73 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React, { useEffect, useState } from 'react';
+import { useAuthStore } from './store/useAuthStore.js';
+import { useShiftStore } from './store/useShiftStore.js';
+import { LoginView } from './modules/auth/LoginView.js';
+import { SelectRegisterView } from './modules/shifts/SelectRegisterView.js';
+import { Navbar } from './components/layout/Navbar.js';
+import { PosView } from './modules/pos/PosView.js';
 
-function App() {
-  const [count, setCount] = useState(0)
+export const App: React.FC = () => {
+  const { user, token, initAuth } = useAuthStore();
+  const { activeShift, fetchActiveShift, isLoading: shiftLoading } = useShiftStore();
+  const [currentTab, setCurrentTab] = useState<string>('pos');
+  const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
+  // Inicializar sesión almacenada al arrancar
+  useEffect(() => {
+    const initialize = async () => {
+      await initAuth();
+      setIsInitializing(false);
+    };
+    initialize();
+  }, [initAuth]);
+
+  // Si el usuario está autenticado, verificar si tiene turno activo
+  useEffect(() => {
+    if (token) {
+      fetchActiveShift();
+    }
+  }, [token, fetchActiveShift]);
+
+  // 1. Pantalla de Carga Inicial
+  if (isInitializing) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 gap-3">
+        <div className="w-10 h-10 border-3 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+        <span className="text-xs font-semibold text-slate-400">Cargando Comercial Rodrigo...</span>
+      </div>
+    );
+  }
+
+  // 2. Si no ha iniciado sesión -> Mostrar Login
+  if (!token || !user) {
+    return <LoginView />;
+  }
+
+  // 3. Si no tiene turno abierto en caja -> Mostrar Selector de Caja y Apertura
+  if (!activeShift && !shiftLoading) {
+    return <SelectRegisterView />;
+  }
+
+  // 4. Si tiene turno activo -> Mostrar Sistema Completo con Navbar y POS
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      <Navbar currentTab={currentTab} onTabChange={setCurrentTab} />
 
-      <div className="ticks"></div>
+      <main className="flex-1">
+        {currentTab === 'pos' && <PosView />}
+        {currentTab === 'inventory' && (
+          <div className="max-w-7xl mx-auto px-4 py-8 text-center text-slate-400 text-sm">
+            Módulo de Inventario & Kardex (en construcción para siguiente paso).
+          </div>
+        )}
+        {currentTab === 'shifts' && (
+          <div className="max-w-7xl mx-auto px-4 py-8 text-center text-slate-400 text-sm">
+            Módulo de Auditoría de Cajas y Arqueos (en construcción para siguiente paso).
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
-}
-
-export default App
+export default App;
