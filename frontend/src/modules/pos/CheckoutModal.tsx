@@ -9,7 +9,10 @@ import {
   Banknote,
   QrCode,
   Layers,
+  Coins,
+  User,
   AlertCircle,
+  Check,
   Sparkles,
 } from 'lucide-react';
 import type { PaymentMethod } from '../../types/index.js';
