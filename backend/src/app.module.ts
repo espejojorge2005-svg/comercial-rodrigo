@@ -5,6 +5,8 @@ import { AppService } from './app.service.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CashShiftsModule } from './cash-shifts/cash-shifts.module.js';
+import { ProductsModule } from './products/products.module.js';
+import { SalesModule } from './sales/sales.module.js';
 
 @Module({
   imports: [
@@ -15,6 +17,8 @@ import { CashShiftsModule } from './cash-shifts/cash-shifts.module.js';
     PrismaModule,
     AuthModule,
     CashShiftsModule,
+    ProductsModule,
+    SalesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
