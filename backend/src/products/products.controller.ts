@@ -37,6 +37,13 @@ export class ProductsController {
     return this.productsService.getCategories();
   }
 
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('kardex')
+  async getKardex(@Query('productId') productId?: string) {
+    return this.productsService.getKardex(productId);
+  }
+
   @Get(':id')
   async getProduct(
     @Param('id') id: string,

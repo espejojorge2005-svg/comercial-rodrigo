@@ -229,4 +229,40 @@ export class ProductsService {
       data: { isActive: false },
     });
   }
+
+  /**
+   * Obtiene historial de movimientos de Kardex (Solo ADMIN)
+   */
+  async getKardex(productId?: string) {
+    const where: Prisma.KardexMovementWhereInput = {};
+    if (productId && productId !== 'all') {
+      where.productId = productId;
+    }
+
+    const movements = await this.prisma.kardexMovement.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        product: { select: { id: true, name: true, barcode: true, unitType: true } },
+        user: { select: { id: true, name: true, username: true } },
+      },
+    });
+
+    return movements.map((m) => ({
+      id: m.id,
+      productId: m.productId,
+      productName: m.product.name,
+      barcode: m.product.barcode,
+      unitType: m.product.unitType,
+      movementType: m.movementType,
+      quantity: Number(m.quantity),
+      previousStock: Number(m.previousStock),
+      newStock: Number(m.newStock),
+      unitCost: Number(m.unitCost),
+      reason: m.reason,
+      userName: m.user.name,
+      createdAt: m.createdAt,
+    }));
+  }
 }

@@ -5,6 +5,8 @@ import { LoginView } from './modules/auth/LoginView.js';
 import { SelectRegisterView } from './modules/shifts/SelectRegisterView.js';
 import { Navbar } from './components/layout/Navbar.js';
 import { PosView } from './modules/pos/PosView.js';
+import { InventoryView } from './modules/inventory/InventoryView.js';
+import { ShiftAuditView } from './modules/shifts/ShiftAuditView.js';
 
 export const App: React.FC = () => {
   const { user, token, initAuth } = useAuthStore();
@@ -43,28 +45,23 @@ export const App: React.FC = () => {
     return <LoginView />;
   }
 
-  // 3. Si no tiene turno abierto en caja -> Mostrar Selector de Caja y Apertura
-  if (!activeShift && !shiftLoading) {
+  // 3. Si es Cajero y no tiene turno abierto en caja -> Selector de Caja y Apertura obligatorio
+  const isAdmin = user.role === 'ADMIN';
+  if (!activeShift && !shiftLoading && !isAdmin) {
     return <SelectRegisterView />;
   }
 
-  // 4. Si tiene turno activo -> Mostrar Sistema Completo con Navbar y POS
+  // 4. Si es Admin o tiene turno activo -> Mostrar Sistema Completo con Navbar
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <Navbar currentTab={currentTab} onTabChange={setCurrentTab} />
 
       <main className="flex-1">
-        {currentTab === 'pos' && <PosView />}
-        {currentTab === 'inventory' && (
-          <div className="max-w-7xl mx-auto px-4 py-8 text-center text-slate-400 text-sm">
-            Módulo de Inventario & Kardex (en construcción para siguiente paso).
-          </div>
+        {currentTab === 'pos' && (
+          activeShift ? <PosView /> : <SelectRegisterView />
         )}
-        {currentTab === 'shifts' && (
-          <div className="max-w-7xl mx-auto px-4 py-8 text-center text-slate-400 text-sm">
-            Módulo de Auditoría de Cajas y Arqueos (en construcción para siguiente paso).
-          </div>
-        )}
+        {currentTab === 'inventory' && isAdmin && <InventoryView />}
+        {currentTab === 'shifts' && isAdmin && <ShiftAuditView />}
       </main>
     </div>
   );

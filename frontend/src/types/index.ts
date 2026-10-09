@@ -96,6 +96,24 @@ export interface Product {
   currentStock: number;
   minStock: number;
   isActive: boolean;
+  marginRetailPercent?: number;
+  marginWholesalePercent?: number;
+}
+
+export interface KardexMovement {
+  id: string;
+  productId: string;
+  productName: string;
+  barcode?: string | null;
+  unitType: UnitType;
+  movementType: MovementType;
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  unitCost: number;
+  reason: string;
+  userName: string;
+  createdAt: string;
 }
 
 export interface CartItem {
