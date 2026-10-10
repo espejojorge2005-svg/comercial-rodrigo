@@ -152,31 +152,26 @@ export const LoginView: React.FC = () => {
         </p>
       </div>
 
-      {/* Logo / Botón Flotante de Soporte Técnico */}
+      {/* Botón Flotante Expansible de Soporte Técnico */}
       <a
         href="https://wa.me/51982383176?text=Hola%2C%20necesito%20soporte%20t%C3%A9cnico%20con%20el%20sistema%20Comercial%20Rodrigo."
         target="_blank"
         rel="noopener noreferrer"
-        className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-50 flex items-center gap-3 px-3.5 py-2.5 rounded-2xl bg-slate-900/95 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 shadow-2xl backdrop-blur-md transition-all duration-200 group hover:scale-[1.03] cursor-pointer"
-        title="Contactar a Soporte Técnico (982 383 176)"
+        className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-50 flex items-center h-12 rounded-full bg-slate-900/95 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 shadow-2xl backdrop-blur-md transition-all duration-300 group hover:shadow-emerald-950/30 cursor-pointer overflow-hidden p-1 hover:pr-4"
+        title="Soporte Técnico"
       >
-        <div className="relative">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-all shadow-sm">
-            <Headphones className="w-5 h-5" />
-          </div>
-          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+        <div className="relative w-10 h-10 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-all shrink-0">
+          <Headphones className="w-5 h-5" />
+          <span className="absolute top-0 right-0 flex h-2.5 w-2.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-slate-900"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border-2 border-slate-900"></span>
           </span>
         </div>
 
-        <div className="text-left pr-1">
-          <div className="text-xs font-bold text-white leading-none">
+        <div className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 group-hover:max-w-xs group-hover:opacity-100 group-hover:ml-2.5 transition-all duration-300 ease-in-out">
+          <span className="text-xs font-bold text-white tracking-wide">
             Soporte Técnico
-          </div>
-          <div className="text-[11px] text-emerald-400 font-mono font-medium mt-1 flex items-center gap-1">
-            <span>982 383 176</span>
-          </div>
+          </span>
         </div>
       </a>
     </div>
