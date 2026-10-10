@@ -269,6 +269,7 @@ export class ProductsService {
       previousStock: Number(m.previousStock),
       newStock: Number(m.newStock),
       unitCost: Number(m.unitCost),
+      referenceId: m.referenceId,
       reason: m.reason,
       userName: m.user.name,
       createdAt: m.createdAt,

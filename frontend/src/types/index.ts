@@ -111,6 +111,7 @@ export interface KardexMovement {
   previousStock: number;
   newStock: number;
   unitCost: number;
+  referenceId?: string | null;
   reason: string;
   userName: string;
   createdAt: string;

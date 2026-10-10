@@ -4,7 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma, ShiftStatus, MovementType, Role } from '@prisma/client';
+import { Prisma, ShiftStatus, MovementType, Role, Product } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
@@ -43,7 +43,14 @@ export class SalesService {
           costPriceSnapshot: Prisma.Decimal;
         }[] = [];
 
-        // Validar stock y preparar cada producto
+        // 1. Validar existencias de stock y preparar detalles de la venta
+        const validatedItems: {
+          product: Product;
+          quantity: number;
+          unitPrice: number;
+          subtotalItem: number;
+        }[] = [];
+
         for (const item of dto.items) {
           const product = await tx.product.findUnique({
             where: { id: item.productId },
@@ -58,35 +65,12 @@ export class SalesService {
           const currentStockNum = Number(product.currentStock);
           if (currentStockNum < item.quantity) {
             throw new BadRequestException(
-              `Stock insuficiente para "${product.name}". Solicitado: ${item.quantity}, Disponible: ${currentStockNum}`,
+              `Stock insuficiente para "${product.name}". Solicitado: ${item.quantity}, Disponible en tienda: ${currentStockNum}`,
             );
           }
 
           const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
           totalCalculated += subtotalItem;
-
-          // Descontar stock atómicamente
-          const newStock = currentStockNum - item.quantity;
-          await tx.product.update({
-            where: { id: product.id },
-            data: {
-              currentStock: new Prisma.Decimal(newStock),
-            },
-          });
-
-          // Registrar movimiento en Kardex de tipo SALIDA (SALE)
-          await tx.kardexMovement.create({
-            data: {
-              productId: product.id,
-              movementType: MovementType.SALE,
-              quantity: new Prisma.Decimal(item.quantity),
-              previousStock: product.currentStock,
-              newStock: new Prisma.Decimal(newStock),
-              unitCost: product.costPrice,
-              reason: `Venta POS - ${shift.cashRegister.name}`,
-              userId,
-            },
-          });
 
           detailsToCreate.push({
             productId: product.id,
@@ -95,11 +79,18 @@ export class SalesService {
             subtotal: new Prisma.Decimal(subtotalItem),
             costPriceSnapshot: product.costPrice,
           });
+
+          validatedItems.push({
+            product,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            subtotalItem,
+          });
         }
 
         const totalAmountDecimal = new Prisma.Decimal(Number(totalCalculated.toFixed(2)));
 
-        // Crear la Venta y sus Detalles
+        // 2. Crear la Venta y sus Detalles de forma atómica
         const sale = await tx.sale.create({
           data: {
             cashShiftId: shift.id,
@@ -131,6 +122,35 @@ export class SalesService {
             },
           },
         });
+
+        // 3. Descontar stock atómicamente y asentar en Kardex con referencia exacta al ticket
+        for (const item of validatedItems) {
+          const currentStockNum = Number(item.product.currentStock);
+          const newStock = Number((currentStockNum - item.quantity).toFixed(3));
+
+          // Descontar existencias físicas
+          await tx.product.update({
+            where: { id: item.product.id },
+            data: {
+              currentStock: new Prisma.Decimal(newStock),
+            },
+          });
+
+          // Registrar movimiento en Kardex de tipo SALIDA (SALE) con trazabilidad total
+          await tx.kardexMovement.create({
+            data: {
+              productId: item.product.id,
+              movementType: MovementType.SALE,
+              quantity: new Prisma.Decimal(item.quantity),
+              previousStock: item.product.currentStock,
+              newStock: new Prisma.Decimal(newStock),
+              unitCost: item.product.costPrice,
+              referenceId: sale.id,
+              reason: `Venta POS #${sale.saleNumber} - ${shift.cashRegister.name}`,
+              userId,
+            },
+          });
+        }
 
         return {
           message: 'Venta registrada exitosamente',
@@ -214,6 +234,7 @@ export class SalesService {
             previousStock: prod.currentStock,
             newStock: new Prisma.Decimal(newStock),
             unitCost: prod.costPrice,
+            referenceId: sale.id,
             reason: `Anulación de venta #${sale.saleNumber} - Motivo: ${dto.reason}`,
             userId: admin.id,
           },

@@ -15,15 +15,19 @@ import {
   X,
   ArrowDownRight,
   ArrowUpRight,
+  RefreshCw,
+  Filter,
 } from 'lucide-react';
 import type { Product, Category, UnitType } from '../../types/index.js';
-import { SUNAT_UNITS, getUnitBadge } from '../../lib/units.js';
+import { SUNAT_UNITS, getUnitBadge, getUnitShortName } from '../../lib/units.js';
 
 export const InventoryView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'catalog' | 'kardex'>('catalog');
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [kardexList, setKardexList] = useState<any[]>([]);
+  const [kardexProductFilter, setKardexProductFilter] = useState<string>('all');
+  const [isKardexLoading, setIsKardexLoading] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -59,15 +63,22 @@ export const InventoryView: React.FC = () => {
     }
   }, [selectedCategory, searchTerm]);
 
-  // Cargar Kardex
-  const fetchKardex = useCallback(async () => {
+  // Cargar Kardex con soporte de filtrado por producto y recarga en tiempo real
+  const fetchKardex = useCallback(async (prodId?: string) => {
+    setIsKardexLoading(true);
     try {
-      const data = await apiRequest('/products/kardex');
+      const targetId = prodId !== undefined ? prodId : kardexProductFilter;
+      const url = targetId && targetId !== 'all'
+        ? `/products/kardex?productId=${encodeURIComponent(targetId)}`
+        : '/products/kardex';
+      const data = await apiRequest(url);
       setKardexList(data || []);
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsKardexLoading(false);
     }
-  }, []);
+  }, [kardexProductFilter]);
 
   useEffect(() => {
     fetchCategories();
@@ -82,7 +93,7 @@ export const InventoryView: React.FC = () => {
     } else {
       fetchKardex();
     }
-  }, [activeTab, fetchProducts, fetchKardex]);
+  }, [activeTab, fetchProducts, fetchKardex, kardexProductFilter]);
 
   // Métricas de Almacén
   const totalProducts = products.length;
@@ -334,6 +345,16 @@ export const InventoryView: React.FC = () => {
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
+                              onClick={() => {
+                                setKardexProductFilter(p.id);
+                                setActiveTab('kardex');
+                              }}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 transition-all cursor-pointer"
+                              title="Ver Trazabilidad en Kardex"
+                            >
+                              <History className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => setAdjustingProduct(p)}
                               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 transition-all cursor-pointer"
                               title="Ajustar Stock"
@@ -342,7 +363,7 @@ export const InventoryView: React.FC = () => {
                             </button>
                             <button
                               onClick={() => setEditingProduct(p)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-indigo-400 transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer"
                               title="Editar Producto"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
@@ -368,35 +389,73 @@ export const InventoryView: React.FC = () => {
 
       {/* PESTAÑA 2: KARDEX DE MOVIMIENTOS */}
       {activeTab === 'kardex' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <History className="w-4 h-4 text-indigo-400" />
-              Auditoría y Trazabilidad de Kardex (Últimos Movimientos)
-            </h3>
-            <span className="text-xs text-slate-500">{kardexList.length} registros</span>
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-slate-300" />
+                Auditoría y Trazabilidad de Kardex
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Seguimiento cronológico y automático de todas las ventas de cajeros, ingresos y ajustes.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Filtro por producto */}
+              <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs">
+                <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <select
+                  value={kardexProductFilter}
+                  onChange={(e) => setKardexProductFilter(e.target.value)}
+                  className="bg-transparent text-xs text-slate-200 outline-none font-medium cursor-pointer max-w-[180px] sm:max-w-[220px] truncate"
+                >
+                  <option value="all" className="bg-slate-900 text-white">Todos los productos</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Botón de Actualizar Kardex */}
+              <button
+                onClick={() => fetchKardex()}
+                disabled={isKardexLoading}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-all cursor-pointer"
+                title="Actualizar Kardex en tiempo real"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isKardexLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Actualizar</span>
+              </button>
+
+              <span className="text-[11px] text-slate-500 font-mono px-2 py-1 rounded-lg bg-slate-950 border border-slate-800/80">
+                {kardexList.length} movs.
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-800">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold uppercase tracking-wider text-[10px]">
-                  <th className="p-3">Fecha</th>
+                  <th className="p-3">Fecha y Hora</th>
                   <th className="p-3">Producto</th>
                   <th className="p-3">Tipo Movimiento</th>
-                  <th className="p-3 text-right">Cantidad</th>
+                  <th className="p-3 text-right">Variación</th>
                   <th className="p-3 text-right">Stock Anterior</th>
-                  <th className="p-3 text-right">Stock Nuevo</th>
+                  <th className="p-3 text-right">Stock Resultante</th>
                   <th className="p-3 text-right">Costo Unit.</th>
-                  <th className="p-3">Motivo / Operación</th>
-                  <th className="p-3">Usuario</th>
+                  <th className="p-3">Operación / Referencia</th>
+                  <th className="p-3">Responsable</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {kardexList.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="p-8 text-center text-slate-500">
-                      No hay registros en el Kardex aún.
+                      No hay registros en el Kardex para los criterios seleccionados.
                     </td>
                   </tr>
                 ) : (
@@ -408,41 +467,78 @@ export const InventoryView: React.FC = () => {
 
                     return (
                       <tr key={m.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3 font-mono text-[11px] text-slate-400">
-                          {new Date(m.createdAt).toLocaleString()}
+                        <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                          {new Date(m.createdAt).toLocaleString([], {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
                         </td>
-                        <td className="p-3 font-bold text-white">{m.productName}</td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 w-fit ${
-                              isIncome
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                            }`}
-                          >
-                            {isIncome ? (
-                              <ArrowUpRight className="w-3 h-3" />
-                            ) : (
+                        <td className="p-3 font-bold text-white whitespace-nowrap">
+                          <div>{m.productName}</div>
+                          {m.barcode && (
+                            <div className="text-[9px] text-slate-500 font-mono font-normal">
+                              {m.barcode}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          {m.movementType === 'SALE' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 w-fit bg-rose-500/15 text-rose-400 border border-rose-500/25">
                               <ArrowDownRight className="w-3 h-3" />
-                            )}
-                            {m.movementType}
-                          </span>
+                              VENTA POS
+                            </span>
+                          )}
+                          {m.movementType === 'RETURN_SALE' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 w-fit bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                              <ArrowUpRight className="w-3 h-3" />
+                              DEV. / ANULACIÓN
+                            </span>
+                          )}
+                          {m.movementType === 'PURCHASE' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 w-fit bg-blue-500/15 text-blue-400 border border-blue-500/25">
+                              <ArrowUpRight className="w-3 h-3" />
+                              COMPRA / INGRESO
+                            </span>
+                          )}
+                          {m.movementType === 'ADJUSTMENT_IN' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 w-fit bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                              <ArrowUpRight className="w-3 h-3" />
+                              AJUSTE (+)
+                            </span>
+                          )}
+                          {m.movementType === 'ADJUSTMENT_OUT' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 w-fit bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                              <ArrowDownRight className="w-3 h-3" />
+                              AJUSTE (-)
+                            </span>
+                          )}
                         </td>
                         <td
-                          className={`p-3 text-right font-mono font-bold ${isIncome ? 'text-emerald-400' : 'text-rose-400'}`}
+                          className={`p-3 text-right font-mono font-bold whitespace-nowrap ${
+                            isIncome ? 'text-emerald-400' : 'text-rose-400'
+                          }`}
                         >
                           {isIncome ? '+' : '-'}
-                          {m.quantity} {m.unitType}
+                          {m.quantity} {getUnitShortName(m.unitType)}
                         </td>
-                        <td className="p-3 text-right font-mono text-slate-400">{m.previousStock}</td>
-                        <td className="p-3 text-right font-mono font-bold text-white">{m.newStock}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">
+                        <td className="p-3 text-right font-mono text-slate-400 whitespace-nowrap">
+                          {m.previousStock}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-white whitespace-nowrap">
+                          {m.newStock}
+                        </td>
+                        <td className="p-3 text-right font-mono text-slate-300 whitespace-nowrap">
                           {formatCurrency(m.unitCost)}
                         </td>
-                        <td className="p-3 text-slate-400 text-[11px] max-w-xs truncate">
+                        <td className="p-3 text-slate-300 text-[11px] max-w-xs truncate">
                           {m.reason}
                         </td>
-                        <td className="p-3 text-slate-300 font-medium">{m.userName}</td>
+                        <td className="p-3 text-slate-300 font-medium whitespace-nowrap">
+                          {m.userName}
+                        </td>
                       </tr>
                     );
                   })
