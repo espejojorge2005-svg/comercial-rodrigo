@@ -147,11 +147,11 @@ export class ProductsService {
           wholesalePrice:
             dto.wholesalePrice !== undefined && dto.wholesalePrice !== null
               ? new Prisma.Decimal(dto.wholesalePrice)
-              : null,
+              : (null as any),
           wholesaleMinQty:
             dto.wholesaleMinQty !== undefined && dto.wholesaleMinQty !== null
               ? new Prisma.Decimal(dto.wholesaleMinQty)
-              : null,
+              : (null as any),
           currentStock: new Prisma.Decimal(dto.currentStock),
           minStock: new Prisma.Decimal(dto.minStock),
         },
@@ -194,10 +194,10 @@ export class ProductsService {
     if (dto.retailPrice !== undefined) data.retailPrice = new Prisma.Decimal(dto.retailPrice);
     if (dto.wholesalePrice !== undefined)
       data.wholesalePrice =
-        dto.wholesalePrice !== null ? new Prisma.Decimal(dto.wholesalePrice) : null;
+        dto.wholesalePrice !== null ? new Prisma.Decimal(dto.wholesalePrice) : (null as any);
     if (dto.wholesaleMinQty !== undefined)
       data.wholesaleMinQty =
-        dto.wholesaleMinQty !== null ? new Prisma.Decimal(dto.wholesaleMinQty) : null;
+        dto.wholesaleMinQty !== null ? new Prisma.Decimal(dto.wholesaleMinQty) : (null as any);
     if (dto.minStock !== undefined) data.minStock = new Prisma.Decimal(dto.minStock);
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
