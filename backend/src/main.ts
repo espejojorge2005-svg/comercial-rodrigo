@@ -20,9 +20,9 @@ async function bootstrap() {
     }),
   );
 
-  const port = process.env.PORT || 4000;
-  await app.listen(port);
-  console.log(`🚀 Comercial Rodrigo API corriendo en: http://localhost:${port}`);
-  console.log(`🩺 Health check disponible en: http://localhost:${port}/health`);
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
+  await app.listen(port, '0.0.0.0');
+  console.log(`🚀 Comercial Rodrigo API corriendo en: http://0.0.0.0:${port}`);
+  console.log(`🩺 Health check disponible en: http://0.0.0.0:${port}/health`);
 }
 await bootstrap();
