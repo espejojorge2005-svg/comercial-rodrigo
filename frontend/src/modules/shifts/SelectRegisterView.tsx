@@ -51,7 +51,7 @@ export const SelectRegisterView: React.FC = () => {
       {/* Barra superior con usuario y cerrar sesión */}
       <header className="max-w-4xl mx-auto w-full flex items-center justify-between py-2 border-b border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+          <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-slate-200">
             <Store className="w-5 h-5" />
           </div>
           <div>
@@ -63,7 +63,7 @@ export const SelectRegisterView: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="hidden sm:flex flex-col text-right">
             <span className="text-xs font-semibold text-slate-200">{user?.name}</span>
-            <span className="text-[10px] text-indigo-400 font-medium tracking-wider uppercase">
+            <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">
               {user?.role}
             </span>
           </div>
@@ -116,7 +116,7 @@ export const SelectRegisterView: React.FC = () => {
                     className={`relative rounded-2xl p-5 border transition-all text-left ${
                       isAvailable
                         ? isSelected
-                          ? 'bg-indigo-600/15 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-600/10 cursor-pointer'
+                          ? 'bg-slate-900 border-blue-500 ring-2 ring-blue-500/30 shadow-md cursor-pointer'
                           : 'bg-slate-900/80 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700 cursor-pointer'
                         : 'bg-slate-900/30 border-slate-900/80 opacity-60 cursor-not-allowed'
                     }`}
@@ -125,7 +125,7 @@ export const SelectRegisterView: React.FC = () => {
                       <div
                         className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                           isSelected
-                            ? 'bg-indigo-600 text-white'
+                            ? 'bg-blue-600 text-white'
                             : 'bg-slate-800 text-slate-400'
                         }`}
                       >
@@ -169,7 +169,7 @@ export const SelectRegisterView: React.FC = () => {
           </div>
 
           {/* Monto Inicial en Efectivo */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 flex items-center gap-2">
                 <Coins className="w-4 h-4 text-amber-400" />
@@ -187,7 +187,7 @@ export const SelectRegisterView: React.FC = () => {
                   onFocus={(e) => e.target.select()}
                   placeholder="0.00"
                   required
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl pl-12 pr-4 py-3 text-lg font-bold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 rounded-xl pl-12 pr-4 py-3 text-lg font-bold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>
@@ -200,9 +200,9 @@ export const SelectRegisterView: React.FC = () => {
                   type="button"
                   key={amt}
                   onClick={() => setInitialBalance(String(amt))}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
                     initialBalance === String(amt)
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      ? 'bg-blue-600 border-blue-500 text-white'
                       : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700/80 text-slate-300'
                   }`}
                 >
@@ -221,7 +221,7 @@ export const SelectRegisterView: React.FC = () => {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="ej. Billetes de 20 y monedas sueltas para vuelto"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
               />
             </div>
           </div>
@@ -230,7 +230,7 @@ export const SelectRegisterView: React.FC = () => {
           <button
             type="submit"
             disabled={isLoading || !selectedRegisterId}
-            className="w-full py-4 px-6 rounded-2xl font-bold text-base bg-gradient-to-r from-indigo-600 via-indigo-500 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-xl shadow-indigo-600/25 transition-all flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+            className="w-full py-4 px-6 rounded-2xl font-bold text-base bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-all flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
           >
             {isLoading ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

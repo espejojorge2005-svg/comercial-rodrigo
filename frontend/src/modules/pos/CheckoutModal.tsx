@@ -13,7 +13,6 @@ import {
   User,
   AlertCircle,
   Check,
-  Sparkles,
 } from 'lucide-react';
 import type { PaymentMethod } from '../../types/index.js';
 
@@ -141,20 +140,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const billButtons = [10, 20, 50, 100, 200];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative text-slate-100 max-h-[92vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-7 shadow-2xl relative text-slate-100 max-h-[92vh] overflow-y-auto">
         <button
           onClick={onClose}
-          className="absolute right-5 top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
+          className="absolute right-4 top-4 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <h3 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
-          <CreditCard className="w-5 h-5 text-indigo-400" />
+        <h3 className="text-lg sm:text-xl font-bold text-white mb-1 flex items-center gap-2">
+          <CreditCard className="w-5 h-5 text-blue-400" />
           Procesar Cobro
         </h3>
-        <p className="text-xs text-slate-400 mb-5">
+        <p className="text-xs text-slate-400 mb-4 sm:mb-5">
           Seleccione método de pago y registre el importe entregado por el cliente.
         </p>
 
@@ -165,9 +164,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Tarjeta del Total a Pagar */}
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/60 to-slate-950 border border-indigo-500/30 flex items-center justify-between">
+        <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
+          {/* Tarjeta del Total a Pagar (Sobria y Profesional) */}
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
             <div>
               <span className="text-xs text-slate-400 font-medium block">Total a Cobrar</span>
               <span className="text-2xl sm:text-3xl font-extrabold text-white">
@@ -177,9 +176,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
             {savings > 0 && (
               <div className="text-right">
-                <span className="text-[10px] text-amber-400 uppercase font-semibold block flex items-center gap-1 justify-end">
-                  <Sparkles className="w-3 h-3" />
-                  Ahorro Mayorista
+                <span className="text-[10px] text-amber-400 uppercase font-semibold block tracking-wider">
+                  Ahorro Tarifa Mayorista
                 </span>
                 <span className="text-xs font-bold text-emerald-400">
                   -{formatCurrency(savings)}
@@ -218,7 +216,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     }}
                     className={`p-3 rounded-2xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                       isSelected
-                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/30'
+                        ? 'bg-blue-600 border-blue-500 text-white shadow-sm'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                     }`}
                   >
@@ -341,7 +339,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 value={custDoc}
                 onChange={(e) => setCustDoc(e.target.value)}
                 placeholder="ej. 10458923011"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
               />
             </div>
           </div>
@@ -359,7 +357,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <button
               type="submit"
               disabled={isLoading}
-              className="w-2/3 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 font-bold text-sm text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              className="w-2/3 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-sm text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
             >
               {isLoading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

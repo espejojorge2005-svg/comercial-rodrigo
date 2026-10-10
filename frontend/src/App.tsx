@@ -38,7 +38,7 @@ export const App: React.FC = () => {
   if (isInitializing) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 gap-3">
-        <div className="w-10 h-10 border-3 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+        <div className="w-10 h-10 border-3 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
         <span className="text-xs font-semibold text-slate-400">Cargando Comercial Rodrigo...</span>
       </div>
     );

@@ -117,8 +117,8 @@ export const InventoryView: React.FC = () => {
       {/* Banner y Tarjetas de Métricas */}
       <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-extrabold text-white flex items-center gap-2.5">
-            <Package className="w-6 h-6 text-indigo-400" />
+          <h2 className="text-lg sm:text-xl font-extrabold text-white flex items-center gap-2.5">
+            <Package className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
             Gestión de Inventario & Kardex
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -126,14 +126,14 @@ export const InventoryView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {/* Selector de Pestaña */}
-          <div className="flex bg-slate-900 p-1 rounded-2xl border border-slate-800">
+          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
             <button
               onClick={() => setActiveTab('catalog')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'catalog'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -141,9 +141,9 @@ export const InventoryView: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('kardex')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'kardex'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -154,7 +154,7 @@ export const InventoryView: React.FC = () => {
           {activeTab === 'catalog' && (
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="px-3.5 py-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               Nuevo Producto

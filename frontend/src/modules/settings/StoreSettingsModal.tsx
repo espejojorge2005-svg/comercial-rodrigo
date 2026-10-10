@@ -94,7 +94,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
 
         {/* Encabezado */}
         <div className="flex items-center gap-3 mb-2">
-          <div className="w-11 h-11 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+          <div className="w-11 h-11 rounded-2xl bg-slate-800 text-slate-200 border border-slate-700/80 flex items-center justify-center">
             <Store className="w-6 h-6" />
           </div>
           <div>
@@ -216,7 +216,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
                 value={footerText}
                 onChange={(e) => setFooterText(e.target.value)}
                 placeholder="¡GRACIAS POR SU COMPRA! Comercial Rodrigo siempre a su servicio"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-2.5 text-white outline-none resize-none"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl p-2.5 text-white outline-none resize-none"
               />
             </div>
 
@@ -231,7 +231,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
               <button
                 type="submit"
                 disabled={isLoading}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-bold shadow-lg shadow-indigo-600/30 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 {isLoading ? 'Guardando...' : 'Guardar Cambios'}

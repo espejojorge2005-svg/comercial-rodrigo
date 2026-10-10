@@ -279,13 +279,13 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             onClick={handlePrint}
             className="w-1/2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-white border border-slate-700 flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
-            <Printer className="w-4 h-4 text-indigo-400" />
+            <Printer className="w-4 h-4 text-slate-300" />
             <span>Imprimir Ticket</span>
           </button>
 
           <button
             onClick={onClose}
-            className="w-1/2 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            className="w-1/2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <span>Nueva Venta</span>
             <ArrowRight className="w-4 h-4" />
