@@ -17,20 +17,42 @@ import {
   ArrowUpRight,
   RefreshCw,
   Filter,
+  FileSpreadsheet,
 } from 'lucide-react';
 import type { Product, Category, UnitType } from '../../types/index.js';
 import { SUNAT_UNITS, getUnitBadge, getUnitShortName } from '../../lib/units.js';
+import { useConfigStore } from '../../store/useConfigStore.js';
+import { exportKardexAndInventoryExcel } from '../../lib/excelExport.js';
 
 export const InventoryView: React.FC = () => {
+  const { config } = useConfigStore();
   const [activeTab, setActiveTab] = useState<'catalog' | 'kardex'>('catalog');
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [kardexList, setKardexList] = useState<any[]>([]);
   const [kardexProductFilter, setKardexProductFilter] = useState<string>('all');
   const [isKardexLoading, setIsKardexLoading] = useState<boolean>(false);
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Exportar a Excel en vivo (Stock Valorizado + Kardex + Alertas)
+  const handleExportExcel = async () => {
+    setIsExportingExcel(true);
+    try {
+      let currentKardex = kardexList;
+      if (currentKardex.length === 0) {
+        currentKardex = (await apiRequest('/products/kardex')) || [];
+        setKardexList(currentKardex);
+      }
+      exportKardexAndInventoryExcel(products, currentKardex, config.name);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
 
   // Modales
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
@@ -161,6 +183,17 @@ export const InventoryView: React.FC = () => {
               Kardex de Movimientos
             </button>
           </div>
+
+          {/* Botón Exportar a Excel */}
+          <button
+            onClick={handleExportExcel}
+            disabled={isExportingExcel || products.length === 0}
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+            title="Exportar Stock Valorizado y Kardex a Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            <span>{isExportingExcel ? 'Generando...' : 'Exportar Excel'}</span>
+          </button>
 
           {activeTab === 'catalog' && (
             <button

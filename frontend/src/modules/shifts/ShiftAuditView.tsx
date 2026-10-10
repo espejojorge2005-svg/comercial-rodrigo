@@ -18,9 +18,13 @@ import {
   ArrowUpRight,
   CheckCircle2,
   FileText,
+  FileSpreadsheet,
 } from 'lucide-react';
+import { useConfigStore } from '../../store/useConfigStore.js';
+import { exportShiftAuditExcel } from '../../lib/excelExport.js';
 
 export const ShiftAuditView: React.FC = () => {
+  const { config } = useConfigStore();
   const [shifts, setShifts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -60,7 +64,7 @@ export const ShiftAuditView: React.FC = () => {
       <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-extrabold text-white flex items-center gap-2.5">
-            <History className="w-6 h-6 text-indigo-400" />
+            <History className="w-6 h-6 text-slate-300" />
             Auditoría de Cajas & Arqueo Ciego
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -68,13 +72,25 @@ export const ShiftAuditView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={fetchHistory}
-          className="px-3.5 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700 transition-all cursor-pointer self-start md:self-auto"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          Actualizar Historial
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
+          <button
+            onClick={() => exportShiftAuditExcel(filteredShifts.length > 0 ? filteredShifts : shifts, config.name)}
+            disabled={shifts.length === 0}
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+            title="Exportar Arqueos, Ventas y Gastos a Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            <span>Exportar Excel</span>
+          </button>
+
+          <button
+            onClick={fetchHistory}
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700 transition-all cursor-pointer shadow-sm"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Actualizar</span>
+          </button>
+        </div>
       </div>
 
       {/* Tarjetas de Métricas */}
@@ -82,7 +98,7 @@ export const ShiftAuditView: React.FC = () => {
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
             <span>Turnos Totales</span>
-            <Lock className="w-4 h-4 text-indigo-400" />
+            <Lock className="w-4 h-4 text-slate-300" />
           </div>
           <div className="text-xl font-extrabold text-white">{totalShifts}</div>
         </div>
