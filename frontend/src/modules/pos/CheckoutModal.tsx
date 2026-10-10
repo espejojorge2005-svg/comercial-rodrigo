@@ -14,6 +14,8 @@ import {
   AlertCircle,
   Check,
 } from 'lucide-react';
+import { offlineStorage, type OfflineSale } from '../../lib/offlineStorage.js';
+import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
 import type { PaymentMethod } from '../../types/index.js';
 
 interface CheckoutModalProps {
@@ -99,6 +101,93 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setIsLoading(true);
     setError(null);
 
+    const processOfflineSale = async () => {
+      const nowIso = new Date().toISOString();
+      const offlineId = `off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const offlineTicketNumber = `OFF-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+
+      const offlineSale: OfflineSale = {
+        offlineId,
+        offlineTicketNumber,
+        cashShiftId: activeShift.id,
+        shiftRegisterName: activeShift.cashRegister?.name || 'Caja',
+        userId: activeShift.userId || '',
+        userName: activeShift.user?.name || '',
+        customerName: custName || 'Cliente Varios',
+        customerDocument: custDoc || null,
+        paymentMethod,
+        cashPaid: paymentMethod === 'TRANSFER' || paymentMethod === 'CARD' ? 0 : cashNum,
+        digitalPaid:
+          paymentMethod === 'TRANSFER' || paymentMethod === 'CARD'
+            ? totalAmount
+            : paymentMethod === 'MIXED'
+              ? digitalNum
+              : 0,
+        totalAmount,
+        changeAmount,
+        items: items.map((i) => ({
+          productId: i.product.id,
+          productName: i.product.name,
+          unitType: i.product.unitType,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          isWholesaleApplied: i.isWholesaleApplied,
+          subtotal: Number((i.quantity * i.unitPrice).toFixed(2)),
+        })),
+        createdAt: nowIso,
+        syncStatus: 'PENDING',
+      };
+
+      await offlineStorage.saveOfflineSale(offlineSale);
+
+      // Descontar stock localmente en IndexedDB
+      for (const item of items) {
+        await offlineStorage.decrementProductStock(item.product.id, item.quantity);
+      }
+
+      await useOfflineSyncStore.getState().refreshPendingCount();
+
+      const syntheticSale = {
+        id: offlineId,
+        saleNumber: offlineTicketNumber,
+        isOffline: true,
+        customerName: custName || 'Cliente Varios',
+        customerDocument: custDoc || null,
+        paymentMethod,
+        cashPaid: offlineSale.cashPaid,
+        digitalPaid: offlineSale.digitalPaid,
+        totalAmount,
+        changeAmount,
+        createdAt: nowIso,
+        items: items.map((i) => ({
+          productId: i.product.id,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          subtotal: Number((i.quantity * i.unitPrice).toFixed(2)),
+          product: {
+            id: i.product.id,
+            name: i.product.name,
+            barcode: i.product.barcode,
+            unitType: i.product.unitType,
+          },
+        })),
+        cashShift: activeShift,
+        user: activeShift.user,
+      };
+
+      setCustomer(custName, custDoc);
+      clearCart();
+      setIsLoading(false);
+      onSaleSuccess(syntheticSale);
+      onClose();
+    };
+
+    // Si el navegador ya detectó que no hay internet, guardar directamente offline
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      await processOfflineSale();
+      return;
+    }
+
     try {
       const payload = {
         cashShiftId: activeShift.id,
@@ -132,8 +221,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       onSaleSuccess(res.sale);
       onClose();
     } catch (err: any) {
-      setIsLoading(false);
-      setError(err.message || 'Error al procesar la venta');
+      const errMsg = err.message || '';
+      const isConnectionIssue =
+        errMsg.includes('Failed to fetch') ||
+        errMsg.includes('NetworkError') ||
+        errMsg.includes('Load failed') ||
+        errMsg.includes('Network request failed') ||
+        (typeof navigator !== 'undefined' && !navigator.onLine);
+
+      if (isConnectionIssue) {
+        // Fallback inmediato a venta offline
+        await processOfflineSale();
+      } else {
+        setIsLoading(false);
+        setError(errMsg || 'Error al procesar la venta');
+      }
     }
   };
 

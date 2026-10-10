@@ -4,6 +4,7 @@ import { useShiftStore } from '../../store/useShiftStore.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { CloseShiftModal } from '../../modules/shifts/CloseShiftModal.js';
 import { StoreSettingsModal } from '../../modules/settings/StoreSettingsModal.js';
+import { ConnectionStatusBadge } from './OfflineStatusBanner.js';
 import {
   Store,
   ShoppingCart,
@@ -65,6 +66,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
                 </span>
               </div>
             )}
+
+            {/* Estado de Red y Sincronización */}
+            <ConnectionStatusBadge />
           </div>
 
           {/* Menú de Navegación por Pestañas */}

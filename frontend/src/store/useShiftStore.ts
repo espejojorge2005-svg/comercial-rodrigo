@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { CashRegister, CashShift, CashMovementType } from '../types/index.js';
 import { apiRequest } from '../api/client.js';
+import { offlineStorage } from '../lib/offlineStorage.js';
 
 interface ShiftState {
   activeShift: CashShift | null;
@@ -35,8 +36,16 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     try {
       const data = await apiRequest<CashShift | null>('/cash-shifts/active');
       set({ activeShift: data, isLoading: false });
+      // Guardar en caché offline para asegurar continuidad si se va la red
+      await offlineStorage.cacheActiveShift(data);
       return data;
     } catch (err: any) {
+      // Si la petición falla (offline), recuperar el turno en caché local para no bloquear la caja
+      const cached = await offlineStorage.getCachedActiveShift();
+      if (cached) {
+        set({ activeShift: cached, isLoading: false });
+        return cached;
+      }
       set({ activeShift: null, isLoading: false });
       return null;
     }
@@ -51,6 +60,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       });
 
       set({ activeShift: res.shift, isLoading: false });
+      await offlineStorage.cacheActiveShift(res.shift);
       await get().fetchRegisters();
       return true;
     } catch (err: any) {
@@ -75,6 +85,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       });
 
       set({ activeShift: null, isLoading: false });
+      await offlineStorage.cacheActiveShift(null);
       await get().fetchRegisters();
       return res;
     } catch (err: any) {

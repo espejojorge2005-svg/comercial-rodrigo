@@ -10,6 +10,8 @@ import { ShiftAuditView } from './modules/shifts/ShiftAuditView.js';
 import { ProfitReportView } from './modules/reports/ProfitReportView.js';
 
 import { useConfigStore } from './store/useConfigStore.js';
+import { useOfflineSyncStore } from './store/useOfflineSyncStore.js';
+import { OfflineStatusBanner } from './components/layout/OfflineStatusBanner.js';
 
 export const App: React.FC = () => {
   const { user, token, initAuth } = useAuthStore();
@@ -17,6 +19,12 @@ export const App: React.FC = () => {
   const { fetchConfig } = useConfigStore();
   const [currentTab, setCurrentTab] = useState<string>('pos');
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
+
+  // Inicializar listeners de sincronización y estado de red offline
+  useEffect(() => {
+    const cleanup = useOfflineSyncStore.getState().initSyncListeners();
+    return () => cleanup();
+  }, []);
 
   // Inicializar sesión almacenada al arrancar
   useEffect(() => {
@@ -60,6 +68,7 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <Navbar currentTab={currentTab} onTabChange={setCurrentTab} />
+      <OfflineStatusBanner />
 
       <main className="flex-1">
         {currentTab === 'pos' && (

@@ -130,11 +130,23 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 
         {/* Encabezado modal */}
         <div className="text-center pb-3 border-b border-slate-800 print:hidden">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto mb-2">
+          <div
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2 border ${
+              saleData.isOffline
+                ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+            }`}
+          >
             <CheckCircle className="w-6 h-6" />
           </div>
-          <h3 className="text-lg font-bold text-white">¡Venta Realizada con Éxito!</h3>
-          <p className="text-xs text-slate-400">Comprobante listo para imprimir en tiquetera térmica</p>
+          <h3 className="text-lg font-bold text-white">
+            {saleData.isOffline ? '¡Venta Guardada Localmente (Offline)!' : '¡Venta Realizada con Éxito!'}
+          </h3>
+          <p className="text-xs text-slate-400">
+            {saleData.isOffline
+              ? 'Guardado en la memoria del equipo. Se enviará a la nube cuando haya internet.'
+              : 'Comprobante listo para imprimir en tiquetera térmica'}
+          </p>
         </div>
 
         {/* VISTA PREVIA DEL TICKET TÉRMICO (58mm / 80mm) */}
@@ -142,6 +154,12 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
           id="printable-ticket"
           className="my-4 p-5 bg-white text-slate-900 rounded-2xl font-mono text-xs shadow-inner overflow-y-auto max-h-[420px] print:max-h-none print:shadow-none print:p-0 print:m-0 print:rounded-none"
         >
+          {saleData.isOffline && (
+            <div className="text-[10px] bg-amber-100 text-amber-900 border border-dashed border-amber-400 p-1 text-center font-bold mb-2">
+              *** MODO SIN CONEXIÓN (OFFLINE) ***
+            </div>
+          )}
+
           {/* Cabecera del ticket */}
           <div className="text-center border-b border-dashed border-slate-400 pb-3 mb-3">
             <h4 className="text-base font-extrabold tracking-wider">{config.name}</h4>
@@ -159,7 +177,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             <div className="flex justify-between">
               <span>TICKET #:</span>
               <span className="font-bold">
-                {String(saleData.saleNumber || '0001').padStart(6, '0')}
+                {typeof saleData.saleNumber === 'number'
+                  ? String(saleData.saleNumber).padStart(6, '0')
+                  : String(saleData.saleNumber || '0001')}
               </span>
             </div>
             <div className="flex justify-between">

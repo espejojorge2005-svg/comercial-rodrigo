@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { SalesService } from './sales.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
+import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 
@@ -17,6 +18,14 @@ export class SalesController {
     @Body() dto: CreateSaleDto,
   ) {
     return this.salesService.createSale(userId, dto);
+  }
+
+  @Post('sync-offline')
+  async syncOfflineSales(
+    @CurrentUser('id') userId: string,
+    @Body() dto: SyncOfflineSalesBatchDto,
+  ) {
+    return this.salesService.syncOfflineSales(userId, dto);
   }
 
   @Post(':id/void')

@@ -8,6 +8,7 @@ import { Prisma, ShiftStatus, MovementType, Role, Product, CashMovementType } fr
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
+import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 
 @Injectable()
 export class SalesService {
@@ -571,6 +572,248 @@ export class SalesService {
         cashRegister: e.cashShift?.cashRegister?.name || 'Caja',
         cashier: e.cashShift?.user?.name || '--',
       })),
+    };
+  }
+
+  /**
+   * Sincronización en lote de ventas procesadas offline (modo sin conexión)
+   * Garantiza idempotencia, trazabilidad de Kardex con fecha real y tolerancia a turnos cerrados
+   */
+  async syncOfflineSales(userId: string, batchDto: SyncOfflineSalesBatchDto) {
+    if (!batchDto.sales || batchDto.sales.length === 0) {
+      return {
+        message: 'No hay ventas offline para sincronizar',
+        total: 0,
+        syncedCount: 0,
+        failedCount: 0,
+        results: [],
+      };
+    }
+
+    const results: {
+      offlineId: string;
+      success: boolean;
+      sale?: any;
+      error?: string;
+    }[] = [];
+
+    for (const offlineSale of batchDto.sales) {
+      try {
+        // 1. Idempotencia: Verificar si ya fue procesada anteriormente para no duplicar ventas
+        const existingKardex = await this.prisma.kardexMovement.findFirst({
+          where: {
+            reason: { contains: `[OFFLINE:${offlineSale.offlineId}]` },
+          },
+        });
+
+        if (existingKardex && existingKardex.referenceId) {
+          const existingSale = await this.prisma.sale.findUnique({
+            where: { id: existingKardex.referenceId },
+            include: {
+              items: {
+                include: {
+                  product: {
+                    select: { id: true, name: true, barcode: true, unitType: true },
+                  },
+                },
+              },
+              cashShift: {
+                include: { cashRegister: true },
+              },
+              user: {
+                select: { id: true, name: true, username: true },
+              },
+            },
+          });
+
+          if (existingSale) {
+            results.push({
+              offlineId: offlineSale.offlineId,
+              success: true,
+              sale: {
+                ...existingSale,
+                totalAmount: Number(existingSale.totalAmount),
+                cashPaid: Number(existingSale.cashPaid),
+                digitalPaid: Number(existingSale.digitalPaid),
+                changeAmount: Number(existingSale.changeAmount),
+                items: existingSale.items.map((i) => ({
+                  ...i,
+                  quantity: Number(i.quantity),
+                  unitPrice: Number(i.unitPrice),
+                  subtotal: Number(i.subtotal),
+                })),
+              },
+            });
+            continue;
+          }
+        }
+
+        // 2. Asociar al turno de caja (incluso si ya fue cerrado posteriormente)
+        let targetShift = await this.prisma.cashShift.findUnique({
+          where: { id: offlineSale.cashShiftId },
+          include: { cashRegister: true },
+        });
+
+        if (!targetShift) {
+          targetShift = await this.prisma.cashShift.findFirst({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            include: { cashRegister: true },
+          });
+        }
+
+        if (!targetShift) {
+          throw new BadRequestException('No se encontró un turno de caja para asociar la venta offline');
+        }
+
+        // 3. Crear venta y movimientos de Kardex
+        const saleResult = await this.prisma.$transaction(
+          async (tx) => {
+            let totalCalculated = 0;
+            const detailsToCreate: {
+              productId: string;
+              quantity: Prisma.Decimal;
+              unitPrice: Prisma.Decimal;
+              subtotal: Prisma.Decimal;
+              costPriceSnapshot: Prisma.Decimal;
+            }[] = [];
+
+            const validatedItems: {
+              product: Product;
+              quantity: number;
+              unitPrice: number;
+              subtotalItem: number;
+            }[] = [];
+
+            for (const item of offlineSale.items) {
+              const product = await tx.product.findUnique({
+                where: { id: item.productId },
+              });
+
+              if (!product) {
+                throw new BadRequestException(`Producto ID ${item.productId} no encontrado`);
+              }
+
+              const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
+              totalCalculated += subtotalItem;
+
+              detailsToCreate.push({
+                productId: product.id,
+                quantity: new Prisma.Decimal(item.quantity),
+                unitPrice: new Prisma.Decimal(item.unitPrice),
+                subtotal: new Prisma.Decimal(subtotalItem),
+                costPriceSnapshot: product.costPrice,
+              });
+
+              validatedItems.push({
+                product,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                subtotalItem,
+              });
+            }
+
+            const totalAmountDecimal = new Prisma.Decimal(Number(totalCalculated.toFixed(2)));
+            const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
+
+            const sale = await tx.sale.create({
+              data: {
+                cashShiftId: targetShift.id,
+                userId,
+                customerName: offlineSale.customerName || 'Cliente Varios',
+                customerDocument: offlineSale.customerDocument || null,
+                paymentMethod: offlineSale.paymentMethod,
+                cashPaid: new Prisma.Decimal(offlineSale.cashPaid),
+                digitalPaid: new Prisma.Decimal(offlineSale.digitalPaid),
+                totalAmount: totalAmountDecimal,
+                changeAmount: new Prisma.Decimal(offlineSale.changeAmount),
+                createdAt: saleDate,
+                items: {
+                  create: detailsToCreate,
+                },
+              },
+              include: {
+                items: {
+                  include: {
+                    product: {
+                      select: { id: true, name: true, barcode: true, unitType: true },
+                    },
+                  },
+                },
+                cashShift: {
+                  include: { cashRegister: true },
+                },
+                user: {
+                  select: { id: true, name: true, username: true },
+                },
+              },
+            });
+
+            // 4. Actualizar stock y registrar en Kardex con fecha original
+            for (const item of validatedItems) {
+              const currentStockNum = Number(item.product.currentStock);
+              const newStock = Number((currentStockNum - item.quantity).toFixed(3));
+
+              await tx.product.update({
+                where: { id: item.product.id },
+                data: {
+                  currentStock: new Prisma.Decimal(newStock),
+                },
+              });
+
+              await tx.kardexMovement.create({
+                data: {
+                  productId: item.product.id,
+                  movementType: MovementType.SALE,
+                  quantity: new Prisma.Decimal(item.quantity),
+                  previousStock: item.product.currentStock,
+                  newStock: new Prisma.Decimal(newStock),
+                  unitCost: item.product.costPrice,
+                  referenceId: sale.id,
+                  reason: `Venta POS Offline #${sale.saleNumber} [OFFLINE:${offlineSale.offlineId}] - ${targetShift.cashRegister.name}`,
+                  userId,
+                  createdAt: saleDate,
+                },
+              });
+            }
+
+            return sale;
+          },
+          { timeout: 15000 },
+        );
+
+        results.push({
+          offlineId: offlineSale.offlineId,
+          success: true,
+          sale: {
+            ...saleResult,
+            totalAmount: Number(saleResult.totalAmount),
+            cashPaid: Number(saleResult.cashPaid),
+            digitalPaid: Number(saleResult.digitalPaid),
+            changeAmount: Number(saleResult.changeAmount),
+            items: saleResult.items.map((i) => ({
+              ...i,
+              quantity: Number(i.quantity),
+              unitPrice: Number(i.unitPrice),
+              subtotal: Number(i.subtotal),
+            })),
+          },
+        });
+      } catch (err: any) {
+        results.push({
+          offlineId: offlineSale.offlineId,
+          success: false,
+          error: err.message || 'Error al procesar venta offline',
+        });
+      }
+    }
+
+    return {
+      message: `Procesadas ${results.length} ventas offline`,
+      total: results.length,
+      syncedCount: results.filter((r) => r.success).length,
+      failedCount: results.filter((r) => !r.success).length,
+      results,
     };
   }
 }

@@ -22,6 +22,8 @@ import { CheckoutModal } from './CheckoutModal.js';
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { RecentSalesModal } from './RecentSalesModal.js';
 import { CashMovementModal } from './CashMovementModal.js';
+import { offlineStorage } from '../../lib/offlineStorage.js';
+import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
 
 export const PosView: React.FC = () => {
   const { user } = useAuthStore();
@@ -74,9 +76,23 @@ export const PosView: React.FC = () => {
     fetchCats();
   }, []);
 
-  // Cargar Productos
+  // Cargar Productos (con soporte online y fallback transparente a IndexedDB offline)
   const fetchProducts = useCallback(async () => {
     setIsLoadingProducts(true);
+
+    // Si el navegador ya detectó que no hay internet, buscar directamente en IndexedDB
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      try {
+        const offlineList = await offlineStorage.searchProducts(searchTerm, selectedCategory);
+        setProducts(offlineList);
+      } catch (e) {
+        console.error('Error reading offline products:', e);
+      } finally {
+        setIsLoadingProducts(false);
+      }
+      return;
+    }
+
     try {
       let query = '/products?';
       if (selectedCategory && selectedCategory !== 'all') {
@@ -86,9 +102,15 @@ export const PosView: React.FC = () => {
         query += `search=${encodeURIComponent(searchTerm.trim())}&`;
       }
       const data = await apiRequest(query);
-      setProducts(data || []);
+      const prodList = data || [];
+      setProducts(prodList);
+      // Guardar productos en caché local de IndexedDB para disponibilidad offline
+      offlineStorage.saveProducts(prodList);
     } catch (err) {
-      console.error('Error fetching products:', err);
+      console.warn('API de productos no disponible, cambiando a catálogo local (Offline):', err);
+      // Fallback a IndexedDB local
+      const offlineList = await offlineStorage.searchProducts(searchTerm, selectedCategory);
+      setProducts(offlineList);
     } finally {
       setIsLoadingProducts(false);
     }
@@ -106,6 +128,7 @@ export const PosView: React.FC = () => {
     setCompletedSale(saleData);
     fetchProducts();
     fetchActiveShift();
+    useOfflineSyncStore.getState().refreshPendingCount();
   };
 
   return (
