@@ -46,8 +46,8 @@ export class ProductsService {
         category: p.category,
         unitType: p.unitType,
         retailPrice: Number(p.retailPrice),
-        wholesalePrice: Number(p.wholesalePrice),
-        wholesaleMinQty: Number(p.wholesaleMinQty),
+        wholesalePrice: p.wholesalePrice ? Number(p.wholesalePrice) : null,
+        wholesaleMinQty: p.wholesaleMinQty ? Number(p.wholesaleMinQty) : null,
         currentStock: Number(p.currentStock),
         minStock: Number(p.minStock),
         isActive: p.isActive,
@@ -56,14 +56,14 @@ export class ProductsService {
       if (userRole === Role.ADMIN) {
         const cost = Number(p.costPrice);
         const retail = Number(p.retailPrice);
-        const wholesale = Number(p.wholesalePrice);
+        const wholesale = p.wholesalePrice ? Number(p.wholesalePrice) : 0;
 
         return {
           ...baseProduct,
           costPrice: cost,
           marginRetailPercent: cost > 0 ? Number((((retail - cost) / cost) * 100).toFixed(1)) : 0,
           marginWholesalePercent:
-            cost > 0 ? Number((((wholesale - cost) / cost) * 100).toFixed(1)) : 0,
+            cost > 0 && wholesale > 0 ? Number((((wholesale - cost) / cost) * 100).toFixed(1)) : 0,
         };
       }
 
@@ -96,8 +96,8 @@ export class ProductsService {
       category: product.category,
       unitType: product.unitType,
       retailPrice: Number(product.retailPrice),
-      wholesalePrice: Number(product.wholesalePrice),
-      wholesaleMinQty: Number(product.wholesaleMinQty),
+      wholesalePrice: product.wholesalePrice ? Number(product.wholesalePrice) : null,
+      wholesaleMinQty: product.wholesaleMinQty ? Number(product.wholesaleMinQty) : null,
       currentStock: Number(product.currentStock),
       minStock: Number(product.minStock),
       isActive: product.isActive,
@@ -144,8 +144,14 @@ export class ProductsService {
           unitType: dto.unitType,
           costPrice: new Prisma.Decimal(dto.costPrice),
           retailPrice: new Prisma.Decimal(dto.retailPrice),
-          wholesalePrice: new Prisma.Decimal(dto.wholesalePrice),
-          wholesaleMinQty: new Prisma.Decimal(dto.wholesaleMinQty),
+          wholesalePrice:
+            dto.wholesalePrice !== undefined && dto.wholesalePrice !== null
+              ? new Prisma.Decimal(dto.wholesalePrice)
+              : null,
+          wholesaleMinQty:
+            dto.wholesaleMinQty !== undefined && dto.wholesaleMinQty !== null
+              ? new Prisma.Decimal(dto.wholesaleMinQty)
+              : null,
           currentStock: new Prisma.Decimal(dto.currentStock),
           minStock: new Prisma.Decimal(dto.minStock),
         },
@@ -186,9 +192,12 @@ export class ProductsService {
     if (dto.unitType !== undefined) data.unitType = dto.unitType;
     if (dto.costPrice !== undefined) data.costPrice = new Prisma.Decimal(dto.costPrice);
     if (dto.retailPrice !== undefined) data.retailPrice = new Prisma.Decimal(dto.retailPrice);
-    if (dto.wholesalePrice !== undefined) data.wholesalePrice = new Prisma.Decimal(dto.wholesalePrice);
+    if (dto.wholesalePrice !== undefined)
+      data.wholesalePrice =
+        dto.wholesalePrice !== null ? new Prisma.Decimal(dto.wholesalePrice) : null;
     if (dto.wholesaleMinQty !== undefined)
-      data.wholesaleMinQty = new Prisma.Decimal(dto.wholesaleMinQty);
+      data.wholesaleMinQty =
+        dto.wholesaleMinQty !== null ? new Prisma.Decimal(dto.wholesaleMinQty) : null;
     if (dto.minStock !== undefined) data.minStock = new Prisma.Decimal(dto.minStock);
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 

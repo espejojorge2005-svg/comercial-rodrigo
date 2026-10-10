@@ -16,10 +16,13 @@ enum Role {
 }
 
 enum UnitType {
-  UNIT
-  KG
-  MTR
-  LT
+  NIU // Unidad
+  KG  // Kilogramo
+  LT  // Litro
+  SA  // Saco
+  BX  // Caja
+  PK  // Paquete
+  UNIT // Retrocompatible
 }
 
 enum ShiftStatus {
@@ -115,11 +118,11 @@ model Product {
   name            String
   categoryId      String
   category        Category         @relation(fields: [categoryId], references: [id])
-  unitType        UnitType         @default(UNIT)
+  unitType        UnitType         @default(NIU)
   costPrice       Decimal          @db.Decimal(12, 2) // Oculto para CAJERO en la API
   retailPrice     Decimal          @db.Decimal(12, 2) // Precio al por menor
-  wholesalePrice  Decimal          @db.Decimal(12, 2) // Precio al por mayor
-  wholesaleMinQty Decimal          @default(3) @db.Decimal(12, 3) // Cantidad mín. para activar precio mayorista
+  wholesalePrice  Decimal?         @db.Decimal(12, 2) // Precio al por mayor (Opcional)
+  wholesaleMinQty Decimal?         @default(3) @db.Decimal(12, 3) // Cantidad mín. para activar precio mayorista
   currentStock    Decimal          @default(0) @db.Decimal(12, 3)
   minStock        Decimal          @default(5) @db.Decimal(12, 3)
   isActive        Boolean          @default(true)

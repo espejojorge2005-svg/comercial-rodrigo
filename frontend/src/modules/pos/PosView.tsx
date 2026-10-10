@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import type { Product, Category } from '../../types/index.js';
+import { getUnitBadge } from '../../lib/units.js';
 import { CheckoutModal } from './CheckoutModal.js';
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { RecentSalesModal } from './RecentSalesModal.js';
@@ -244,8 +245,8 @@ export const PosView: React.FC = () => {
                           Stock: {p.currentStock}
                         </span>
 
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-medium text-[10px]">
-                          {p.unitType}
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-medium text-[10px] whitespace-nowrap">
+                          {getUnitBadge(p.unitType)}
                         </span>
                       </div>
 
@@ -265,10 +266,16 @@ export const PosView: React.FC = () => {
                         <div className="text-base font-extrabold text-white">
                           {formatCurrency(p.retailPrice)}
                         </div>
-                        <div className="text-[10px] text-amber-400 font-semibold flex items-center gap-1 mt-0.5">
-                          <Tag className="w-3 h-3" />
-                          Mayor: {formatCurrency(p.wholesalePrice)} (≥{p.wholesaleMinQty})
-                        </div>
+                        {p.wholesalePrice != null && Number(p.wholesalePrice) > 0 ? (
+                          <div className="text-[10px] text-amber-400 font-semibold flex items-center gap-1 mt-0.5">
+                            <Tag className="w-3 h-3" />
+                            Mayor: {formatCurrency(p.wholesalePrice)} (≥{p.wholesaleMinQty || 3})
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
+                            Precio único
+                          </div>
+                        )}
                       </div>
 
                       <button
@@ -369,21 +376,27 @@ export const PosView: React.FC = () => {
                           {item.product.name}
                         </h5>
                         <div className="flex items-center gap-2 mt-1">
-                          <button
-                            type="button"
-                            onClick={() => toggleItemWholesale(item.product.id)}
-                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded cursor-pointer transition-all ${
-                              item.isWholesaleApplied
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                            }`}
-                            title="Alternar precio mayorista para este item"
-                          >
-                            {item.isWholesaleApplied ? 'MAYORISTA' : 'MENOR'}:{' '}
-                            {formatCurrency(item.unitPrice)}
-                          </button>
+                          {item.product.wholesalePrice != null && Number(item.product.wholesalePrice) > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleItemWholesale(item.product.id)}
+                              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+                                item.isWholesaleApplied
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                              title="Alternar precio mayorista para este item"
+                            >
+                              {item.isWholesaleApplied ? 'MAYORISTA' : 'MENOR'}:{' '}
+                              {formatCurrency(item.unitPrice)}
+                            </button>
+                          ) : (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-400">
+                              {formatCurrency(item.unitPrice)}
+                            </span>
+                          )}
                           <span className="text-[10px] text-slate-500 font-mono">
-                            {item.product.unitType}
+                            {getUnitBadge(item.product.unitType)}
                           </span>
                         </div>
                       </div>
@@ -408,7 +421,7 @@ export const PosView: React.FC = () => {
 
                         <input
                           type="number"
-                          step={item.product.unitType === 'UNIT' ? '1' : '0.1'}
+                          step={['KG', 'LT'].includes(item.product.unitType) ? '0.1' : '1'}
                           min="0.1"
                           max={item.product.currentStock}
                           value={item.quantity}

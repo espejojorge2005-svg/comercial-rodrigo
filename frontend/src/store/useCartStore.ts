@@ -20,6 +20,11 @@ interface CartState {
   getTotalWholesaleSavings: () => number;
 }
 
+const hasWholesalePrice = (p: Product) =>
+  p.wholesalePrice !== null &&
+  p.wholesalePrice !== undefined &&
+  Number(p.wholesalePrice) > 0;
+
 export const useCartStore = create<CartState>((set, get) => ({
   items: [],
   customerName: 'Cliente Varios',
@@ -42,9 +47,10 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
 
     // Regla de Precio Mayorista:
-    // Se aplica si la cantidad alcanza la cantidad mínima mayorista O si el modo mayorista está activo
-    const isWholesale =
-      isGlobalWholesale || newQty >= Number(product.wholesaleMinQty);
+    // Solo si el producto tiene precio mayorista configurado
+    const canHaveWholesale = hasWholesalePrice(product);
+    const minQty = product.wholesaleMinQty ? Number(product.wholesaleMinQty) : 3;
+    const isWholesale = canHaveWholesale && (isGlobalWholesale || newQty >= minQty);
 
     const unitPrice = isWholesale ? Number(product.wholesalePrice) : Number(product.retailPrice);
     const subtotal = Number((newQty * unitPrice).toFixed(2));
@@ -92,8 +98,9 @@ export const useCartStore = create<CartState>((set, get) => ({
       return;
     }
 
-    const isWholesale =
-      isGlobalWholesale || quantity >= Number(item.product.wholesaleMinQty);
+    const canHaveWholesale = hasWholesalePrice(item.product);
+    const minQty = item.product.wholesaleMinQty ? Number(item.product.wholesaleMinQty) : 3;
+    const isWholesale = canHaveWholesale && (isGlobalWholesale || quantity >= minQty);
 
     const unitPrice = isWholesale
       ? Number(item.product.wholesalePrice)
@@ -122,6 +129,11 @@ export const useCartStore = create<CartState>((set, get) => ({
       items: items.map((i) => {
         if (i.product.id !== productId) return i;
 
+        if (!hasWholesalePrice(i.product)) {
+          alert(`El producto "${i.product.name}" no tiene precio mayorista configurado.`);
+          return i;
+        }
+
         const newWholesale = !i.isWholesaleApplied;
         const unitPrice = newWholesale
           ? Number(i.product.wholesalePrice)
@@ -142,7 +154,10 @@ export const useCartStore = create<CartState>((set, get) => ({
     const nextState = !isGlobalWholesale;
 
     const updated = items.map((i) => {
-      const isWholesale = nextState || i.quantity >= Number(i.product.wholesaleMinQty);
+      const canHaveWholesale = hasWholesalePrice(i.product);
+      const minQty = i.product.wholesaleMinQty ? Number(i.product.wholesaleMinQty) : 3;
+      const isWholesale = canHaveWholesale && (nextState || i.quantity >= minQty);
+
       const unitPrice = isWholesale
         ? Number(i.product.wholesalePrice)
         : Number(i.product.retailPrice);

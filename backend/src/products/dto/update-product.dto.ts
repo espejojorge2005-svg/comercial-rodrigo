@@ -37,14 +37,10 @@ export class UpdateProductDto {
   retailPrice?: number;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  wholesalePrice?: number;
+  wholesalePrice?: number | null;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  wholesaleMinQty?: number;
+  wholesaleMinQty?: number | null;
 
   @IsOptional()
   @IsNumber()

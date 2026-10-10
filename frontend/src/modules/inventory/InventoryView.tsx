@@ -17,6 +17,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import type { Product, Category, UnitType } from '../../types/index.js';
+import { SUNAT_UNITS, getUnitBadge } from '../../lib/units.js';
 
 export const InventoryView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'catalog' | 'kardex'>('catalog');
@@ -294,8 +295,8 @@ export const InventoryView: React.FC = () => {
                         </td>
                         <td className="p-3 text-slate-400">{p.category?.name || '--'}</td>
                         <td className="p-3 text-center">
-                          <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-mono text-[10px]">
-                            {p.unitType}
+                          <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-mono text-[10px] font-semibold whitespace-nowrap">
+                            {getUnitBadge(p.unitType)}
                           </span>
                         </td>
                         <td className="p-3 text-right font-mono font-bold">
@@ -316,10 +317,16 @@ export const InventoryView: React.FC = () => {
                           {formatCurrency(p.retailPrice)}
                         </td>
                         <td className="p-3 text-right font-mono text-amber-400">
-                          {formatCurrency(p.wholesalePrice)}
-                          <span className="text-[10px] text-slate-500 block">
-                            (≥{p.wholesaleMinQty})
-                          </span>
+                          {p.wholesalePrice != null && Number(p.wholesalePrice) > 0 ? (
+                            <>
+                              {formatCurrency(p.wholesalePrice)}
+                              <span className="text-[10px] text-slate-500 block">
+                                (≥{p.wholesaleMinQty || 3})
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-slate-600 text-[10px] italic">No aplica</span>
+                          )}
                         </td>
                         <td className="p-3 text-right font-mono text-blue-400 font-semibold">
                           {margin}%
@@ -510,14 +517,14 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [categoryId, setCategoryId] = useState(
     initialData?.categoryId || categories[0]?.id || '',
   );
-  const [unitType, setUnitType] = useState<UnitType>(initialData?.unitType || 'UNIT');
+  const [unitType, setUnitType] = useState<UnitType>(initialData?.unitType || 'NIU');
   const [costPrice, setCostPrice] = useState(String(initialData?.costPrice || ''));
   const [retailPrice, setRetailPrice] = useState(String(initialData?.retailPrice || ''));
   const [wholesalePrice, setWholesalePrice] = useState(
-    String(initialData?.wholesalePrice || ''),
+    initialData?.wholesalePrice != null ? String(initialData.wholesalePrice) : '',
   );
   const [wholesaleMinQty, setWholesaleMinQty] = useState(
-    String(initialData?.wholesaleMinQty || '3'),
+    initialData?.wholesaleMinQty != null ? String(initialData.wholesaleMinQty) : '3',
   );
   const [currentStock, setCurrentStock] = useState(String(initialData?.currentStock || '0'));
   const [minStock, setMinStock] = useState(String(initialData?.minStock || '5'));
@@ -532,6 +539,17 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
     setIsLoading(true);
     setError(null);
 
+    const parsedWholesale =
+      wholesalePrice.trim() !== '' && parseFloat(wholesalePrice) > 0
+        ? parseFloat(wholesalePrice)
+        : null;
+    const parsedMinQty =
+      parsedWholesale !== null
+        ? parseFloat(wholesaleMinQty) > 0
+          ? parseFloat(wholesaleMinQty)
+          : 3
+        : null;
+
     const payload: any = {
       barcode: barcode.trim() || undefined,
       name: name.trim(),
@@ -539,8 +557,8 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
       unitType,
       costPrice: parseFloat(costPrice) || 0,
       retailPrice: parseFloat(retailPrice) || 0,
-      wholesalePrice: parseFloat(wholesalePrice) || 0,
-      wholesaleMinQty: parseFloat(wholesaleMinQty) || 3,
+      wholesalePrice: parsedWholesale,
+      wholesaleMinQty: parsedMinQty,
       minStock: parseFloat(minStock) || 5,
     };
 
@@ -635,16 +653,17 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block font-semibold text-slate-300 mb-1">Unidad Medida:</label>
+              <label className="block font-semibold text-slate-300 mb-1">Unidad Medida (SUNAT):</label>
               <select
                 value={unitType}
                 onChange={(e) => setUnitType(e.target.value as UnitType)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white outline-none focus:border-indigo-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white outline-none focus:border-indigo-500 text-xs"
               >
-                <option value="UNIT">UNIDAD</option>
-                <option value="KG">KILOGRAMO (KG)</option>
-                <option value="MTR">METRO (MTR)</option>
-                <option value="LT">LITRO (LT)</option>
+                {SUNAT_UNITS.map((u) => (
+                  <option key={u.code} value={u.code}>
+                    {u.sunatCode} - {u.name} ({u.presentation})
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -680,23 +699,22 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-semibold text-slate-300 mb-1">
-                Precio Mayorista S/.:
+                Precio Mayorista S/. <span className="text-slate-500 font-normal">(Opcional)</span>:
               </label>
               <input
                 type="number"
                 step="0.01"
-                min="0.01"
+                min="0"
                 value={wholesalePrice}
                 onChange={(e) => setWholesalePrice(e.target.value)}
-                placeholder="0.00"
+                placeholder="Dejar vacío si no aplica"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-400 outline-none focus:border-indigo-500 font-mono font-bold"
-                required
               />
             </div>
 
             <div>
               <label className="block font-semibold text-slate-300 mb-1">
-                Cant. Mínima Mayorista:
+                Cant. Mínima Mayorista <span className="text-slate-500 font-normal">(Opcional)</span>:
               </label>
               <input
                 type="number"
@@ -705,8 +723,8 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 value={wholesaleMinQty}
                 onChange={(e) => setWholesaleMinQty(e.target.value)}
                 placeholder="3"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 font-mono"
-                required
+                disabled={!wholesalePrice || parseFloat(wholesalePrice) <= 0}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 font-mono disabled:opacity-40"
               />
             </div>
           </div>

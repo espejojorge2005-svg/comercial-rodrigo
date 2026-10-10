@@ -22,7 +22,7 @@ export class CreateProductDto {
   @IsNotEmpty()
   categoryId: string;
 
-  @IsEnum(UnitType, { message: 'El tipo de unidad debe ser UNIT, KG, MTR o LT' })
+  @IsEnum(UnitType, { message: 'El tipo de unidad debe ser válido (SA, BX, PK, NIU, KG, LT)' })
   unitType: UnitType;
 
   @IsNumber({}, { message: 'El costo debe ser numérico' })
@@ -33,13 +33,15 @@ export class CreateProductDto {
   @IsPositive({ message: 'El precio al por menor debe ser mayor a 0' })
   retailPrice: number;
 
+  @IsOptional()
   @IsNumber({}, { message: 'El precio al por mayor debe ser numérico' })
-  @IsPositive({ message: 'El precio al por mayor debe ser mayor a 0' })
-  wholesalePrice: number;
+  @Min(0, { message: 'El precio al por mayor no puede ser negativo' })
+  wholesalePrice?: number | null;
 
+  @IsOptional()
   @IsNumber({}, { message: 'La cantidad mínima para precio mayor debe ser numérica' })
-  @IsPositive({ message: 'La cantidad mínima para precio mayor debe ser mayor a 0' })
-  wholesaleMinQty: number;
+  @Min(1, { message: 'La cantidad mínima debe ser al menos 1' })
+  wholesaleMinQty?: number | null;
 
   @IsNumber({}, { message: 'El stock actual debe ser numérico' })
   @Min(0, { message: 'El stock no puede ser negativo' })

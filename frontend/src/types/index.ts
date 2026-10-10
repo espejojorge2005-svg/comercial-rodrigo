@@ -1,6 +1,6 @@
 export type Role = 'ADMIN' | 'CAJERO';
 
-export type UnitType = 'UNIT' | 'KG' | 'MTR' | 'LT';
+export type UnitType = 'SA' | 'BX' | 'PK' | 'NIU' | 'KG' | 'LT' | 'UNIT';
 
 export type ShiftStatus = 'OPEN' | 'CLOSED';
 
@@ -91,8 +91,8 @@ export interface Product {
   unitType: UnitType;
   costPrice?: number; // Solo visible para ADMIN
   retailPrice: number; // Precio al por menor
-  wholesalePrice: number; // Precio al por mayor
-  wholesaleMinQty: number; // Cantidad mínima para precio mayorista
+  wholesalePrice?: number | null; // Precio al por mayor (Opcional)
+  wholesaleMinQty?: number | null; // Cantidad mínima para precio mayorista (Opcional)
   currentStock: number;
   minStock: number;
   isActive: boolean;
