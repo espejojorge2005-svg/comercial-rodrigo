@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore.js';
-import { Store, ShieldCheck, User as UserIcon, Lock, ArrowRight, AlertCircle, KeyRound } from 'lucide-react';
+import { Store, ShieldCheck, User as UserIcon, Lock, ArrowRight, AlertCircle, KeyRound, Headphones } from 'lucide-react';
 
 export const LoginView: React.FC = () => {
   const { login, isLoading, error } = useAuthStore();
@@ -151,6 +151,34 @@ export const LoginView: React.FC = () => {
           Conexión segura y concurrente con PostgreSQL en Supabase
         </p>
       </div>
+
+      {/* Logo / Botón Flotante de Soporte Técnico */}
+      <a
+        href="https://wa.me/51982383176?text=Hola%2C%20necesito%20soporte%20t%C3%A9cnico%20con%20el%20sistema%20Comercial%20Rodrigo."
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-50 flex items-center gap-3 px-3.5 py-2.5 rounded-2xl bg-slate-900/95 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 shadow-2xl backdrop-blur-md transition-all duration-200 group hover:scale-[1.03] cursor-pointer"
+        title="Contactar a Soporte Técnico (982 383 176)"
+      >
+        <div className="relative">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-all shadow-sm">
+            <Headphones className="w-5 h-5" />
+          </div>
+          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-slate-900"></span>
+          </span>
+        </div>
+
+        <div className="text-left pr-1">
+          <div className="text-xs font-bold text-white leading-none">
+            Soporte Técnico
+          </div>
+          <div className="text-[11px] text-emerald-400 font-mono font-medium mt-1 flex items-center gap-1">
+            <span>982 383 176</span>
+          </div>
+        </div>
+      </a>
     </div>
   );
 };
