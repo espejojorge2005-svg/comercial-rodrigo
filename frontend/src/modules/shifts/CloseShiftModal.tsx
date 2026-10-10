@@ -16,6 +16,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const [actualBalance, setActualBalance] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [closeResult, setCloseResult] = useState<any>(null);
+  const [showWarningTip, setShowWarningTip] = useState<boolean>(true);
 
   if (!isOpen || !activeShift) return null;
 
@@ -128,15 +129,32 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
               </div>
             </div>
 
-            {/* Aviso de Arqueo Ciego */}
-            <div className="mb-5 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-400 mt-0.5" />
-              <div>
-                <span className="font-bold block mb-0.5">Arqueo Ciego de Seguridad</span>
-                Por política de transparencia y control, el sistema no muestra el saldo acumulado.
-                Cuente físicamente el dinero en efectivo de la gaveta e ingrese el total exacto.
+            {/* Aviso de Arqueo Ciego con botón para cerrar (X) */}
+            {showWarningTip && (
+              <div className="mb-5 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-200 text-xs flex items-start justify-between gap-3 relative transition-all animate-in fade-in duration-200">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 shrink-0 text-amber-400 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-amber-300 block mb-0.5">
+                      ⚠️ Recuerde contar TODO el efectivo físico de la gaveta
+                    </span>
+                    <p className="text-slate-300 leading-relaxed text-[11px]">
+                      Debe ingresar la suma total física que hay en el cajón:{' '}
+                      <strong className="text-white">el Fondo Inicial (base de {formatCurrency(activeShift.initialBalance)})</strong>{' '}
+                      más el <strong className="text-white">Efectivo cobrado por las ventas</strong>. No ingrese solo las ventas del día.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowWarningTip(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+                  title="Cerrar este aviso"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-            </div>
+            )}
 
             {error && (
               <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
@@ -146,9 +164,14 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 flex items-center gap-2">
-                  <Coins className="w-4 h-4 text-amber-400" />
-                  Efectivo Total en Gaveta (S/.)
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Coins className="w-4 h-4 text-amber-400" />
+                    Efectivo Total en Gaveta Física (S/.)
+                  </span>
+                  <span className="text-[11px] font-medium text-amber-400 lowercase">
+                    (fondo inicial + ventas)
+                  </span>
                 </label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-base">
@@ -165,6 +188,9 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 rounded-2xl pl-12 pr-4 py-3.5 text-xl font-extrabold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
                 </div>
+                <p className="mt-1.5 text-[11px] text-slate-400">
+                  Cuente todos los billetes y monedas que hay en el cajón (incluye la base de apertura de {formatCurrency(activeShift.initialBalance)}).
+                </p>
               </div>
 
               <div>
