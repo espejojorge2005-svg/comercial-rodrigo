@@ -323,16 +323,69 @@ export class CashShiftsService {
       include: {
         cashRegister: true,
         user: { select: { id: true, name: true, username: true } },
-        cashMovements: true,
+        cashMovements: {
+          orderBy: { createdAt: 'desc' },
+        },
+        sales: {
+          where: { isVoided: false },
+          select: {
+            id: true,
+            saleNumber: true,
+            totalAmount: true,
+            cashPaid: true,
+            digitalPaid: true,
+            paymentMethod: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
-    return shifts.map((s) => ({
-      ...s,
-      initialBalance: Number(s.initialBalance),
-      expectedBalance: s.expectedBalance ? Number(s.expectedBalance) : null,
-      actualBalance: s.actualBalance ? Number(s.actualBalance) : null,
-      difference: s.difference ? Number(s.difference) : null,
-    }));
+    return shifts.map((s) => {
+      const sales = s.sales || [];
+      const totalSales = sales.reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
+      const cashFromSales = sales.reduce((acc, sale) => acc + Number(sale.cashPaid), 0);
+      const digitalFromSales = sales.reduce((acc, sale) => acc + Number(sale.digitalPaid), 0);
+
+      const yapePlinSales = sales
+        .filter((sale) => sale.paymentMethod === 'TRANSFER')
+        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
+      const cardSales = sales
+        .filter((sale) => sale.paymentMethod === 'CARD')
+        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
+      const pureCashSales = sales
+        .filter((sale) => sale.paymentMethod === 'CASH')
+        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
+      const mixedSales = sales
+        .filter((sale) => sale.paymentMethod === 'MIXED')
+        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
+
+      const incomeMovements = s.cashMovements
+        .filter((m) => m.type === CashMovementType.INCOME)
+        .reduce((acc, m) => acc + Number(m.amount), 0);
+      const expenseMovements = s.cashMovements
+        .filter((m) => m.type === CashMovementType.EXPENSE)
+        .reduce((acc, m) => acc + Number(m.amount), 0);
+
+      return {
+        ...s,
+        initialBalance: Number(s.initialBalance),
+        expectedBalance: s.expectedBalance ? Number(s.expectedBalance) : null,
+        actualBalance: s.actualBalance ? Number(s.actualBalance) : null,
+        difference: s.difference ? Number(s.difference) : null,
+        metrics: {
+          totalSales,
+          cashFromSales,
+          digitalFromSales,
+          yapePlinSales,
+          cardSales,
+          pureCashSales,
+          mixedSales,
+          salesCount: sales.length,
+          incomeMovements,
+          expenseMovements,
+        },
+      };
+    });
   }
 }
