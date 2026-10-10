@@ -4,7 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma, ShiftStatus, MovementType, Role, Product } from '@prisma/client';
+import { Prisma, ShiftStatus, MovementType, Role, Product, CashMovementType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
@@ -330,4 +330,248 @@ export class SalesService {
       return base;
     });
   }
+
+  /**
+   * Reporte detallado de ganancias y rentabilidad (Solo Administrador)
+   */
+  async getProfitReport(filter?: { startDate?: string; endDate?: string; shiftId?: string }) {
+    const saleWhere: Prisma.SaleWhereInput = {
+      isVoided: false,
+    };
+
+    const expenseWhere: Prisma.CashMovementWhereInput = {
+      type: CashMovementType.EXPENSE,
+    };
+
+    if (filter?.shiftId) {
+      saleWhere.cashShiftId = filter.shiftId;
+      expenseWhere.cashShiftId = filter.shiftId;
+    }
+
+    if (filter?.startDate || filter?.endDate) {
+      const dateFilter: Prisma.DateTimeFilter = {};
+      if (filter.startDate) {
+        const start = filter.startDate.includes('T')
+          ? new Date(filter.startDate)
+          : new Date(`${filter.startDate}T00:00:00.000`);
+        if (!isNaN(start.getTime())) dateFilter.gte = start;
+      }
+      if (filter.endDate) {
+        const end = filter.endDate.includes('T')
+          ? new Date(filter.endDate)
+          : new Date(`${filter.endDate}T23:59:59.999`);
+        if (!isNaN(end.getTime())) dateFilter.lte = end;
+      }
+      if (dateFilter.gte || dateFilter.lte) {
+        saleWhere.createdAt = dateFilter;
+        expenseWhere.createdAt = dateFilter;
+      }
+    }
+
+    const [sales, expenses] = await Promise.all([
+      this.prisma.sale.findMany({
+        where: saleWhere,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          items: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  barcode: true,
+                  unitType: true,
+                  category: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+          user: { select: { id: true, name: true, username: true } },
+          cashShift: { include: { cashRegister: true } },
+        },
+      }),
+      this.prisma.cashMovement.findMany({
+        where: expenseWhere,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          cashShift: {
+            include: {
+              cashRegister: true,
+              user: { select: { name: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    // Resumen financiero
+    let totalSales = 0;
+    let totalCost = 0;
+    let totalUnitsSold = 0;
+    let cashPaidTotal = 0;
+    let digitalPaidTotal = 0;
+
+    const paymentMethods: Record<string, number> = {
+      CASH: 0,
+      CARD: 0,
+      TRANSFER: 0,
+      MIXED: 0,
+    };
+
+    // Agrupación de métricas por producto vendido
+    const productStatsMap = new Map<
+      string,
+      {
+        productId: string;
+        productName: string;
+        barcode: string | null;
+        categoryName: string;
+        unitType: string;
+        quantitySold: number;
+        totalRevenue: number;
+        totalCost: number;
+        profit: number;
+        marginPct: number;
+      }
+    >();
+
+    const salesDetail = sales.map((s) => {
+      const saleAmount = Number(s.totalAmount);
+      totalSales += saleAmount;
+      cashPaidTotal += Number(s.cashPaid);
+      digitalPaidTotal += Number(s.digitalPaid);
+
+      if (paymentMethods[s.paymentMethod] !== undefined) {
+        paymentMethods[s.paymentMethod] += saleAmount;
+      }
+
+      let saleCost = 0;
+      let saleUnits = 0;
+
+      const itemsDetail = s.items.map((i) => {
+        const qty = Number(i.quantity);
+        const unitP = Number(i.unitPrice);
+        const sub = Number(i.subtotal);
+        const unitCost = Number(i.costPriceSnapshot);
+        const itemCost = Number((qty * unitCost).toFixed(2));
+        const itemProfit = Number((sub - itemCost).toFixed(2));
+
+        saleCost += itemCost;
+        saleUnits += qty;
+        totalUnitsSold += qty;
+
+        const prodKey = i.productId;
+        const existing = productStatsMap.get(prodKey);
+        if (existing) {
+          existing.quantitySold += qty;
+          existing.totalRevenue += sub;
+          existing.totalCost += itemCost;
+          existing.profit += itemProfit;
+        } else {
+          productStatsMap.set(prodKey, {
+            productId: i.productId,
+            productName: i.product.name,
+            barcode: i.product.barcode,
+            categoryName: i.product.category?.name || 'General',
+            unitType: i.product.unitType,
+            quantitySold: qty,
+            totalRevenue: sub,
+            totalCost: itemCost,
+            profit: itemProfit,
+            marginPct: 0,
+          });
+        }
+
+        return {
+          id: i.id,
+          productId: i.productId,
+          productName: i.product.name,
+          barcode: i.product.barcode,
+          quantity: qty,
+          unitPrice: unitP,
+          costPrice: unitCost,
+          subtotal: sub,
+          itemCost,
+          profit: itemProfit,
+        };
+      });
+
+      totalCost += saleCost;
+      const saleProfit = Number((saleAmount - saleCost).toFixed(2));
+      const saleMarginPct =
+        saleCost > 0 ? Number(((saleProfit / saleCost) * 100).toFixed(1)) : 0;
+
+      return {
+        id: s.id,
+        saleNumber: s.saleNumber,
+        createdAt: s.createdAt,
+        customerName: s.customerName,
+        paymentMethod: s.paymentMethod,
+        cashPaid: Number(s.cashPaid),
+        digitalPaid: Number(s.digitalPaid),
+        totalAmount: saleAmount,
+        totalCost: Number(saleCost.toFixed(2)),
+        profit: saleProfit,
+        marginPct: saleMarginPct,
+        unitsCount: saleUnits,
+        cashier: s.user.name,
+        cashRegister: s.cashShift?.cashRegister?.name || 'Caja',
+        items: itemsDetail,
+      };
+    });
+
+    // Calcular márgenes individuales y ordenar por mayor utilidad
+    const productStats = Array.from(productStatsMap.values()).map((p) => {
+      const margin =
+        p.totalCost > 0
+          ? Number(((p.profit / p.totalCost) * 100).toFixed(1))
+          : 0;
+      return {
+        ...p,
+        totalRevenue: Number(p.totalRevenue.toFixed(2)),
+        totalCost: Number(p.totalCost.toFixed(2)),
+        profit: Number(p.profit.toFixed(2)),
+        marginPct: margin,
+      };
+    });
+
+    productStats.sort((a, b) => b.profit - a.profit);
+
+    // Gastos de caja menor registrados en el período
+    const totalExpenses = expenses.reduce((acc, exp) => acc + Number(exp.amount), 0);
+    const grossProfit = Number((totalSales - totalCost).toFixed(2));
+    const netProfit = Number((grossProfit - totalExpenses).toFixed(2));
+    const grossMarginPct =
+      totalCost > 0 ? Number(((grossProfit / totalCost) * 100).toFixed(1)) : 0;
+    const netMarginPct =
+      totalSales > 0 ? Number(((netProfit / totalSales) * 100).toFixed(1)) : 0;
+
+    return {
+      summary: {
+        totalSales: Number(totalSales.toFixed(2)),
+        totalCost: Number(totalCost.toFixed(2)),
+        grossProfit,
+        totalExpenses: Number(totalExpenses.toFixed(2)),
+        netProfit,
+        grossMarginPct,
+        netMarginPct,
+        salesCount: sales.length,
+        totalUnitsSold: Number(totalUnitsSold.toFixed(2)),
+        cashPaidTotal: Number(cashPaidTotal.toFixed(2)),
+        digitalPaidTotal: Number(digitalPaidTotal.toFixed(2)),
+        paymentMethods,
+      },
+      products: productStats,
+      sales: salesDetail,
+      expenses: expenses.map((e) => ({
+        id: e.id,
+        amount: Number(e.amount),
+        reason: e.reason,
+        createdAt: e.createdAt,
+        cashRegister: e.cashShift?.cashRegister?.name || 'Caja',
+        cashier: e.cashShift?.user?.name || '--',
+      })),
+    };
+  }
 }
+

@@ -9,6 +9,7 @@ import {
   ShoppingCart,
   Package,
   History,
+  TrendingUp,
   Settings,
   LogOut,
   Lock,
@@ -107,6 +108,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
                   <History className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   <span className="hidden md:inline">Auditoría Cajas</span>
                   <span className="md:hidden">Auditoría</span>
+                </button>
+
+                <button
+                  onClick={() => onTabChange('profits')}
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                    currentTab === 'profits'
+                      ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  }`}
+                  title="Reporte de Ganancias, Rentabilidad y Costos de Venta"
+                >
+                  <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+                  <span className="hidden md:inline">Ganancias del Día</span>
+                  <span className="md:hidden">Ganancias</span>
                 </button>
 
                 <button

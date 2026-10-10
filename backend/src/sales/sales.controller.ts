@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, UseGuards, ForbiddenException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { SalesService } from './sales.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
@@ -27,6 +27,19 @@ export class SalesController {
     return this.salesService.voidSale(id, dto);
   }
 
+  @Get('profit-report')
+  async getProfitReport(
+    @CurrentUser('role') userRole: Role,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('shiftId') shiftId?: string,
+  ) {
+    if (userRole !== Role.ADMIN) {
+      throw new ForbiddenException('Solo el administrador puede visualizar el reporte de ganancias.');
+    }
+    return this.salesService.getProfitReport({ startDate, endDate, shiftId });
+  }
+
   @Get()
   async getSales(
     @CurrentUser('role') userRole: Role,
@@ -38,3 +51,4 @@ export class SalesController {
     return this.salesService.getSales(userRole, { shiftId, isVoided: isVoidedBool });
   }
 }
+

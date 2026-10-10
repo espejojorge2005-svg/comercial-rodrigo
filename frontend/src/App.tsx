@@ -7,6 +7,7 @@ import { Navbar } from './components/layout/Navbar.js';
 import { PosView } from './modules/pos/PosView.js';
 import { InventoryView } from './modules/inventory/InventoryView.js';
 import { ShiftAuditView } from './modules/shifts/ShiftAuditView.js';
+import { ProfitReportView } from './modules/reports/ProfitReportView.js';
 
 import { useConfigStore } from './store/useConfigStore.js';
 
@@ -66,6 +67,7 @@ export const App: React.FC = () => {
         )}
         {currentTab === 'inventory' && isAdmin && <InventoryView />}
         {currentTab === 'shifts' && isAdmin && <ShiftAuditView />}
+        {currentTab === 'profits' && isAdmin && <ProfitReportView />}
       </main>
     </div>
   );

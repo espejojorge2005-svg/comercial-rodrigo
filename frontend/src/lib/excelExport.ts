@@ -281,3 +281,171 @@ export const exportShiftAuditExcel = (
   const filename = `Auditoria_Cajas_${cleanStore}_${dateSuffix}.xlsx`;
   XLSX.writeFile(wb, filename);
 };
+
+/**
+ * EXPORTAR REPORTE COMPLETO DE GANANCIAS & RENTABILIDAD A EXCEL (.xlsx)
+ */
+export const exportProfitReportExcel = (
+  reportData: {
+    summary: {
+      totalSales: number;
+      totalCost: number;
+      grossProfit: number;
+      totalExpenses: number;
+      netProfit: number;
+      grossMarginPct: number;
+      netMarginPct: number;
+      salesCount: number;
+      totalUnitsSold: number;
+      cashPaidTotal: number;
+      digitalPaidTotal: number;
+      paymentMethods: Record<string, number>;
+    };
+    products: Array<{
+      productId: string;
+      productName: string;
+      barcode: string | null;
+      categoryName: string;
+      unitType: string;
+      quantitySold: number;
+      totalRevenue: number;
+      totalCost: number;
+      profit: number;
+      marginPct: number;
+    }>;
+    sales: Array<{
+      id: string;
+      saleNumber: number;
+      createdAt: string;
+      customerName: string | null;
+      paymentMethod: string;
+      cashPaid: number;
+      digitalPaid: number;
+      totalAmount: number;
+      totalCost: number;
+      profit: number;
+      marginPct: number;
+      unitsCount: number;
+      cashier: string;
+      cashRegister: string;
+      items: Array<{
+        productName: string;
+        quantity: number;
+        unitPrice: number;
+        costPrice: number;
+        subtotal: number;
+        itemCost: number;
+        profit: number;
+      }>;
+    }>;
+    expenses?: Array<{
+      id: string;
+      amount: number;
+      reason: string;
+      createdAt: string;
+      cashRegister: string;
+      cashier: string;
+    }>;
+  },
+  dateLabel: string,
+  storeName = 'Comercial Rodrigo',
+) => {
+  const wb = XLSX.utils.book_new();
+  const dateSuffix = new Date().toISOString().split('T')[0];
+  const { summary, products, sales, expenses = [] } = reportData;
+
+  // 1. HOJA 1: Resumen Ejecutivo Financiero
+  const summaryRows = [
+    { 'Concepto Financiero': 'Empresa / Negocio', 'Detalle / Valor': storeName },
+    { 'Concepto Financiero': 'Período Evaluado', 'Detalle / Valor': dateLabel },
+    { 'Concepto Financiero': 'Fecha y Hora de Generación', 'Detalle / Valor': formatDateTime(new Date()) },
+    { 'Concepto Financiero': '----------------------------------', 'Detalle / Valor': '----------------------' },
+    { 'Concepto Financiero': 'Total Ingresos por Ventas (S/.)', 'Detalle / Valor': summary.totalSales },
+    { 'Concepto Financiero': 'Costo Total de Mercadería Vendida (S/.)', 'Detalle / Valor': summary.totalCost },
+    { 'Concepto Financiero': 'GANANCIA BRUTA (UTILIDAD) (S/.)', 'Detalle / Valor': summary.grossProfit },
+    { 'Concepto Financiero': 'Margen Bruto de Rentabilidad (%)', 'Detalle / Valor': `${summary.grossMarginPct}%` },
+    { 'Concepto Financiero': 'Total Gastos de Caja Menor (S/.)', 'Detalle / Valor': summary.totalExpenses },
+    { 'Concepto Financiero': 'GANANCIA NETA REAL (EN BOLSILLO) (S/.)', 'Detalle / Valor': summary.netProfit },
+    { 'Concepto Financiero': 'Margen Neto sobre Ventas (%)', 'Detalle / Valor': `${summary.netMarginPct}%` },
+    { 'Concepto Financiero': '----------------------------------', 'Detalle / Valor': '----------------------' },
+    { 'Concepto Financiero': 'Cantidad de Tickets / Ventas Realizadas', 'Detalle / Valor': summary.salesCount },
+    { 'Concepto Financiero': 'Cantidad de Unidades / Artículos Vendidos', 'Detalle / Valor': summary.totalUnitsSold },
+    { 'Concepto Financiero': 'Ticket Promedio (S/.)', 'Detalle / Valor': summary.salesCount > 0 ? Number((summary.totalSales / summary.salesCount).toFixed(2)) : 0 },
+    { 'Concepto Financiero': '----------------------------------', 'Detalle / Valor': '----------------------' },
+    { 'Concepto Financiero': 'Ventas en Efectivo Puro (S/.)', 'Detalle / Valor': summary.paymentMethods?.CASH || 0 },
+    { 'Concepto Financiero': 'Ventas Yape / Plin / Transferencias (S/.)', 'Detalle / Valor': summary.paymentMethods?.TRANSFER || 0 },
+    { 'Concepto Financiero': 'Ventas con Tarjeta Débito/Crédito (S/.)', 'Detalle / Valor': summary.paymentMethods?.CARD || 0 },
+    { 'Concepto Financiero': 'Ventas con Pago Mixto (S/.)', 'Detalle / Valor': summary.paymentMethods?.MIXED || 0 },
+  ];
+
+  const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+  wsSummary['!cols'] = [{ wch: 42 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen Financiero');
+
+  // 2. HOJA 2: Rentabilidad por Producto
+  const productRows = products.map((p, idx) => ({
+    'N°': idx + 1,
+    'Código / Barcode': p.barcode || 'S/C',
+    'Producto': p.productName,
+    'Categoría': p.categoryName,
+    'Unidad': getUnitShortName(p.unitType as any),
+    'Unidades Vendidas': p.quantitySold,
+    'Ingreso Total (S/.)': p.totalRevenue,
+    'Costo Total (S/.)': p.totalCost,
+    'Ganancia Neta (S/.)': p.profit,
+    'Margen Rentabilidad (%)': `${p.marginPct}%`,
+    'Rentabilidad': p.marginPct >= 30 ? 'Alta' : p.marginPct >= 15 ? 'Normal' : 'Baja',
+  }));
+
+  const wsProducts = XLSX.utils.json_to_sheet(
+    productRows.length > 0 ? productRows : [{ 'Detalle': 'No hubo ventas de productos en este período' }]
+  );
+  wsProducts['!cols'] = calculateColWidths(
+    productRows.length > 0 ? productRows : [{ 'Detalle': 'No hubo ventas de productos en este período' }]
+  );
+  XLSX.utils.book_append_sheet(wb, wsProducts, 'Ganancia por Producto');
+
+  // 3. HOJA 3: Detalle por Ticket de Venta
+  const ticketRows = sales.map((s) => ({
+    'N° Ticket': `#${s.saleNumber}`,
+    'Fecha y Hora': formatDateTime(s.createdAt),
+    'Caja': s.cashRegister,
+    'Cajero': s.cashier,
+    'Cliente': s.customerName || 'Cliente Varios',
+    'Método de Pago': translatePaymentMethod(s.paymentMethod),
+    'Total Venta (S/.)': s.totalAmount,
+    'Costo Venta (S/.)': s.totalCost,
+    'Ganancia Ticket (S/.)': s.profit,
+    'Margen (%)': `${s.marginPct}%`,
+    'Unidades': s.unitsCount,
+  }));
+
+  const wsTickets = XLSX.utils.json_to_sheet(
+    ticketRows.length > 0 ? ticketRows : [{ 'Detalle': 'No se registraron tickets en este período' }]
+  );
+  wsTickets['!cols'] = calculateColWidths(
+    ticketRows.length > 0 ? ticketRows : [{ 'Detalle': 'No se registraron tickets en este período' }]
+  );
+  XLSX.utils.book_append_sheet(wb, wsTickets, 'Detalle por Ticket');
+
+  // 4. HOJA 4: Gastos y Salidas de Caja (si hubo)
+  if (expenses.length > 0) {
+    const expenseRows = expenses.map((e) => ({
+      'Fecha y Hora': formatDateTime(e.createdAt),
+      'Caja': e.cashRegister,
+      'Responsable': e.cashier,
+      'Monto Retirado (S/.)': e.amount,
+      'Motivo / Justificación': e.reason,
+    }));
+
+    const wsExpenses = XLSX.utils.json_to_sheet(expenseRows);
+    wsExpenses['!cols'] = calculateColWidths(expenseRows);
+    XLSX.utils.book_append_sheet(wb, wsExpenses, 'Gastos de Caja Menor');
+  }
+
+  // Descarga directa
+  const cleanStore = storeName.replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `Reporte_Ganancias_${cleanStore}_${dateSuffix}.xlsx`;
+  XLSX.writeFile(wb, filename);
+};
+
