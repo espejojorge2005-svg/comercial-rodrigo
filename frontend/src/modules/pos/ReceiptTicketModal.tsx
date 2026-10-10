@@ -18,8 +18,104 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 
   if (!isOpen || !saleData) return null;
 
+  const getPaymentMethodLabel = (method?: string) => {
+    switch (method) {
+      case 'CASH':
+        return 'EFECTIVO';
+      case 'TRANSFER':
+        return 'YAPE / PLIN';
+      case 'CARD':
+        return 'TARJETA';
+      case 'MIXED':
+        return 'PAGO MIXTO';
+      default:
+        return method || 'EFECTIVO';
+    }
+  };
+
   const handlePrint = () => {
-    window.print();
+    const printElement = document.getElementById('printable-ticket');
+    if (!printElement) {
+      window.print();
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=380,height=650');
+    if (!printWindow) {
+      // Fallback a impresión nativa si el navegador bloquea popups
+      window.print();
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Ticket #${String(saleData.saleNumber || '0001').padStart(6, '0')}</title>
+          <style>
+            @page {
+              size: 80mm auto;
+              margin: 0;
+            }
+            @media print {
+              html, body {
+                width: 80mm;
+                margin: 0;
+                padding: 0;
+              }
+            }
+            body {
+              width: 74mm;
+              margin: 0 auto;
+              padding: 4mm 2mm 16mm 2mm;
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 11px;
+              line-height: 1.25;
+              color: #000;
+              background: #fff;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
+            .text-center { text-align: center; }
+            .text-right { text-align: right; }
+            .text-left { text-align: left; }
+            .font-bold { font-weight: bold; }
+            .font-extrabold { font-weight: 800; }
+            .uppercase { text-transform: uppercase; }
+            .border-b { border-bottom: 1px dashed #000; }
+            .border-t { border-top: 1px dashed #000; }
+            .pb-2 { padding-bottom: 6px; }
+            .pt-2 { padding-top: 6px; }
+            .mb-2 { margin-bottom: 6px; }
+            .mt-2 { margin-top: 6px; }
+            .space-y-1 > div { margin-bottom: 2px; }
+            .flex { display: flex; }
+            .justify-between { justify-content: space-between; }
+            table { width: 100%; border-collapse: collapse; font-size: 11px; }
+            th { text-align: left; border-bottom: 1px dashed #000; padding: 3px 0; font-size: 10px; }
+            td { padding: 3px 0; vertical-align: top; }
+            .cut-feed { height: 18mm; }
+          </style>
+        </head>
+        <body>
+          ${printElement.innerHTML}
+          <div class="cut-feed"></div>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
   };
 
   return (
@@ -38,7 +134,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             <CheckCircle className="w-6 h-6" />
           </div>
           <h3 className="text-lg font-bold text-white">¡Venta Realizada con Éxito!</h3>
-          <p className="text-xs text-slate-400">Comprobante generado y stock actualizado</p>
+          <p className="text-xs text-slate-400">Comprobante listo para imprimir en tiquetera térmica</p>
         </div>
 
         {/* VISTA PREVIA DEL TICKET TÉRMICO (58mm / 80mm) */}
@@ -103,20 +199,29 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {saleData.items?.map((item: any, idx: number) => (
-                <tr key={idx} className="py-1">
-                  <td className="py-1 align-top font-bold">{item.quantity}</td>
-                  <td className="py-1 align-top pr-2">
-                    <div>{item.product?.name || item.productName}</div>
-                    <div className="text-[9px] text-slate-500">
-                      @{formatCurrency(item.unitPrice)}
-                    </div>
-                  </td>
-                  <td className="py-1 align-top text-right font-bold">
-                    {formatCurrency(item.subtotal)}
-                  </td>
-                </tr>
-              ))}
+              {saleData.items?.map((item: any, idx: number) => {
+                const qty = Number(item.quantity);
+                const hasMultiple = qty > 1;
+
+                return (
+                  <tr key={idx} className="py-1">
+                    <td className="py-1 align-top font-bold">{item.quantity}</td>
+                    <td className="py-1 align-top pr-2">
+                      <div className="font-semibold text-slate-900">
+                        {item.product?.name || item.productName}
+                      </div>
+                      {hasMultiple && (
+                        <div className="text-[10px] text-slate-500">
+                          {item.quantity} × {formatCurrency(item.unitPrice)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-1 align-top text-right font-bold whitespace-nowrap">
+                      {formatCurrency(item.subtotal)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
@@ -127,27 +232,35 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               <span>{formatCurrency(saleData.totalAmount)}</span>
             </div>
 
-            <div className="flex justify-between text-slate-600 pt-1">
+            <div className="flex justify-between text-slate-700 pt-1">
               <span>MÉTODO DE PAGO:</span>
-              <span className="font-semibold uppercase">{saleData.paymentMethod}</span>
+              <span className="font-bold uppercase text-slate-900">
+                {getPaymentMethodLabel(saleData.paymentMethod)}
+              </span>
             </div>
 
-            {saleData.cashPaid > 0 && (
+            {saleData.paymentMethod === 'MIXED' && (
+              <div className="text-[10px] text-slate-600 pl-2 space-y-0.5">
+                <div className="flex justify-between">
+                  <span>• Efectivo:</span>
+                  <span>{formatCurrency(saleData.cashPaid)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>• Digital:</span>
+                  <span>{formatCurrency(saleData.digitalPaid)}</span>
+                </div>
+              </div>
+            )}
+
+            {saleData.paymentMethod === 'CASH' && Number(saleData.cashPaid) > Number(saleData.totalAmount) && (
               <div className="flex justify-between text-slate-600">
                 <span>EFECTIVO RECIBIDO:</span>
                 <span>{formatCurrency(saleData.cashPaid)}</span>
               </div>
             )}
 
-            {saleData.digitalPaid > 0 && (
-              <div className="flex justify-between text-slate-600">
-                <span>PAGO DIGITAL:</span>
-                <span>{formatCurrency(saleData.digitalPaid)}</span>
-              </div>
-            )}
-
-            {saleData.changeAmount > 0 && (
-              <div className="flex justify-between font-bold text-slate-900 border-t border-slate-200 pt-1">
+            {Number(saleData.changeAmount) > 0 && (
+              <div className="flex justify-between font-bold text-slate-900 border-t border-dashed border-slate-300 pt-1">
                 <span>VUELTO ENTREGADO:</span>
                 <span>{formatCurrency(saleData.changeAmount)}</span>
               </div>

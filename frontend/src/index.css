@@ -76,3 +76,50 @@ body {
   color: hsl(var(--foreground));
   min-height: 100vh;
 }
+
+/* Soporte Profesional para Tiquetera Térmica (POS 80mm / 58mm) */
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  html, body {
+    width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Ocultar interfaz de la app en la impresión */
+  body > * {
+    visibility: hidden !important;
+  }
+
+  /* Mostrar exclusivamente el ticket */
+  #printable-ticket,
+  #printable-ticket * {
+    visibility: visible !important;
+  }
+
+  #printable-ticket {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 76mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 3mm 2mm 15mm 2mm !important;
+    background: #fff !important;
+    color: #000 !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .print\:hidden {
+    display: none !important;
+  }
+}
