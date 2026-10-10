@@ -15,6 +15,7 @@ import {
   Calendar,
   Layers,
   CheckCircle2,
+  AlertTriangle,
   Eye,
   X,
   CreditCard,
@@ -400,12 +401,24 @@ export const ProfitReportView: React.FC = () => {
           <div>
             <div className="text-xs text-slate-400 font-semibold mb-1 flex items-center justify-between">
               <span>Ganancia Bruta</span>
-              <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-bold">
-                +{summary.grossMarginPct}%
+              <span
+                className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                  summary.grossProfit >= 0
+                    ? 'bg-emerald-500/10 text-emerald-400'
+                    : 'bg-rose-500/10 text-rose-400'
+                }`}
+              >
+                {summary.grossProfit >= 0 ? `+${summary.grossMarginPct}%` : `${summary.grossMarginPct}%`}
               </span>
             </div>
-            <div className="text-xl font-extrabold text-emerald-400">
-              +{formatCurrency(summary.grossProfit)}
+            <div
+              className={`text-xl font-extrabold ${
+                summary.grossProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}
+            >
+              {summary.grossProfit > 0
+                ? `+${formatCurrency(summary.grossProfit)}`
+                : formatCurrency(summary.grossProfit)}
             </div>
           </div>
           <div className="mt-2 text-[11px] text-slate-400">
@@ -430,18 +443,42 @@ export const ProfitReportView: React.FC = () => {
         </div>
 
         {/* Ganancia Neta Real */}
-        <div className="p-4 rounded-2xl bg-slate-900 border border-emerald-500/30 bg-emerald-950/10 flex flex-col justify-between">
+        <div
+          className={`p-4 rounded-2xl bg-slate-900 border flex flex-col justify-between ${
+            summary.netProfit >= 0
+              ? 'border-emerald-500/30 bg-emerald-950/10'
+              : 'border-rose-500/30 bg-rose-950/10'
+          }`}
+        >
           <div>
-            <div className="text-xs text-emerald-300 font-semibold mb-1 flex items-center justify-between">
-              <span>Ganancia Neta Real</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <div
+              className={`text-xs font-semibold mb-1 flex items-center justify-between ${
+                summary.netProfit >= 0 ? 'text-emerald-300' : 'text-rose-300'
+              }`}
+            >
+              <span>{summary.netProfit >= 0 ? 'Ganancia Neta Real' : 'Pérdida Neta Real'}</span>
+              {summary.netProfit >= 0 ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-rose-400" />
+              )}
             </div>
-            <div className="text-xl font-extrabold text-emerald-300">
+            <div
+              className={`text-xl font-extrabold ${
+                summary.netProfit >= 0 ? 'text-emerald-300' : 'text-rose-400'
+              }`}
+            >
               {formatCurrency(summary.netProfit)}
             </div>
           </div>
-          <div className="mt-2 text-[11px] text-emerald-400/80 font-medium">
-            Rentabilidad neta: {summary.netMarginPct}%
+          <div
+            className={`mt-2 text-[11px] font-medium ${
+              summary.netProfit >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'
+            }`}
+          >
+            {summary.netProfit >= 0
+              ? `Rentabilidad neta: +${summary.netMarginPct}%`
+              : `Rentabilidad neta: ${summary.netMarginPct}% (Pérdida)`}
           </div>
         </div>
       </div>
