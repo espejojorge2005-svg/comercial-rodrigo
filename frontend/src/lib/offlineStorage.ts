@@ -18,7 +18,7 @@ export interface OfflineSale {
   userId: string;
   userName?: string;
   customerName?: string;
-  customerDocument?: string;
+  customerDocument?: string | null;
   paymentMethod: PaymentMethod;
   cashPaid: number;
   digitalPaid: number;
