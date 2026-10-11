@@ -577,6 +577,47 @@ export const ShiftAuditView: React.FC = () => {
               </div>
             )}
 
+            {/* Artículos Vendidos en el Turno */}
+            {((selectedShift.soldProducts || selectedShift.metrics?.soldProducts || []).length > 0) && (
+              <div className="mb-5">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-emerald-400" />
+                    Resumen de Artículos Vendidos en el Turno
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    {(selectedShift.soldProducts || selectedShift.metrics?.soldProducts || []).reduce((acc: number, p: any) => acc + (Number(p.quantity) || 0), 0)} unidades totales
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 max-h-56 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-slate-950 text-slate-400 border-b border-slate-800 text-[10px] uppercase font-semibold">
+                      <tr>
+                        <th className="p-2.5">Cant</th>
+                        <th className="p-2.5">Producto</th>
+                        <th className="p-2.5 text-right">Total Generado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {(selectedShift.soldProducts || selectedShift.metrics?.soldProducts || []).map((p: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-slate-900/40">
+                          <td className="p-2 font-bold text-emerald-400">{p.quantity} {p.unitType || 'UND'}</td>
+                          <td className="p-2 font-sans text-slate-200">
+                            <div>{p.productName}</div>
+                            {p.barcode && <div className="text-[10px] font-mono text-slate-500">[{p.barcode}]</div>}
+                          </td>
+                          <td className="p-2 text-right font-bold text-white">
+                            {formatCurrency(p.totalRevenue)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Notas del Turno */}
             {selectedShift.notes && (
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300">
@@ -616,6 +657,8 @@ export const ShiftAuditView: React.FC = () => {
                 totalSales: ticketShift.metrics?.totalSales || 0,
                 incomeMovements: ticketShift.metrics?.incomeMovements || 0,
                 expenseMovements: ticketShift.metrics?.expenseMovements || 0,
+                soldProducts: ticketShift.soldProducts || ticketShift.metrics?.soldProducts || [],
+                salesList: ticketShift.salesList || ticketShift.metrics?.salesList || [],
                 notes: ticketShift.notes || null,
               }
             : null

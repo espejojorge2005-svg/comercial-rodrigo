@@ -40,14 +40,27 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
       return;
     }
 
-    const printWindow = window.open('', '_blank', 'width=380,height=650');
-    if (!printWindow) {
-      // Fallback a impresión nativa si el navegador bloquea popups
+    let printIframe = document.getElementById('pos-print-iframe') as HTMLIFrameElement;
+    if (!printIframe) {
+      printIframe = document.createElement('iframe');
+      printIframe.id = 'pos-print-iframe';
+      printIframe.style.position = 'fixed';
+      printIframe.style.right = '0';
+      printIframe.style.bottom = '0';
+      printIframe.style.width = '0px';
+      printIframe.style.height = '0px';
+      printIframe.style.border = 'none';
+      document.body.appendChild(printIframe);
+    }
+
+    const iframeDoc = printIframe.contentDocument || printIframe.contentWindow?.document;
+    if (!iframeDoc) {
       window.print();
       return;
     }
 
-    printWindow.document.write(`
+    iframeDoc.open();
+    iframeDoc.write(`
       <!DOCTYPE html>
       <html>
         <head>
@@ -56,31 +69,33 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
           <style>
             @page {
               size: 80mm auto;
-              margin: 0;
+              margin: 0mm;
             }
             @media print {
               html, body {
-                width: 80mm;
-                margin: 0;
-                padding: 0;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #fff !important;
+                color: #000 !important;
               }
             }
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
             body {
-              width: 74mm;
+              width: 72mm;
               margin: 0 auto;
-              padding: 4mm 2mm 16mm 2mm;
-              font-family: 'Courier New', Courier, monospace;
+              padding: 2mm 1mm 4mm 1mm;
+              font-family: 'Courier New', Courier, monospace, system-ui;
               font-size: 11px;
               line-height: 1.25;
               color: #000;
               background: #fff;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
-            }
-            * {
-              box-sizing: border-box;
-              margin: 0;
-              padding: 0;
             }
             .text-center { text-align: center; }
             .text-right { text-align: right; }
@@ -90,31 +105,28 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             .uppercase { text-transform: uppercase; }
             .border-b { border-bottom: 1px dashed #000; }
             .border-t { border-top: 1px dashed #000; }
-            .pb-2 { padding-bottom: 6px; }
-            .pt-2 { padding-top: 6px; }
-            .mb-2 { margin-bottom: 6px; }
-            .mt-2 { margin-top: 6px; }
+            .pb-2 { padding-bottom: 4px; }
+            .pt-2 { padding-top: 4px; }
+            .mb-2 { margin-bottom: 4px; }
+            .mt-2 { margin-top: 4px; }
             .space-y-1 > div { margin-bottom: 2px; }
             .flex { display: flex; }
             .justify-between { justify-content: space-between; }
-            table { width: 100%; border-collapse: collapse; font-size: 11px; }
-            th { text-align: left; border-bottom: 1px dashed #000; padding: 3px 0; font-size: 10px; }
-            td { padding: 3px 0; vertical-align: top; }
-            .cut-feed { height: 18mm; }
+            table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+            th { text-align: left; border-bottom: 1px dashed #000; padding: 2px 0; font-size: 10px; font-weight: bold; }
+            td { padding: 2px 0; vertical-align: top; }
           </style>
         </head>
         <body>
           ${printElement.innerHTML}
-          <div class="cut-feed"></div>
         </body>
       </html>
     `);
+    iframeDoc.close();
 
-    printWindow.document.close();
-    printWindow.focus();
     setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
+      printIframe.contentWindow?.focus();
+      printIframe.contentWindow?.print();
     }, 250);
   };
 

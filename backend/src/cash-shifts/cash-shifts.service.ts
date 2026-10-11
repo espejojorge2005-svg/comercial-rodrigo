@@ -194,21 +194,84 @@ export class CashShiftsService {
       throw new ForbiddenException('No tienes permiso para cerrar el turno de otro usuario.');
     }
 
-    // Calcular ventas no anuladas del turno
+    // Calcular ventas no anuladas del turno con sus productos
     const sales = await this.prisma.sale.findMany({
       where: {
         cashShiftId: shift.id,
         isVoided: false,
       },
       select: {
+        id: true,
+        saleNumber: true,
         cashPaid: true,
         digitalPaid: true,
         totalAmount: true,
+        paymentMethod: true,
+        createdAt: true,
+        items: {
+          select: {
+            quantity: true,
+            unitPrice: true,
+            subtotal: true,
+            product: {
+              select: {
+                id: true,
+                name: true,
+                barcode: true,
+                unitType: true,
+              },
+            },
+          },
+        },
       },
+      orderBy: { createdAt: 'asc' },
     });
 
     const cashFromSales = sales.reduce((acc, s) => acc + Number(s.cashPaid), 0);
     const digitalFromSales = sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0);
+    const totalSales = sales.reduce((acc, s) => acc + Number(s.totalAmount), 0);
+
+    // Agrupar resumen de productos vendidos en el turno
+    const productsMap = new Map<string, {
+      productId: string;
+      productName: string;
+      barcode?: string | null;
+      unitType: string;
+      quantity: number;
+      totalRevenue: number;
+    }>();
+
+    for (const s of sales) {
+      for (const it of s.items) {
+        const pId = it.product.id;
+        const qty = Number(it.quantity);
+        const subtotal = Number(it.subtotal);
+        const existing = productsMap.get(pId);
+        if (existing) {
+          existing.quantity += qty;
+          existing.totalRevenue += subtotal;
+        } else {
+          productsMap.set(pId, {
+            productId: pId,
+            productName: it.product.name,
+            barcode: it.product.barcode,
+            unitType: it.product.unitType,
+            quantity: qty,
+            totalRevenue: subtotal,
+          });
+        }
+      }
+    }
+
+    const soldProducts = Array.from(productsMap.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    const salesList = sales.map((s) => ({
+      id: s.id,
+      saleNumber: s.saleNumber,
+      totalAmount: Number(s.totalAmount),
+      paymentMethod: s.paymentMethod,
+      createdAt: s.createdAt,
+    }));
 
     // Calcular movimientos de caja chica
     const incomeMovements = shift.cashMovements
@@ -259,6 +322,9 @@ export class CashShiftsService {
         actualBalance: dto.actualBalance,
         reportedAmount: dto.actualBalance,
         salesCount: sales.length,
+        totalSales,
+        soldProducts,
+        salesList,
         notes: dto.notes || shift.notes || '',
         isBlindAudit: true,
       };
@@ -274,6 +340,7 @@ export class CashShiftsService {
       openedAt: shift.openedAt,
       closedAt: updatedShift.closedAt,
       initialBalance: Number(shift.initialBalance),
+      totalSales,
       cashFromSales,
       digitalFromSales,
       incomeMovements,
@@ -285,6 +352,8 @@ export class CashShiftsService {
       hasDiscrepancy: difference !== 0,
       discrepancyType: difference > 0 ? 'SOBRANTE' : difference < 0 ? 'FALTANTE' : 'EXACTO',
       salesCount: sales.length,
+      soldProducts,
+      salesList,
       notes: dto.notes || shift.notes || '',
       isBlindAudit: false,
     };
@@ -351,6 +420,21 @@ export class CashShiftsService {
             digitalPaid: true,
             paymentMethod: true,
             createdAt: true,
+            items: {
+              select: {
+                quantity: true,
+                unitPrice: true,
+                subtotal: true,
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    barcode: true,
+                    unitType: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -382,12 +466,55 @@ export class CashShiftsService {
         .filter((m) => m.type === CashMovementType.EXPENSE)
         .reduce((acc, m) => acc + Number(m.amount), 0);
 
+      // Resumen de artículos vendidos en el turno
+      const productsMap = new Map<string, {
+        productId: string;
+        productName: string;
+        barcode?: string | null;
+        unitType: string;
+        quantity: number;
+        totalRevenue: number;
+      }>();
+
+      for (const sale of sales) {
+        for (const it of sale.items || []) {
+          const pId = it.product.id;
+          const qty = Number(it.quantity);
+          const subtotal = Number(it.subtotal);
+          const existing = productsMap.get(pId);
+          if (existing) {
+            existing.quantity += qty;
+            existing.totalRevenue += subtotal;
+          } else {
+            productsMap.set(pId, {
+              productId: pId,
+              productName: it.product.name,
+              barcode: it.product.barcode,
+              unitType: it.product.unitType,
+              quantity: qty,
+              totalRevenue: subtotal,
+            });
+          }
+        }
+      }
+
+      const soldProducts = Array.from(productsMap.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+      const salesList = sales.map((sale) => ({
+        id: sale.id,
+        saleNumber: sale.saleNumber,
+        totalAmount: Number(sale.totalAmount),
+        paymentMethod: sale.paymentMethod,
+        createdAt: sale.createdAt,
+      }));
+
       return {
         ...s,
         initialBalance: Number(s.initialBalance),
         expectedBalance: s.expectedBalance ? Number(s.expectedBalance) : null,
         actualBalance: s.actualBalance ? Number(s.actualBalance) : null,
         difference: s.difference ? Number(s.difference) : null,
+        soldProducts,
+        salesList,
         metrics: {
           totalSales,
           cashFromSales,
@@ -397,6 +524,8 @@ export class CashShiftsService {
           pureCashSales,
           mixedSales,
           salesCount: sales.length,
+          soldProducts,
+          salesList,
           incomeMovements,
           expenseMovements,
         },

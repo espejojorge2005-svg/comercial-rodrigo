@@ -71,10 +71,13 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
         difference: closeResult.difference,
         isBlindAudit: closeResult.isBlindAudit,
         salesCount: closeResult.salesCount,
+        totalSales: closeResult.totalSales,
         cashFromSales: closeResult.cashFromSales,
         digitalFromSales: closeResult.digitalFromSales,
         incomeMovements: closeResult.incomeMovements,
         expenseMovements: closeResult.expenseMovements,
+        soldProducts: closeResult.soldProducts || [],
+        salesList: closeResult.salesList || [],
         notes: closeResult.notes || notes,
       }
     : null;
