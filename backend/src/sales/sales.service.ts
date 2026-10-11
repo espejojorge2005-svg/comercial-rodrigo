@@ -352,15 +352,21 @@ export class SalesService {
     if (filter?.startDate || filter?.endDate) {
       const dateFilter: Prisma.DateTimeFilter = {};
       if (filter.startDate) {
-        const start = filter.startDate.includes('T')
-          ? new Date(filter.startDate)
-          : new Date(`${filter.startDate}T00:00:00.000`);
+        const sStr = filter.startDate.trim();
+        const start = sStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(sStr)
+          ? new Date(sStr)
+          : sStr.includes('T')
+            ? new Date(`${sStr}-05:00`)
+            : new Date(`${sStr}T00:00:00.000-05:00`);
         if (!isNaN(start.getTime())) dateFilter.gte = start;
       }
       if (filter.endDate) {
-        const end = filter.endDate.includes('T')
-          ? new Date(filter.endDate)
-          : new Date(`${filter.endDate}T23:59:59.999`);
+        const eStr = filter.endDate.trim();
+        const end = eStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(eStr)
+          ? new Date(eStr)
+          : eStr.includes('T')
+            ? new Date(`${eStr}-05:00`)
+            : new Date(`${eStr}T23:59:59.999-05:00`);
         if (!isNaN(end.getTime())) dateFilter.lte = end;
       }
       if (dateFilter.gte || dateFilter.lte) {

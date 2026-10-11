@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency } from '../../lib/utils.js';
+import {
+  formatCurrency,
+  formatPeruDate,
+  formatPeruTime,
+  formatPeruDateTime,
+} from '../../lib/utils.js';
 import {
   History,
   AlertTriangle,
@@ -188,18 +193,18 @@ export const ShiftAuditView: React.FC = () => {
                       <td className="p-3 text-slate-200 font-medium whitespace-nowrap">{s.user?.name}</td>
 
                       <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                        {new Date(s.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatPeruTime(s.openedAt)}
                         <span className="text-[10px] text-slate-600 block">
-                          {new Date(s.openedAt).toLocaleDateString()}
+                          {formatPeruDate(s.openedAt)}
                         </span>
                       </td>
 
                       <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                         {s.closedAt ? (
                           <>
-                            {new Date(s.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatPeruTime(s.closedAt)}
                             <span className="text-[10px] text-slate-600 block">
-                              {new Date(s.closedAt).toLocaleDateString()}
+                              {formatPeruDate(s.closedAt)}
                             </span>
                           </>
                         ) : (
@@ -305,10 +310,10 @@ export const ShiftAuditView: React.FC = () => {
             </div>
             <p className="text-xs text-slate-400 mb-5">
               Cajero: <span className="text-white font-semibold">{selectedShift.user?.name}</span> |
-              Apertura: <span className="font-mono text-slate-300">{new Date(selectedShift.openedAt).toLocaleString()}</span>
+              Apertura: <span className="font-mono text-slate-300">{formatPeruDateTime(selectedShift.openedAt)}</span>
               {selectedShift.closedAt && (
                 <>
-                  {' '}| Cierre: <span className="font-mono text-slate-300">{new Date(selectedShift.closedAt).toLocaleString()}</span>
+                  {' '}| Cierre: <span className="font-mono text-slate-300">{formatPeruDateTime(selectedShift.closedAt)}</span>
                 </>
               )}
             </p>
@@ -472,7 +477,7 @@ export const ShiftAuditView: React.FC = () => {
                           <div>
                             <span className="font-semibold text-white">{m.reason}</span>
                             <span className="text-[10px] text-slate-500 block">
-                              {new Date(m.createdAt).toLocaleTimeString()}
+                              {formatPeruTime(m.createdAt, true)}
                             </span>
                           </div>
                         </div>

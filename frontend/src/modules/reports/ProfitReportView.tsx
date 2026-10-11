@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency } from '../../lib/utils.js';
+import {
+  formatCurrency,
+  formatPeruDateTime,
+  formatPeruDate,
+  formatPeruTime,
+  getPeruYMD,
+} from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { exportProfitReportExcel } from '../../lib/excelExport.js';
 import { getUnitShortName } from '../../lib/units.js';
@@ -102,10 +108,10 @@ export const ProfitReportView: React.FC = () => {
   const { config } = useConfigStore();
   const [periodPreset, setPeriodPreset] = useState<'today' | 'yesterday' | 'week' | 'month' | 'custom'>('today');
   
-  // Fechas por defecto para hoy
-  const todayStr = new Date().toISOString().split('T')[0];
-  const [customStart, setCustomStart] = useState<string>(todayStr);
-  const [customEnd, setCustomEnd] = useState<string>(todayStr);
+  // Fechas por defecto para hoy en hora de Perú (GMT-5)
+  const initialTodayYMD = getPeruYMD();
+  const [customStart, setCustomStart] = useState<string>(initialTodayYMD);
+  const [customEnd, setCustomEnd] = useState<string>(initialTodayYMD);
 
   const [reportData, setReportData] = useState<ProfitReportResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -113,59 +119,59 @@ export const ProfitReportView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedSale, setSelectedSale] = useState<SaleRecord | null>(null);
 
-  // Calcula rango ISO y etiqueta humana según el preset
+  // Calcula rango ISO con offset -05:00 de Perú y etiqueta humana según el preset
   const getDateRangeParams = useCallback(() => {
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const formatYMD = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const todayYMD = getPeruYMD(); // YYYY-MM-DD en hora peruana
+    const getPeruMidday = (ymdStr: string) => new Date(`${ymdStr}T12:00:00-05:00`);
 
     if (periodPreset === 'today') {
-      const today = formatYMD(now);
       return {
-        startDate: `${today}T00:00:00.000`,
-        endDate: `${today}T23:59:59.999`,
-        label: `Hoy (${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()})`,
+        startDate: `${todayYMD}T00:00:00.000-05:00`,
+        endDate: `${todayYMD}T23:59:59.999-05:00`,
+        label: `Hoy (${formatPeruDate(new Date())})`,
       };
     }
 
     if (periodPreset === 'yesterday') {
-      const yesterday = new Date(now);
-      yesterday.setDate(now.getDate() - 1);
-      const yStr = formatYMD(yesterday);
+      const d = getPeruMidday(todayYMD);
+      d.setDate(d.getDate() - 1);
+      const yesterdayYMD = getPeruYMD(d);
       return {
-        startDate: `${yStr}T00:00:00.000`,
-        endDate: `${yStr}T23:59:59.999`,
-        label: `Ayer (${pad(yesterday.getDate())}/${pad(yesterday.getMonth() + 1)}/${yesterday.getFullYear()})`,
+        startDate: `${yesterdayYMD}T00:00:00.000-05:00`,
+        endDate: `${yesterdayYMD}T23:59:59.999-05:00`,
+        label: `Ayer (${formatPeruDate(d)})`,
       };
     }
 
     if (periodPreset === 'week') {
-      const past = new Date(now);
-      past.setDate(now.getDate() - 6);
+      const d = getPeruMidday(todayYMD);
+      d.setDate(d.getDate() - 6);
+      const weekStartYMD = getPeruYMD(d);
       return {
-        startDate: `${formatYMD(past)}T00:00:00.000`,
-        endDate: `${formatYMD(now)}T23:59:59.999`,
-        label: `Últimos 7 días (${pad(past.getDate())}/${pad(past.getMonth() + 1)} al ${pad(now.getDate())}/${pad(now.getMonth() + 1)})`,
+        startDate: `${weekStartYMD}T00:00:00.000-05:00`,
+        endDate: `${todayYMD}T23:59:59.999-05:00`,
+        label: `Últimos 7 días (${formatPeruDate(d)} al ${formatPeruDate(new Date())})`,
       };
     }
 
     if (periodPreset === 'month') {
-      const year = now.getFullYear();
-      const month = now.getMonth();
-      const firstDay = `${year}-${pad(month + 1)}-01T00:00:00.000`;
-      const lastDayNum = new Date(year, month + 1, 0).getDate();
-      const lastDay = `${year}-${pad(month + 1)}-${pad(lastDayNum)}T23:59:59.999`;
+      const [yearStr, monthStr] = todayYMD.split('-');
+      const year = parseInt(yearStr, 10);
+      const month = parseInt(monthStr, 10);
+      const firstDayYMD = `${yearStr}-${monthStr}-01`;
+      const lastDayNum = new Date(year, month, 0).getDate();
+      const lastDayYMD = `${yearStr}-${monthStr}-${String(lastDayNum).padStart(2, '0')}`;
       return {
-        startDate: firstDay,
-        endDate: lastDay,
-        label: `Este Mes (${pad(month + 1)}/${year})`,
+        startDate: `${firstDayYMD}T00:00:00.000-05:00`,
+        endDate: `${lastDayYMD}T23:59:59.999-05:00`,
+        label: `Este Mes (${monthStr}/${yearStr})`,
       };
     }
 
     // Custom
     return {
-      startDate: customStart ? `${customStart}T00:00:00.000` : undefined,
-      endDate: customEnd ? `${customEnd}T23:59:59.999` : undefined,
+      startDate: customStart ? `${customStart}T00:00:00.000-05:00` : undefined,
+      endDate: customEnd ? `${customEnd}T23:59:59.999-05:00` : undefined,
       label: `Del ${customStart} al ${customEnd}`,
     };
   }, [periodPreset, customStart, customEnd]);
@@ -722,12 +728,7 @@ export const ProfitReportView: React.FC = () => {
                     <tr key={s.id} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3 font-bold text-white font-mono">#{s.saleNumber}</td>
                       <td className="px-4 py-3 text-slate-400 text-[11px]">
-                        {new Date(s.createdAt).toLocaleDateString('es-PE', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatPeruDateTime(s.createdAt, false)}
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-white font-medium">{s.cashRegister}</div>
@@ -803,12 +804,7 @@ export const ProfitReportView: React.FC = () => {
                   (reportData?.expenses || []).map((e) => (
                     <tr key={e.id} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3 text-slate-400 text-[11px]">
-                        {new Date(e.createdAt).toLocaleDateString('es-PE', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatPeruDateTime(e.createdAt, false)}
                       </td>
                       <td className="px-4 py-3 text-white font-medium">{e.cashRegister}</td>
                       <td className="px-4 py-3 text-slate-300">{e.cashier}</td>
@@ -860,7 +856,7 @@ export const ProfitReportView: React.FC = () => {
               <div>
                 <span className="text-slate-500 block text-[10px]">Fecha</span>
                 <span className="font-semibold text-white">
-                  {new Date(selectedSale.createdAt).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
+                  {formatPeruTime(selectedSale.createdAt)}
                 </span>
               </div>
             </div>

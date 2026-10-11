@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
 import { X, Lock, Coins, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 interface CloseShiftModalProps {
@@ -124,7 +124,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
                 <h3 className="text-xl font-bold text-white">Cierre de Caja & Arqueo</h3>
                 <p className="text-xs text-slate-400">
                   {activeShift.cashRegister?.name} • Iniciada a las{' '}
-                  {new Date(activeShift.openedAt).toLocaleTimeString()}
+                  {formatPeruTime(activeShift.openedAt)}
                 </p>
               </div>
             </div>

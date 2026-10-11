@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
 import {
   X,
   History,
@@ -216,7 +216,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                             )}
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">
-                            {new Date(sale.createdAt).toLocaleTimeString()} • Cajero:{' '}
+                            {formatPeruTime(sale.createdAt)} • Cajero:{' '}
                             {sale.user?.name}
                           </p>
                         </div>

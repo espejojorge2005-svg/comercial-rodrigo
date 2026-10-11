@@ -3,7 +3,7 @@ import { useShiftStore } from '../../store/useShiftStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
 import { useCartStore } from '../../store/useCartStore.js';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
 import {
   ShoppingCart,
   CreditCard,
@@ -150,7 +150,7 @@ export const PosView: React.FC = () => {
             </h2>
             <p className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
               <Clock className="w-3.5 h-3.5 text-slate-500" />
-              <span>Apertura: {activeShift?.openedAt ? new Date(activeShift.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--'}</span>
+              <span>Apertura: {activeShift?.openedAt ? formatPeruTime(activeShift.openedAt) : '--'}</span>
               <span>•</span>
               <span>Cajero: <strong className="text-slate-200">{user?.name}</strong></span>
             </p>

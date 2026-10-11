@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { Printer, CheckCircle, ArrowRight, X } from 'lucide-react';
 
@@ -185,8 +185,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             <div className="flex justify-between">
               <span>FECHA:</span>
               <span>
-                {new Date(saleData.createdAt || Date.now()).toLocaleDateString()}{' '}
-                {new Date(saleData.createdAt || Date.now()).toLocaleTimeString()}
+                {formatPeruDateTime(saleData.createdAt || Date.now(), true)}
               </span>
             </div>
             <div className="flex justify-between">

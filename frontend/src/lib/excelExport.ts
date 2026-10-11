@@ -1,21 +1,13 @@
 import * as XLSX from 'xlsx';
 import type { Product, KardexMovement } from '../types/index.js';
 import { getUnitBadge, getUnitShortName } from './units.js';
+import { formatPeruDateTime, getPeruYMD } from './utils.js';
 
 /**
- * Función auxiliar para formatear fecha a string legible: DD/MM/YYYY HH:mm
+ * Función auxiliar para formatear fecha a string legible en hora peruana: DD/MM/YYYY HH:mm
  */
 const formatDateTime = (dateStr?: string | Date | null): string => {
-  if (!dateStr) return '--';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return '--';
-  return d.toLocaleString('es-PE', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatPeruDateTime(dateStr, false);
 };
 
 /**
@@ -86,7 +78,7 @@ export const exportKardexAndInventoryExcel = (
   storeName = 'Comercial Rodrigo',
 ) => {
   const wb = XLSX.utils.book_new();
-  const dateSuffix = new Date().toISOString().split('T')[0];
+  const dateSuffix = getPeruYMD();
 
   // 1. HOJA 1: Stock Valorizado Actual
   const stockRows = products.map((p) => {
@@ -187,7 +179,7 @@ export const exportShiftAuditExcel = (
   storeName = 'Comercial Rodrigo',
 ) => {
   const wb = XLSX.utils.book_new();
-  const dateSuffix = new Date().toISOString().split('T')[0];
+  const dateSuffix = getPeruYMD();
 
   // 1. HOJA 1: Resumen de Turnos y Arqueos Ciegos
   const shiftRows = shifts.map((s) => {
@@ -351,7 +343,7 @@ export const exportProfitReportExcel = (
   storeName = 'Comercial Rodrigo',
 ) => {
   const wb = XLSX.utils.book_new();
-  const dateSuffix = new Date().toISOString().split('T')[0];
+  const dateSuffix = getPeruYMD();
   const { summary, products, sales, expenses = [] } = reportData;
 
   // 1. HOJA 1: Resumen Ejecutivo Financiero

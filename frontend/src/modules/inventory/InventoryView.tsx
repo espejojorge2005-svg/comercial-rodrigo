@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import {
   Package,
   Plus,
@@ -501,13 +501,7 @@ export const InventoryView: React.FC = () => {
                     return (
                       <tr key={m.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                          {new Date(m.createdAt).toLocaleString([], {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {formatPeruDateTime(m.createdAt)}
                         </td>
                         <td className="p-3 font-bold text-white whitespace-nowrap">
                           <div>{m.productName}</div>

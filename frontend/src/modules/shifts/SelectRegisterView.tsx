@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
 import {
   CreditCard,
   LogOut,
@@ -157,7 +157,7 @@ export const SelectRegisterView: React.FC = () => {
                         <div className="flex items-center gap-1.5 text-slate-400">
                           <Clock className="w-3 h-3 text-slate-500" />
                           <span>
-                            Abierta: {new Date(reg.activeShift.openedAt).toLocaleTimeString()}
+                            Abierta: {formatPeruTime(reg.activeShift.openedAt)}
                           </span>
                         </div>
                       </div>

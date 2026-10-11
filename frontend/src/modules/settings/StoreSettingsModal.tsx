@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useConfigStore } from '../../store/useConfigStore.js';
+import { formatPeruDate } from '../../lib/utils.js';
 import {
   X,
   Store,
@@ -270,7 +271,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
                   </div>
                   <div className="flex justify-between">
                     <span>FECHA:</span>
-                    <span>{new Date().toLocaleDateString()}</span>
+                    <span>{formatPeruDate(new Date())}</span>
                   </div>
                 </div>
 
