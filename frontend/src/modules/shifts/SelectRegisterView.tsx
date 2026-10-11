@@ -12,7 +12,6 @@ import {
   User,
   AlertCircle,
   ArrowRight,
-  Store,
 } from 'lucide-react';
 
 export const SelectRegisterView: React.FC = () => {

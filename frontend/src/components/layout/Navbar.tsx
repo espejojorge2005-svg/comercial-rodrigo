@@ -6,7 +6,6 @@ import { CloseShiftModal } from '../../modules/shifts/CloseShiftModal.js';
 import { StoreSettingsModal } from '../../modules/settings/StoreSettingsModal.js';
 import { ConnectionStatusBadge } from './OfflineStatusBanner.js';
 import {
-  Store,
   ShoppingCart,
   Package,
   History,

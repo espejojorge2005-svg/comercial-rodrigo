@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore.js';
-import { Store, ShieldCheck, User as UserIcon, Lock, ArrowRight, AlertCircle, KeyRound, Headphones } from 'lucide-react';
+import { ShieldCheck, User as UserIcon, Lock, ArrowRight, AlertCircle, KeyRound, Headphones } from 'lucide-react';
 
 export const LoginView: React.FC = () => {
   const { login, isLoading, error } = useAuthStore();
