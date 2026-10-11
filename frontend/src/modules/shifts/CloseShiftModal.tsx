@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
 import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
-import { X, Lock, Coins, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { X, Lock, Coins, ShieldCheck, AlertTriangle, Printer } from 'lucide-react';
+import { ShiftReceiptTicketModal, type ShiftReceiptData } from './ShiftReceiptTicketModal.js';
 
 interface CloseShiftModalProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const [notes, setNotes] = useState<string>('');
   const [closeResult, setCloseResult] = useState<any>(null);
   const [showWarningTip, setShowWarningTip] = useState<boolean>(true);
+  const [showTicketModal, setShowTicketModal] = useState<boolean>(false);
 
   if (!isOpen || !activeShift) return null;
 
@@ -33,87 +35,133 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
 
   const isAdmin = user?.role === 'ADMIN';
 
+  const ticketData: ShiftReceiptData | null = closeResult
+    ? {
+        shiftId: closeResult.shiftId,
+        cajaName: closeResult.caja || activeShift.cashRegister?.name || 'Caja',
+        cajaIdentifier: closeResult.cajaIdentifier || activeShift.cashRegister?.identifier,
+        cashierName: closeResult.cashierName || user?.name || 'Cajero',
+        openedAt: closeResult.openedAt || activeShift.openedAt,
+        closedAt: closeResult.closedAt || new Date(),
+        initialBalance:
+          closeResult.initialBalance !== undefined
+            ? closeResult.initialBalance
+            : Number(activeShift.initialBalance) || 0,
+        actualBalance:
+          closeResult.actualBalance !== undefined
+            ? closeResult.actualBalance
+            : parseFloat(actualBalance) || 0,
+        expectedBalance: closeResult.expectedBalance,
+        difference: closeResult.difference,
+        isBlindAudit: closeResult.isBlindAudit,
+        salesCount: closeResult.salesCount,
+        cashFromSales: closeResult.cashFromSales,
+        digitalFromSales: closeResult.digitalFromSales,
+        incomeMovements: closeResult.incomeMovements,
+        expenseMovements: closeResult.expenseMovements,
+        notes: closeResult.notes || notes,
+      }
+    : null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative text-slate-100">
-        <button
-          onClick={onClose}
-          className="absolute right-5 top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
-        >
-          <X className="w-5 h-5" />
-        </button>
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative text-slate-100">
+          <button
+            onClick={() => {
+              setCloseResult(null);
+              setShowTicketModal(false);
+              onClose();
+            }}
+            className="absolute right-5 top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
 
-        {closeResult ? (
-          /* Vista de Confirmación de Cierre */
-          <div className="text-center py-4 space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto">
-              <ShieldCheck className="w-8 h-8" />
-            </div>
-
-            <h3 className="text-xl font-bold text-white">¡Turno de Caja Cerrado!</h3>
-            <p className="text-xs text-slate-300 max-w-sm mx-auto">{closeResult.message}</p>
-
-            {/* Si es Admin, mostrar el resultado del arqueo */}
-            {isAdmin && closeResult.hasDiscrepancy !== undefined && (
-              <div className="mt-4 p-4 rounded-2xl bg-slate-950 border border-slate-800 text-left space-y-2 text-xs">
-                <div className="flex justify-between text-slate-400">
-                  <span>Fondo Inicial:</span>
-                  <span className="font-semibold text-white">
-                    {formatCurrency(closeResult.initialBalance)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Ventas en Efectivo:</span>
-                  <span className="font-semibold text-emerald-400">
-                    +{formatCurrency(closeResult.cashFromSales)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Movimientos de Caja:</span>
-                  <span className="font-semibold text-slate-300">
-                    +{formatCurrency(closeResult.incomeMovements)} / -
-                    {formatCurrency(closeResult.expenseMovements)}
-                  </span>
-                </div>
-                <div className="border-t border-slate-800 pt-2 flex justify-between text-slate-300">
-                  <span>Saldo Esperado:</span>
-                  <span className="font-bold text-white">
-                    {formatCurrency(closeResult.expectedBalance)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-slate-300">
-                  <span>Efectivo Contado (Real):</span>
-                  <span className="font-bold text-white">
-                    {formatCurrency(closeResult.actualBalance)}
-                  </span>
-                </div>
-
-                <div
-                  className={`border-t border-slate-800 pt-2 flex justify-between font-bold text-sm ${
-                    closeResult.difference === 0
-                      ? 'text-emerald-400'
-                      : closeResult.difference > 0
-                        ? 'text-blue-400'
-                        : 'text-rose-400'
-                  }`}
-                >
-                  <span>Diferencia ({closeResult.discrepancyType}):</span>
-                  <span>{formatCurrency(closeResult.difference)}</span>
-                </div>
+          {closeResult ? (
+            /* Vista de Confirmación de Cierre */
+            <div className="text-center py-4 space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto">
+                <ShieldCheck className="w-8 h-8" />
               </div>
-            )}
 
-            <button
-              onClick={() => {
-                setCloseResult(null);
-                onClose();
-              }}
-              className="w-full mt-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm text-white transition-all cursor-pointer"
-            >
-              Aceptar y Salir
-            </button>
-          </div>
-        ) : (
+              <h3 className="text-xl font-bold text-white">¡Turno de Caja Cerrado!</h3>
+              <p className="text-xs text-slate-300 max-w-sm mx-auto">{closeResult.message}</p>
+
+              {/* Si es Admin, mostrar el resultado del arqueo */}
+              {isAdmin && closeResult.hasDiscrepancy !== undefined && (
+                <div className="mt-4 p-4 rounded-2xl bg-slate-950 border border-slate-800 text-left space-y-2 text-xs">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Fondo Inicial:</span>
+                    <span className="font-semibold text-white">
+                      {formatCurrency(closeResult.initialBalance)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Ventas en Efectivo:</span>
+                    <span className="font-semibold text-emerald-400">
+                      +{formatCurrency(closeResult.cashFromSales)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Movimientos de Caja:</span>
+                    <span className="font-semibold text-slate-300">
+                      +{formatCurrency(closeResult.incomeMovements)} / -
+                      {formatCurrency(closeResult.expenseMovements)}
+                    </span>
+                  </div>
+                  <div className="border-t border-slate-800 pt-2 flex justify-between text-slate-300">
+                    <span>Saldo Esperado:</span>
+                    <span className="font-bold text-white">
+                      {formatCurrency(closeResult.expectedBalance)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>Efectivo Contado (Real):</span>
+                    <span className="font-bold text-white">
+                      {formatCurrency(closeResult.actualBalance)}
+                    </span>
+                  </div>
+
+                  <div
+                    className={`border-t border-slate-800 pt-2 flex justify-between font-bold text-sm ${
+                      closeResult.difference === 0
+                        ? 'text-emerald-400'
+                        : closeResult.difference > 0
+                          ? 'text-blue-400'
+                          : 'text-rose-400'
+                    }`}
+                  >
+                    <span>Diferencia ({closeResult.discrepancyType}):</span>
+                    <span>{formatCurrency(closeResult.difference)}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-3 mt-4 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTicketModal(true)}
+                  className="w-full sm:w-1/2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white shadow-lg shadow-emerald-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Imprimir Ticket Térmico</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCloseResult(null);
+                    setShowTicketModal(false);
+                    onClose();
+                  }}
+                  className="w-full sm:w-1/2 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-slate-300 transition-all cursor-pointer"
+                >
+                  Aceptar y Salir
+                </button>
+              </div>
+            </div>
+          ) : (
           /* Formulario de Arqueo Ciego */
           <div>
             <div className="flex items-center gap-3 mb-4">
@@ -232,5 +280,12 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
         )}
       </div>
     </div>
+
+      <ShiftReceiptTicketModal
+        isOpen={showTicketModal}
+        onClose={() => setShowTicketModal(false)}
+        shiftData={ticketData}
+      />
+    </>
   );
 };

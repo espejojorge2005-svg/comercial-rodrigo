@@ -24,9 +24,11 @@ import {
   CheckCircle2,
   FileText,
   FileSpreadsheet,
+  Printer,
 } from 'lucide-react';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { exportShiftAuditExcel } from '../../lib/excelExport.js';
+import { ShiftReceiptTicketModal } from './ShiftReceiptTicketModal.js';
 
 export const ShiftAuditView: React.FC = () => {
   const { config } = useConfigStore();
@@ -34,6 +36,7 @@ export const ShiftAuditView: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedShift, setSelectedShift] = useState<any | null>(null);
+  const [ticketShift, setTicketShift] = useState<any | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setIsLoading(true);
@@ -166,7 +169,7 @@ export const ShiftAuditView: React.FC = () => {
                 <th className="p-3.5 text-right w-32">Esperado Gaveta</th>
                 <th className="p-3.5 text-center w-36">Diferencia Arqueo</th>
                 <th className="p-3.5 text-center w-24">Estado</th>
-                <th className="p-3.5 text-center w-20">Auditoría</th>
+                <th className="p-3.5 text-center w-28">Auditoría</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
@@ -282,14 +285,24 @@ export const ShiftAuditView: React.FC = () => {
                       </td>
 
                       <td className="p-3.5 text-center whitespace-nowrap">
-                        <button
-                          onClick={() => setSelectedShift(s)}
-                          className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-all cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-semibold border border-slate-700"
-                          title="Inspeccionar auditoría completa de este turno"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Detalle</span>
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => setSelectedShift(s)}
+                            className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-all cursor-pointer inline-flex items-center gap-1 text-[11px] font-semibold border border-slate-700 shadow-sm"
+                            title="Inspeccionar auditoría completa de este turno"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Detalle</span>
+                          </button>
+
+                          <button
+                            onClick={() => setTicketShift(s)}
+                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white transition-all cursor-pointer inline-flex items-center justify-center text-[11px] font-semibold border border-slate-700 shadow-sm"
+                            title="Imprimir ticket térmico de cierre (Corte Z)"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-emerald-400 hover:text-white" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -356,21 +369,34 @@ export const ShiftAuditView: React.FC = () => {
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-2.5 mb-1">
-              <History className="w-5 h-5 text-indigo-400" />
-              <h3 className="text-lg font-bold text-white">
-                Auditoría Completa de Turno: {selectedShift.cashRegister?.name}
-              </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pr-10">
+              <div>
+                <div className="flex items-center gap-2.5 mb-1">
+                  <History className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-lg font-bold text-white">
+                    Auditoría Completa de Turno: {selectedShift.cashRegister?.name}
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Cajero: <span className="text-white font-semibold">{selectedShift.user?.name}</span> |
+                  Apertura: <span className="font-mono text-slate-300">{formatPeruDateTime(selectedShift.openedAt)}</span>
+                  {selectedShift.closedAt && (
+                    <>
+                      {' '}| Cierre: <span className="font-mono text-slate-300">{formatPeruDateTime(selectedShift.closedAt)}</span>
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setTicketShift(selectedShift)}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+                title="Imprimir Corte Z en Tiquetera Térmica"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Imprimir Corte Z</span>
+              </button>
             </div>
-            <p className="text-xs text-slate-400 mb-5">
-              Cajero: <span className="text-white font-semibold">{selectedShift.user?.name}</span> |
-              Apertura: <span className="font-mono text-slate-300">{formatPeruDateTime(selectedShift.openedAt)}</span>
-              {selectedShift.closedAt && (
-                <>
-                  {' '}| Cierre: <span className="font-mono text-slate-300">{formatPeruDateTime(selectedShift.closedAt)}</span>
-                </>
-              )}
-            </p>
 
             {/* Cuadro de Arqueo Físico vs Esperado */}
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 mb-5 space-y-3">
@@ -561,6 +587,40 @@ export const ShiftAuditView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal de Impresión Térmica de Corte Z */}
+      <ShiftReceiptTicketModal
+        isOpen={Boolean(ticketShift)}
+        onClose={() => setTicketShift(null)}
+        shiftData={
+          ticketShift
+            ? {
+                shiftId: ticketShift.id,
+                cajaName: ticketShift.cashRegister?.name || 'Caja',
+                cajaIdentifier: ticketShift.cashRegister?.identifier,
+                cashierName: ticketShift.user?.name || 'Cajero',
+                openedAt: ticketShift.openedAt,
+                closedAt: ticketShift.closedAt,
+                initialBalance: Number(ticketShift.initialBalance) || 0,
+                actualBalance: ticketShift.actualBalance !== null ? Number(ticketShift.actualBalance) : 0,
+                expectedBalance: ticketShift.expectedBalance !== null ? Number(ticketShift.expectedBalance) : null,
+                difference: ticketShift.difference !== null ? Number(ticketShift.difference) : null,
+                isBlindAudit: false,
+                salesCount: ticketShift.metrics?.salesCount || 0,
+                cashFromSales: ticketShift.metrics?.cashFromSales || 0,
+                digitalFromSales: ticketShift.metrics?.digitalFromSales || 0,
+                yapePlinSales: ticketShift.metrics?.yapePlinSales || 0,
+                cardSales: ticketShift.metrics?.cardSales || 0,
+                pureCashSales: ticketShift.metrics?.pureCashSales || 0,
+                mixedSales: ticketShift.metrics?.mixedSales || 0,
+                totalSales: ticketShift.metrics?.totalSales || 0,
+                incomeMovements: ticketShift.metrics?.incomeMovements || 0,
+                expenseMovements: ticketShift.metrics?.expenseMovements || 0,
+                notes: ticketShift.notes || null,
+              }
+            : null
+        }
+      />
     </div>
   );
 };

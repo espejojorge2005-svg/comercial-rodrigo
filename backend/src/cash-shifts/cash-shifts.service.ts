@@ -251,8 +251,16 @@ export class CashShiftsService {
         message: 'Turno cerrado exitosamente. Su arqueo ha sido registrado para revisión de administración.',
         shiftId: updatedShift.id,
         caja: updatedShift.cashRegister.name,
+        cajaIdentifier: updatedShift.cashRegister.identifier,
+        cashierName: updatedShift.user?.name,
+        openedAt: shift.openedAt,
         closedAt: updatedShift.closedAt,
+        initialBalance: Number(shift.initialBalance),
+        actualBalance: dto.actualBalance,
         reportedAmount: dto.actualBalance,
+        salesCount: sales.length,
+        notes: dto.notes || shift.notes || '',
+        isBlindAudit: true,
       };
     }
 
@@ -261,6 +269,9 @@ export class CashShiftsService {
       message: 'Turno cerrado y auditado exitosamente por administración',
       shiftId: updatedShift.id,
       caja: updatedShift.cashRegister.name,
+      cajaIdentifier: updatedShift.cashRegister.identifier,
+      cashierName: updatedShift.user?.name,
+      openedAt: shift.openedAt,
       closedAt: updatedShift.closedAt,
       initialBalance: Number(shift.initialBalance),
       cashFromSales,
@@ -269,9 +280,13 @@ export class CashShiftsService {
       expenseMovements,
       expectedBalance: expectedCashInDrawer,
       actualBalance: dto.actualBalance,
+      reportedAmount: dto.actualBalance,
       difference,
       hasDiscrepancy: difference !== 0,
       discrepancyType: difference > 0 ? 'SOBRANTE' : difference < 0 ? 'FALTANTE' : 'EXACTO',
+      salesCount: sales.length,
+      notes: dto.notes || shift.notes || '',
+      isBlindAudit: false,
     };
   }
 
