@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { Printer, CheckCircle, ArrowRight, X } from 'lucide-react';
@@ -15,6 +15,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   saleData,
 }) => {
   const { config } = useConfigStore();
+  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>('80mm');
 
   if (!isOpen || !saleData) return null;
 
@@ -59,6 +60,10 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
       return;
     }
 
+    const is58 = paperWidth === '58mm';
+    const targetWidth = is58 ? '48mm' : '72mm';
+    const baseFontSize = is58 ? '9.5px' : '11px';
+
     iframeDoc.open();
     iframeDoc.write(`
       <!DOCTYPE html>
@@ -68,12 +73,10 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
           <title>Ticket #${String(saleData.saleNumber || '0001').padStart(6, '0')}</title>
           <style>
             @page {
-              size: 80mm auto;
               margin: 0mm;
             }
             @media print {
               html, body {
-                width: 100% !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 background: #fff !important;
@@ -81,44 +84,57 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               }
             }
             * {
-              box-sizing: border-box;
+              box-sizing: border-box !important;
               margin: 0;
               padding: 0;
             }
             body {
-              width: 72mm;
-              margin: 0 auto;
-              padding: 2mm 1mm 4mm 1mm;
-              font-family: 'Courier New', Courier, monospace, system-ui;
-              font-size: 11px;
-              line-height: 1.25;
-              color: #000;
-              background: #fff;
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: 'Courier New', Courier, monospace, monospace;
+              background: #fff !important;
+              color: #000 !important;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
             }
-            .text-center { text-align: center; }
-            .text-right { text-align: right; }
-            .text-left { text-align: left; }
-            .font-bold { font-weight: bold; }
-            .font-extrabold { font-weight: 800; }
-            .uppercase { text-transform: uppercase; }
-            .border-b { border-bottom: 1px dashed #000; }
-            .border-t { border-top: 1px dashed #000; }
-            .pb-2 { padding-bottom: 4px; }
-            .pt-2 { padding-top: 4px; }
-            .mb-2 { margin-bottom: 4px; }
-            .mt-2 { margin-top: 4px; }
-            .space-y-1 > div { margin-bottom: 2px; }
-            .flex { display: flex; }
-            .justify-between { justify-content: space-between; }
-            table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-            th { text-align: left; border-bottom: 1px dashed #000; padding: 2px 0; font-size: 10px; font-weight: bold; }
-            td { padding: 2px 0; vertical-align: top; }
+            .ticket-container {
+              width: ${targetWidth} !important;
+              max-width: ${targetWidth} !important;
+              min-width: ${targetWidth} !important;
+              margin: 0 auto !important;
+              padding: 2mm 1mm 4mm 1mm !important;
+              font-size: ${baseFontSize} !important;
+              line-height: 1.25 !important;
+              overflow: hidden !important;
+            }
+            .text-center { text-align: center !important; }
+            .text-right { text-align: right !important; }
+            .text-left { text-align: left !important; }
+            .font-bold { font-weight: bold !important; }
+            .font-extrabold { font-weight: 800 !important; }
+            .uppercase { text-transform: uppercase !important; }
+            .border-b { border-bottom: 1px dashed #000 !important; }
+            .border-t { border-top: 1px dashed #000 !important; }
+            .pb-3 { padding-bottom: 6px !important; }
+            .mb-3 { margin-bottom: 6px !important; }
+            .pb-2\.5 { padding-bottom: 5px !important; }
+            .mb-2\.5 { margin-bottom: 5px !important; }
+            .pt-2\.5 { padding-top: 5px !important; }
+            .pt-1 { padding-top: 3px !important; }
+            .space-y-1 > div { margin-bottom: 2px !important; }
+            .flex { display: flex !important; }
+            .justify-between { justify-content: space-between !important; }
+            table { width: 100% !important; border-collapse: collapse !important; font-size: inherit !important; margin: 3px 0 !important; }
+            th { text-align: left !important; border-bottom: 1px dashed #000 !important; padding: 2px 0 !important; font-size: inherit !important; font-weight: bold !important; }
+            td { padding: 2px 0 !important; vertical-align: top !important; }
+            .whitespace-nowrap { white-space: nowrap !important; }
+            .truncate { overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
           </style>
         </head>
         <body>
-          ${printElement.innerHTML}
+          <div class="ticket-container">
+            ${printElement.innerHTML}
+          </div>
         </body>
       </html>
     `);
@@ -131,11 +147,11 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative text-slate-100 max-h-[95vh] flex flex-col justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative text-slate-100 max-h-[95vh] flex flex-col justify-between">
         <button
           onClick={onClose}
-          className="absolute right-5 top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer print:hidden"
+          className="absolute right-4 top-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer print:hidden"
         >
           <X className="w-5 h-5" />
         </button>
@@ -155,16 +171,45 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             {saleData.isOffline ? '¡Venta Guardada Localmente (Offline)!' : '¡Venta Realizada con Éxito!'}
           </h3>
           <p className="text-xs text-slate-400">
-            {saleData.isOffline
-              ? 'Guardado en la memoria del equipo. Se enviará a la nube cuando haya internet.'
-              : 'Comprobante listo para imprimir en tiquetera térmica'}
+            Formato optimizado para tiqueteras térmicas de 80mm / 58mm
           </p>
+
+          {/* Selector de Ancho de Tiquetera (80mm vs 58mm) */}
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <span className="text-[11px] text-slate-400">Ancho tiquetera:</span>
+            <div className="inline-flex p-1 bg-slate-950 border border-slate-800 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setPaperWidth('80mm')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  paperWidth === '80mm'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                80mm (Estándar)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaperWidth('58mm')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  paperWidth === '58mm'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                58mm (Mini)
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* VISTA PREVIA DEL TICKET TÉRMICO (58mm / 80mm) */}
+        {/* VISTA PREVIA DEL TICKET TÉRMICO */}
         <div
           id="printable-ticket"
-          className="my-4 p-5 bg-white text-slate-900 rounded-2xl font-mono text-xs shadow-inner overflow-y-auto max-h-[420px] print:max-h-none print:shadow-none print:p-0 print:m-0 print:rounded-none"
+          className={`my-3 p-4 bg-white text-slate-900 rounded-2xl font-mono text-xs shadow-inner overflow-y-auto max-h-[420px] mx-auto w-full transition-all ${
+            paperWidth === '58mm' ? 'max-w-[270px]' : 'max-w-[320px]'
+          }`}
         >
           {saleData.isOffline && (
             <div className="text-[10px] bg-amber-100 text-amber-900 border border-dashed border-amber-400 p-1 text-center font-bold mb-2">
@@ -271,29 +316,28 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             </div>
 
             {saleData.paymentMethod === 'MIXED' && (
-              <div className="text-[10px] text-slate-600 pl-2 space-y-0.5">
+              <div className="pl-2 space-y-0.5 text-[10px] text-slate-600">
                 <div className="flex justify-between">
                   <span>• Efectivo:</span>
-                  <span>{formatCurrency(saleData.cashPaid)}</span>
+                  <span>{formatCurrency(saleData.cashPaid || 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>• Digital:</span>
-                  <span>{formatCurrency(saleData.digitalPaid)}</span>
+                  <span>• Digital (Yape/Plin/Tarj):</span>
+                  <span>{formatCurrency(saleData.digitalPaid || 0)}</span>
                 </div>
               </div>
             )}
 
-            {saleData.paymentMethod === 'CASH' && Number(saleData.cashPaid) > Number(saleData.totalAmount) && (
-              <div className="flex justify-between text-slate-600">
-                <span>EFECTIVO RECIBIDO:</span>
-                <span>{formatCurrency(saleData.cashPaid)}</span>
-              </div>
-            )}
-
-            {Number(saleData.changeAmount) > 0 && (
-              <div className="flex justify-between font-bold text-slate-900 border-t border-dashed border-slate-300 pt-1">
-                <span>VUELTO ENTREGADO:</span>
-                <span>{formatCurrency(saleData.changeAmount)}</span>
+            {saleData.paymentMethod === 'CASH' && saleData.amountReceived && (
+              <div className="pt-1 border-t border-dotted border-slate-300 space-y-0.5 text-[10px] text-slate-600">
+                <div className="flex justify-between">
+                  <span>PAGÓ CON:</span>
+                  <span>{formatCurrency(saleData.amountReceived)}</span>
+                </div>
+                <div className="flex justify-between font-bold text-slate-900">
+                  <span>VUELTO:</span>
+                  <span>{formatCurrency(saleData.changeGiven || 0)}</span>
+                </div>
               </div>
             )}
           </div>
@@ -308,18 +352,18 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         <div className="flex gap-3 pt-2 print:hidden">
           <button
             onClick={handlePrint}
-            className="w-1/2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-white border border-slate-700 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            className="w-1/2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
-            <Printer className="w-4 h-4 text-slate-300" />
-            <span>Imprimir Ticket</span>
+            <Printer className="w-4 h-4" />
+            <span>Imprimir Ticket ({paperWidth})</span>
           </button>
 
           <button
             onClick={onClose}
-            className="w-1/2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
+            className="w-1/2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-white border border-slate-700 flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <span>Nueva Venta</span>
-            <ArrowRight className="w-4 h-4" />
+            <ArrowRight className="w-4 h-4 text-slate-300" />
           </button>
         </div>
       </div>

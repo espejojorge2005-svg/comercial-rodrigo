@@ -118,12 +118,10 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
           <title>Corte_Z_${shiftData.cajaIdentifier || 'Caja'}_${formatPeruDate(shiftData.closedAt || new Date()).replace(/\//g, '-')}</title>
           <style>
             @page {
-              size: ${paperWidth} auto;
               margin: 0mm;
             }
             @media print {
               html, body {
-                width: 100% !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 background: #fff !important;
@@ -131,40 +129,48 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
               }
             }
             * {
-              box-sizing: border-box;
+              box-sizing: border-box !important;
               margin: 0;
               padding: 0;
             }
             body {
-              width: ${containerWidth};
-              margin: 0 auto;
-              padding: 2mm 1mm 4mm 1mm;
-              font-family: 'Courier New', Courier, monospace, system-ui;
-              font-size: ${baseFontSize};
-              line-height: 1.25;
-              color: #000;
-              background: #fff;
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: 'Courier New', Courier, monospace, monospace;
+              background: #fff !important;
+              color: #000 !important;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
             }
-            .text-center { text-align: center; }
-            .text-right { text-align: right; }
-            .text-left { text-align: left; }
-            .font-bold { font-weight: bold; }
-            .uppercase { text-transform: uppercase; }
-            .divider { border-bottom: 1px dashed #000; margin: 4px 0; }
-            .divider-double { border-bottom: 2px solid #000; margin: 4px 0; }
-            .row { display: flex; justify-content: space-between; margin-bottom: 1.5px; }
-            .box { border: 1px solid #000; padding: 4px; margin: 4px 0; text-align: center; }
-            table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: inherit; }
-            th { border-bottom: 1px dashed #000; padding: 2px 0; text-align: left; font-weight: bold; }
-            td { padding: 1.5px 0; }
-            .sign-box { margin-top: 18px; text-align: center; }
-            .sign-line { border-top: 1px solid #000; width: 75%; margin: 20px auto 3px auto; }
+            .ticket-container {
+              width: ${containerWidth} !important;
+              max-width: ${containerWidth} !important;
+              min-width: ${containerWidth} !important;
+              margin: 0 auto !important;
+              padding: 2mm 1mm 4mm 1mm !important;
+              font-size: ${baseFontSize} !important;
+              line-height: 1.25 !important;
+              overflow: hidden !important;
+            }
+            .text-center { text-align: center !important; }
+            .text-right { text-align: right !important; }
+            .text-left { text-align: left !important; }
+            .font-bold { font-weight: bold !important; }
+            .uppercase { text-transform: uppercase !important; }
+            .divider { border-bottom: 1px dashed #000 !important; margin: 4px 0 !important; }
+            .divider-double { border-bottom: 2px solid #000 !important; margin: 4px 0 !important; }
+            .row { display: flex !important; justify-content: space-between !important; margin-bottom: 1.5px !important; }
+            .box { border: 1px solid #000 !important; padding: 4px !important; margin: 4px 0 !important; text-align: center !important; }
+            table { width: 100% !important; border-collapse: collapse !important; margin: 2px 0 !important; font-size: inherit !important; }
+            th { border-bottom: 1px dashed #000 !important; padding: 2px 0 !important; text-align: left !important; font-weight: bold !important; }
+            td { padding: 1.5px 0 !important; }
+            .sign-box { margin-top: 18px !important; text-align: center !important; }
+            .sign-line { border-top: 1px solid #000 !important; width: 75% !important; margin: 20px auto 3px auto !important; }
           </style>
         </head>
         <body>
-          <!-- MEMBRETE EMPRESA -->
+          <div class="ticket-container">
+            <!-- MEMBRETE EMPRESA -->
           <div class="text-center">
             <div class="font-bold uppercase" style="font-size: ${titleFontSize}; letter-spacing: 1px;">${config.name}</div>
             ${config.subtitle ? `<div style="font-size: 9px; margin-top: 1px;">${config.subtitle}</div>` : ''}
@@ -291,7 +297,6 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
             <div class="sign-line"></div>
             <div class="font-bold uppercase" style="font-size: 9px;">${shiftData.cashierName}</div>
             <div style="font-size: 8.5px; color: #444;">Firma Cajero(a) • Entregué Conforme</div>
-            <div style="font-size: 8px; color: #666;">DNI: ____________________</div>
 
             <div class="sign-line" style="margin-top: 18px;"></div>
             <div class="font-bold" style="font-size: 9px;">ADMINISTRACIÓN</div>
@@ -302,6 +307,7 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
           <div class="divider" style="margin-top: 8px;"></div>
           <div class="text-center" style="font-size: 8px; color: #555;">
             Sistema Comercial Rodrigo • Emisión: ${formatPeruDateTime(new Date(), true)}
+          </div>
           </div>
         </body>
       </html>
@@ -626,7 +632,6 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
               <div className="border-b border-slate-500 w-40 mx-auto mb-1"></div>
               <span className="font-bold block uppercase">{shiftData.cashierName}</span>
               <span className="text-slate-600 block text-[9.5px]">Firma Cajero(a) • Entregué Conforme</span>
-              <span className="text-slate-500 text-[8.5px] block">DNI: _______________________</span>
             </div>
 
             <div>
