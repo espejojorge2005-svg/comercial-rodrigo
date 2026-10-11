@@ -17,17 +17,33 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const [actualBalance, setActualBalance] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [closeResult, setCloseResult] = useState<any>(null);
+  const [closedShiftSnapshot, setClosedShiftSnapshot] = useState<any>(null);
   const [showWarningTip, setShowWarningTip] = useState<boolean>(true);
   const [showTicketModal, setShowTicketModal] = useState<boolean>(false);
 
-  if (!isOpen || !activeShift) return null;
+  // Mantenemos los datos del turno que se está cerrando para que no desaparezca cuando activeShift sea null
+  const currentShift = activeShift || closedShiftSnapshot;
+
+  if (!isOpen || !currentShift) return null;
+
+  const handleFinalClose = () => {
+    setCloseResult(null);
+    setClosedShiftSnapshot(null);
+    setShowTicketModal(false);
+    setActualBalance('');
+    setNotes('');
+    onClose();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!activeShift) return;
     try {
+      setClosedShiftSnapshot(activeShift);
       const numericAmount = parseFloat(actualBalance) || 0;
       const res = await closeShift(numericAmount, notes);
       setCloseResult(res);
+      setShowTicketModal(true); // Abre la vista previa del ticket de inmediato
     } catch (err) {
       console.error(err);
     }
@@ -38,15 +54,15 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const ticketData: ShiftReceiptData | null = closeResult
     ? {
         shiftId: closeResult.shiftId,
-        cajaName: closeResult.caja || activeShift.cashRegister?.name || 'Caja',
-        cajaIdentifier: closeResult.cajaIdentifier || activeShift.cashRegister?.identifier,
+        cajaName: closeResult.caja || currentShift.cashRegister?.name || 'Caja',
+        cajaIdentifier: closeResult.cajaIdentifier || currentShift.cashRegister?.identifier,
         cashierName: closeResult.cashierName || user?.name || 'Cajero',
-        openedAt: closeResult.openedAt || activeShift.openedAt,
+        openedAt: closeResult.openedAt || currentShift.openedAt,
         closedAt: closeResult.closedAt || new Date(),
         initialBalance:
           closeResult.initialBalance !== undefined
             ? closeResult.initialBalance
-            : Number(activeShift.initialBalance) || 0,
+            : Number(currentShift.initialBalance) || 0,
         actualBalance:
           closeResult.actualBalance !== undefined
             ? closeResult.actualBalance
@@ -68,11 +84,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
         <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative text-slate-100">
           <button
-            onClick={() => {
-              setCloseResult(null);
-              setShowTicketModal(false);
-              onClose();
-            }}
+            onClick={handleFinalClose}
             className="absolute right-5 top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -150,11 +162,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setCloseResult(null);
-                    setShowTicketModal(false);
-                    onClose();
-                  }}
+                  onClick={handleFinalClose}
                   className="w-full sm:w-1/2 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-slate-300 transition-all cursor-pointer"
                 >
                   Aceptar y Salir
@@ -171,8 +179,8 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
               <div>
                 <h3 className="text-xl font-bold text-white">Cierre de Caja & Arqueo</h3>
                 <p className="text-xs text-slate-400">
-                  {activeShift.cashRegister?.name} • Iniciada a las{' '}
-                  {formatPeruTime(activeShift.openedAt)}
+                  {currentShift.cashRegister?.name} • Iniciada a las{' '}
+                  {formatPeruTime(currentShift.openedAt)}
                 </p>
               </div>
             </div>
@@ -188,7 +196,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
                     </span>
                     <p className="text-slate-300 leading-relaxed text-[11px]">
                       Debe ingresar la suma total física que hay en el cajón:{' '}
-                      <strong className="text-white">el Fondo Inicial (base de {formatCurrency(activeShift.initialBalance)})</strong>{' '}
+                      <strong className="text-white">el Fondo Inicial (base de {formatCurrency(currentShift.initialBalance)})</strong>{' '}
                       más el <strong className="text-white">Efectivo cobrado por las ventas</strong>. No ingrese solo las ventas del día.
                     </p>
                   </div>
@@ -237,7 +245,7 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
                   />
                 </div>
                 <p className="mt-1.5 text-[11px] text-slate-400">
-                  Cuente todos los billetes y monedas que hay en el cajón (incluye la base de apertura de {formatCurrency(activeShift.initialBalance)}).
+                  Cuente todos los billetes y monedas que hay en el cajón (incluye la base de apertura de {formatCurrency(currentShift.initialBalance)}).
                 </p>
               </div>
 
