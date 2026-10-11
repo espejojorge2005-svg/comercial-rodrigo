@@ -95,8 +95,8 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
 
         {/* Encabezado */}
         <div className="flex items-center gap-3 mb-2">
-          <div className="w-11 h-11 rounded-2xl bg-slate-800 text-slate-200 border border-slate-700/80 flex items-center justify-center">
-            <Store className="w-6 h-6" />
+          <div className="w-11 h-11 rounded-2xl bg-white border border-slate-700/80 flex items-center justify-center shadow-sm overflow-hidden p-1 shrink-0">
+            <img src="/logo-icon.png" alt="Comercial Rodrigo" className="w-full h-full object-contain" />
           </div>
           <div>
             <h3 className="text-xl font-bold text-white">Configuración del Negocio & Tickets</h3>

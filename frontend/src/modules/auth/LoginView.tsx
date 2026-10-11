@@ -23,8 +23,12 @@ export const LoginView: React.FC = () => {
       <div className="w-full max-w-md z-10">
         {/* Encabezado de la marca (Sobrio y Corporativo) */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-slate-900 border border-slate-800 shadow-sm mb-3 text-slate-200">
-            <Store className="w-7 h-7" />
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white border border-slate-700/80 shadow-xl shadow-orange-500/5 mb-3 p-2 overflow-hidden ring-4 ring-orange-500/10">
+            <img
+              src="/logo-icon.png"
+              alt="Comercial Rodrigo"
+              className="w-full h-full object-contain"
+            />
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
             Comercial Rodrigo

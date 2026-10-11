@@ -51,8 +51,8 @@ export const SelectRegisterView: React.FC = () => {
       {/* Barra superior con usuario y cerrar sesión */}
       <header className="max-w-4xl mx-auto w-full flex items-center justify-between py-2 border-b border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-slate-200">
-            <Store className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-xl bg-white border border-slate-700/80 flex items-center justify-center shadow-sm overflow-hidden p-1 shrink-0">
+            <img src="/logo-icon.png" alt="Comercial Rodrigo" className="w-full h-full object-contain" />
           </div>
           <div>
             <h1 className="text-base font-bold text-white">Comercial Rodrigo</h1>

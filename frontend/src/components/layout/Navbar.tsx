@@ -38,8 +38,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
           {/* Logo y Caja Activa */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <div className="flex items-center gap-2">
-              <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-slate-200 shadow-sm">
-                <Store className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-white border border-slate-700/80 flex items-center justify-center shadow-sm overflow-hidden p-1 shrink-0">
+                <img
+                  src="/logo-icon.png"
+                  alt="Comercial Rodrigo"
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div className="hidden sm:block">
                 <div className="text-sm font-extrabold tracking-tight text-white leading-none">
