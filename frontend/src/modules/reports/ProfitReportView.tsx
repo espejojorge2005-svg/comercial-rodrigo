@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { apiRequest } from '../../api/client.js';
 import {
   formatCurrency,
-  formatPeruDateTime,
   formatPeruDate,
   formatPeruTime,
   getPeruYMD,
@@ -220,6 +219,32 @@ export const ProfitReportView: React.FC = () => {
       s.cashRegister.toLowerCase().includes(q)
     );
   });
+
+  // Filtrado de gastos por búsqueda
+  const filteredExpenses = (reportData?.expenses || []).filter((e) => {
+    const q = searchTerm.toLowerCase();
+    return (
+      e.reason.toLowerCase().includes(q) ||
+      e.cashier.toLowerCase().includes(q) ||
+      e.cashRegister.toLowerCase().includes(q)
+    );
+  });
+
+  // Totales para tabla de Productos
+  const prodTotalQty = filteredProducts.reduce((acc, p) => acc + (p.quantitySold || 0), 0);
+  const prodTotalRev = filteredProducts.reduce((acc, p) => acc + (p.totalRevenue || 0), 0);
+  const prodTotalCost = filteredProducts.reduce((acc, p) => acc + (p.totalCost || 0), 0);
+  const prodTotalProfit = filteredProducts.reduce((acc, p) => acc + (p.profit || 0), 0);
+  const prodAvgMargin = prodTotalRev > 0 ? ((prodTotalProfit / prodTotalRev) * 100).toFixed(1) : '0.0';
+
+  // Totales para tabla de Ventas
+  const salesTotalRev = filteredSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  const salesTotalCost = filteredSales.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+  const salesTotalProfit = filteredSales.reduce((acc, s) => acc + (s.profit || 0), 0);
+  const salesAvgMargin = salesTotalRev > 0 ? ((salesTotalProfit / salesTotalRev) * 100).toFixed(1) : '0.0';
+
+  // Totales para tabla de Gastos
+  const expensesTotalAmount = filteredExpenses.reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
 
   const summary = reportData?.summary || {
     totalSales: 0,
@@ -612,25 +637,25 @@ export const ProfitReportView: React.FC = () => {
 
         {/* TAB 1: PRODUCTOS MÁS RENTABLES */}
         {activeTab === 'products' && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[10px] tracking-wider">
+          <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner bg-slate-950/40">
+            <table className="w-full min-w-[1100px] text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[10px] tracking-wider shadow-sm">
                 <tr>
-                  <th className="px-4 py-3">#</th>
-                  <th className="px-4 py-3">Producto</th>
-                  <th className="px-4 py-3">Categoría</th>
-                  <th className="px-4 py-3 text-right">Cant. Vendida</th>
-                  <th className="px-4 py-3 text-right">Costo Unit.</th>
-                  <th className="px-4 py-3 text-right">Venta Total</th>
-                  <th className="px-4 py-3 text-right">Costo Total</th>
-                  <th className="px-4 py-3 text-right">Ganancia Neta</th>
-                  <th className="px-4 py-3 text-right">Margen %</th>
+                  <th className="p-3.5 w-12 text-center">#</th>
+                  <th className="p-3.5 w-72">Producto</th>
+                  <th className="p-3.5 w-40">Categoría</th>
+                  <th className="p-3.5 text-right w-32">Cant. Vendida</th>
+                  <th className="p-3.5 text-right w-28">Costo Unit. Prom.</th>
+                  <th className="p-3.5 text-right w-32">Venta Total</th>
+                  <th className="p-3.5 text-right w-32">Costo Total</th>
+                  <th className="p-3.5 text-right w-36">Ganancia Neta</th>
+                  <th className="p-3.5 text-right w-24">Margen %</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={9} className="p-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <div className="w-6 h-6 border-2 border-slate-700 border-t-emerald-400 rounded-full animate-spin" />
                         <span>Calculando utilidades y márgenes...</span>
@@ -639,44 +664,44 @@ export const ProfitReportView: React.FC = () => {
                   </tr>
                 ) : filteredProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={9} className="p-10 text-center text-slate-400">
                       No se encontraron ventas de productos en este período.
                     </td>
                   </tr>
                 ) : (
                   filteredProducts.map((p, idx) => (
-                    <tr key={p.productId} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="px-4 py-3 font-mono text-slate-500 text-[11px]">{idx + 1}</td>
-                      <td className="px-4 py-3">
+                    <tr key={p.productId} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="p-3.5 font-mono text-slate-500 text-[11px] text-center">{idx + 1}</td>
+                      <td className="p-3.5">
                         <div className="font-semibold text-white">{p.productName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
                           {p.barcode || 'Sin código'}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-300">{p.categoryName}</td>
-                      <td className="px-4 py-3 text-right font-semibold text-white">
+                      <td className="p-3.5 text-slate-300">{p.categoryName}</td>
+                      <td className="p-3.5 text-right font-semibold text-white whitespace-nowrap">
                         {p.quantitySold} <span className="text-[10px] text-slate-400 font-normal">{getUnitShortName(p.unitType as any)}</span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-300">
+                      <td className="p-3.5 text-right font-mono text-slate-300 whitespace-nowrap">
                         {formatCurrency(p.totalCost / (p.quantitySold || 1))}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-medium text-slate-200">
+                      <td className="p-3.5 text-right font-mono font-medium text-slate-200 whitespace-nowrap">
                         {formatCurrency(p.totalRevenue)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-400">
+                      <td className="p-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
                         {formatCurrency(p.totalCost)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
                         +{formatCurrency(p.profit)}
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="p-3.5 text-right whitespace-nowrap">
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
                             p.marginPct >= 30
-                              ? 'bg-emerald-500/15 text-emerald-300'
+                              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
                               : p.marginPct >= 15
-                              ? 'bg-blue-500/15 text-blue-300'
-                              : 'bg-amber-500/15 text-amber-300'
+                              ? 'bg-blue-500/15 text-blue-300 border border-blue-500/20'
+                              : 'bg-amber-500/15 text-amber-300 border border-amber-500/20'
                           }`}
                         >
                           {p.marginPct}%
@@ -686,31 +711,61 @@ export const ProfitReportView: React.FC = () => {
                   ))
                 )}
               </tbody>
+              {filteredProducts.length > 0 && (
+                <tfoot className="sticky bottom-0 z-10 bg-slate-950 border-t-2 border-slate-700 text-xs font-semibold text-slate-300 shadow-lg">
+                  <tr>
+                    <td colSpan={3} className="p-3.5 text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-bold">TOTALES PRODUCTOS:</span>
+                        <span className="text-slate-400 text-[11px]">({filteredProducts.length} artículos vendidos)</span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                      {prodTotalQty}
+                    </td>
+                    <td className="p-3.5 text-right text-slate-600 font-mono">--</td>
+                    <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                      {formatCurrency(prodTotalRev)}
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-bold text-slate-400 whitespace-nowrap">
+                      {formatCurrency(prodTotalCost)}
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-extrabold text-emerald-400 whitespace-nowrap">
+                      +{formatCurrency(prodTotalProfit)}
+                    </td>
+                    <td className="p-3.5 text-right whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+                        +{prodAvgMargin}%
+                      </span>
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         )}
 
         {/* TAB 2: TICKETS Y VENTAS */}
         {activeTab === 'sales' && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[10px] tracking-wider">
+          <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner bg-slate-950/40">
+            <table className="w-full min-w-[1100px] text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[10px] tracking-wider shadow-sm">
                 <tr>
-                  <th className="px-4 py-3">N° Ticket</th>
-                  <th className="px-4 py-3">Fecha y Hora</th>
-                  <th className="px-4 py-3">Caja / Cajero</th>
-                  <th className="px-4 py-3">Método Pago</th>
-                  <th className="px-4 py-3 text-right">Total Venta</th>
-                  <th className="px-4 py-3 text-right">Costo Venta</th>
-                  <th className="px-4 py-3 text-right">Ganancia Ticket</th>
-                  <th className="px-4 py-3 text-right">Margen</th>
-                  <th className="px-4 py-3 text-center">Detalle</th>
+                  <th className="p-3.5 w-28">N° Ticket</th>
+                  <th className="p-3.5 w-40">Fecha y Hora</th>
+                  <th className="p-3.5 w-48">Caja / Cajero</th>
+                  <th className="p-3.5 w-32">Método Pago</th>
+                  <th className="p-3.5 text-right w-32">Total Venta</th>
+                  <th className="p-3.5 text-right w-32">Costo Venta</th>
+                  <th className="p-3.5 text-right w-36">Ganancia Ticket</th>
+                  <th className="p-3.5 text-right w-24">Margen</th>
+                  <th className="p-3.5 text-center w-24">Detalle</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={9} className="p-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <div className="w-6 h-6 border-2 border-slate-700 border-t-emerald-400 rounded-full animate-spin" />
                         <span>Cargando tickets de venta...</span>
@@ -719,45 +774,48 @@ export const ProfitReportView: React.FC = () => {
                   </tr>
                 ) : filteredSales.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={9} className="p-10 text-center text-slate-400">
                       No se encontraron tickets registrados en este período.
                     </td>
                   </tr>
                 ) : (
                   filteredSales.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="px-4 py-3 font-bold text-white font-mono">#{s.saleNumber}</td>
-                      <td className="px-4 py-3 text-slate-400 text-[11px]">
-                        {formatPeruDateTime(s.createdAt, false)}
+                    <tr key={s.id} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="p-3.5 font-bold text-white font-mono whitespace-nowrap">#{s.saleNumber}</td>
+                      <td className="p-3.5 text-slate-300 text-[11px] font-mono whitespace-nowrap">
+                        <div className="font-semibold text-slate-200">{formatPeruTime(s.createdAt)}</div>
+                        <div className="text-[10px] text-slate-500">{formatPeruDate(s.createdAt)}</div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="p-3.5 whitespace-nowrap">
                         <div className="text-white font-medium">{s.cashRegister}</div>
                         <div className="text-[10px] text-slate-400">{s.cashier}</div>
                       </td>
-                      <td className="px-4 py-3 text-slate-300">
-                        {s.paymentMethod === 'CASH' && 'Efectivo'}
-                        {s.paymentMethod === 'TRANSFER' && 'Yape/Plin'}
-                        {s.paymentMethod === 'CARD' && 'Tarjeta'}
-                        {s.paymentMethod === 'MIXED' && 'Pago Mixto'}
+                      <td className="p-3.5 text-slate-300 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px]">
+                          {s.paymentMethod === 'CASH' && 'Efectivo'}
+                          {s.paymentMethod === 'TRANSFER' && 'Yape/Plin'}
+                          {s.paymentMethod === 'CARD' && 'Tarjeta'}
+                          {s.paymentMethod === 'MIXED' && 'Pago Mixto'}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-white">
+                      <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
                         {formatCurrency(s.totalAmount)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-400">
+                      <td className="p-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
                         {formatCurrency(s.totalCost)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
                         +{formatCurrency(s.profit)}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-300">
+                      <td className="p-3.5 text-right whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/20">
                           {s.marginPct}%
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="p-3.5 text-center whitespace-nowrap">
                         <button
                           onClick={() => setSelectedSale(s)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold border border-slate-700 transition-all cursor-pointer inline-flex items-center gap-1"
+                          className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-semibold border border-slate-700 transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-sm"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Ver</span>
@@ -767,55 +825,98 @@ export const ProfitReportView: React.FC = () => {
                   ))
                 )}
               </tbody>
+              {filteredSales.length > 0 && (
+                <tfoot className="sticky bottom-0 z-10 bg-slate-950 border-t-2 border-slate-700 text-xs font-semibold text-slate-300 shadow-lg">
+                  <tr>
+                    <td colSpan={4} className="p-3.5 text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-bold">TOTALES TICKETS:</span>
+                        <span className="text-slate-400 text-[11px]">({filteredSales.length} ventas emitidas)</span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                      {formatCurrency(salesTotalRev)}
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-bold text-slate-400 whitespace-nowrap">
+                      {formatCurrency(salesTotalCost)}
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-extrabold text-emerald-400 whitespace-nowrap">
+                      +{formatCurrency(salesTotalProfit)}
+                    </td>
+                    <td className="p-3.5 text-right whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+                        +{salesAvgMargin}%
+                      </span>
+                    </td>
+                    <td className="p-3.5 text-center text-slate-600">--</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         )}
 
         {/* TAB 3: GASTOS DE CAJA MENOR */}
         {activeTab === 'expenses' && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[10px] tracking-wider">
+          <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner bg-slate-950/40">
+            <table className="w-full min-w-[900px] text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[10px] tracking-wider shadow-sm">
                 <tr>
-                  <th className="px-4 py-3">Fecha y Hora</th>
-                  <th className="px-4 py-3">Caja</th>
-                  <th className="px-4 py-3">Responsable</th>
-                  <th className="px-4 py-3">Motivo / Concepto del Gasto</th>
-                  <th className="px-4 py-3 text-right">Monto Egresado</th>
+                  <th className="p-3.5 w-44">Fecha y Hora</th>
+                  <th className="p-3.5 w-40">Caja</th>
+                  <th className="p-3.5 w-44">Responsable</th>
+                  <th className="p-3.5">Motivo / Concepto del Gasto</th>
+                  <th className="p-3.5 text-right w-40">Monto Egresado</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={5} className="p-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <div className="w-6 h-6 border-2 border-slate-700 border-t-emerald-400 rounded-full animate-spin" />
                         <span>Cargando movimientos de gastos...</span>
                       </div>
                     </td>
                   </tr>
-                ) : (reportData?.expenses || []).length === 0 ? (
+                ) : filteredExpenses.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-slate-400">
-                      No se registraron egresos o gastos de caja en este período.
+                    <td colSpan={5} className="p-10 text-center text-slate-400">
+                      No se registraron egresos o gastos de caja con el filtro aplicado.
                     </td>
                   </tr>
                 ) : (
-                  (reportData?.expenses || []).map((e) => (
-                    <tr key={e.id} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="px-4 py-3 text-slate-400 text-[11px]">
-                        {formatPeruDateTime(e.createdAt, false)}
+                  filteredExpenses.map((e) => (
+                    <tr key={e.id} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="p-3.5 text-slate-300 text-[11px] font-mono whitespace-nowrap">
+                        <div className="font-semibold text-slate-200">{formatPeruTime(e.createdAt)}</div>
+                        <div className="text-[10px] text-slate-500">{formatPeruDate(e.createdAt)}</div>
                       </td>
-                      <td className="px-4 py-3 text-white font-medium">{e.cashRegister}</td>
-                      <td className="px-4 py-3 text-slate-300">{e.cashier}</td>
-                      <td className="px-4 py-3 text-slate-200">{e.reason}</td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-rose-400">
+                      <td className="p-3.5 text-white font-medium whitespace-nowrap">{e.cashRegister}</td>
+                      <td className="p-3.5 text-slate-300 whitespace-nowrap">{e.cashier}</td>
+                      <td className="p-3.5 text-slate-200">{e.reason}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-400 whitespace-nowrap">
                         -{formatCurrency(e.amount)}
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
+              {filteredExpenses.length > 0 && (
+                <tfoot className="sticky bottom-0 z-10 bg-slate-950 border-t-2 border-slate-700 text-xs font-semibold text-slate-300 shadow-lg">
+                  <tr>
+                    <td colSpan={4} className="p-3.5 text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-bold">TOTAL GASTOS DE CAJA:</span>
+                        <span className="text-slate-400 text-[11px]">({filteredExpenses.length} egresos de gaveta)</span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-extrabold text-rose-400 whitespace-nowrap">
+                      -{formatCurrency(expensesTotalAmount)}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         )}

@@ -4,14 +4,14 @@ import { getUnitBadge, getUnitShortName } from './units.js';
 import { formatPeruDateTime, getPeruYMD } from './utils.js';
 
 /**
- * Función auxiliar para formatear fecha a string legible en hora peruana: DD/MM/YYYY HH:mm
+ * Función auxiliar para formatear fecha y hora a hora peruana
  */
 const formatDateTime = (dateStr?: string | Date | null): string => {
   return formatPeruDateTime(dateStr, false);
 };
 
 /**
- * Traduce el tipo de movimiento de Kardex al español corporativo
+ * Traduce el tipo de movimiento de Kardex
  */
 const translateMovementType = (type: string): string => {
   switch (type) {
@@ -44,33 +44,75 @@ const translatePaymentMethod = (method: string): string => {
     case 'MIXED':
       return 'Pago Mixto';
     default:
-      return method;
+      return method || 'Efectivo';
   }
 };
 
 /**
- * Calcula anchos automáticos de columnas para que no se trunque el contenido en Excel
+ * Crea una hoja de cálculo con encabezado ejecutivo formal, tabla de datos y fila de totales
  */
-const calculateColWidths = (data: Record<string, any>[]): { wch: number }[] => {
-  if (!data || data.length === 0) return [];
-  const keys = Object.keys(data[0]);
-  return keys.map((key) => {
-    let maxLen = key.length;
-    data.forEach((row) => {
-      const val = row[key];
-      if (val !== null && val !== undefined) {
-        const strVal = String(val);
-        if (strVal.length > maxLen) {
-          maxLen = strVal.length;
+function createFormattedSheet(options: {
+  storeName: string;
+  reportTitle: string;
+  reportSubtitle: string;
+  headers: string[];
+  dataRows: (string | number)[][];
+  totalsRow?: (string | number)[];
+  columnWidths?: number[];
+}): XLSX.WorkSheet {
+  const { storeName, reportTitle, reportSubtitle, headers, dataRows, totalsRow, columnWidths } = options;
+  const aoa: (string | number)[][] = [];
+
+  // 1. Banner Institucional
+  aoa.push([storeName.toUpperCase()]);
+  aoa.push([reportTitle.toUpperCase()]);
+  aoa.push([reportSubtitle]);
+  aoa.push([`Generado: ${formatDateTime(new Date())} | Moneda: Soles (PEN)`]);
+  aoa.push([]); // Espacio en blanco
+
+  // 2. Encabezados de Columnas de la Tabla
+  aoa.push(headers);
+
+  // 3. Filas de Datos
+  dataRows.forEach((row) => aoa.push(row));
+
+  // 4. Fila de Totales Generales
+  if (totalsRow) {
+    aoa.push([]); // Espacio separador
+    aoa.push(totalsRow);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // 5. Cálculo y asignación de anchos de columna
+  if (columnWidths && columnWidths.length === headers.length) {
+    ws['!cols'] = columnWidths.map((w) => ({ wch: w }));
+  } else {
+    const computedCols = headers.map((headerText, colIndex) => {
+      let maxLen = headerText.length;
+      dataRows.forEach((row) => {
+        const val = row[colIndex];
+        if (val !== undefined && val !== null) {
+          const s = String(val);
+          if (s.length > maxLen) maxLen = s.length;
         }
+      });
+      if (totalsRow && totalsRow[colIndex]) {
+        const s = String(totalsRow[colIndex]);
+        if (s.length > maxLen) maxLen = s.length;
       }
+      return { wch: Math.min(Math.max(maxLen + 4, 13), 50) };
     });
-    return { wch: Math.min(Math.max(maxLen + 3, 12), 45) };
-  });
-};
+    ws['!cols'] = computedCols;
+  }
+
+  return ws;
+}
 
 /**
- * EXPORTAR REPORTE COMPLETO DE KARDEX & INVENTARIO A EXCEL
+ * =========================================================================
+ * 1. EXPORTAR REPORTE COMPLETO DE KARDEX & INVENTARIO A EXCEL
+ * =========================================================================
  */
 export const exportKardexAndInventoryExcel = (
   products: Product[],
@@ -80,99 +122,250 @@ export const exportKardexAndInventoryExcel = (
   const wb = XLSX.utils.book_new();
   const dateSuffix = getPeruYMD();
 
-  // 1. HOJA 1: Stock Valorizado Actual
-  const stockRows = products.map((p) => {
-    const cost = p.costPrice || 0;
-    const stock = p.currentStock || 0;
+  // --- HOJA 1: Stock Valorizado ---
+  let sumStock = 0;
+  let sumValuedCost = 0;
+  let sumValuedRetail = 0;
+
+  const stockRows = products.map((p, idx) => {
+    const cost = Number((p.costPrice || 0).toFixed(2));
+    const stock = Number((p.currentStock || 0).toFixed(2));
     const totalValuedCost = Number((stock * cost).toFixed(2));
+    const totalValuedRetail = Number((stock * (p.retailPrice || 0)).toFixed(2));
     const retailMargin = cost > 0 ? Number((((p.retailPrice - cost) / cost) * 100).toFixed(1)) : 0;
-    const isOutOfStock = stock <= 0;
-    const isLowStock = stock <= p.minStock && !isOutOfStock;
+    
+    sumStock += stock;
+    sumValuedCost += totalValuedCost;
+    sumValuedRetail += totalValuedRetail;
 
     let stockStatus = 'Óptimo';
-    if (isOutOfStock) stockStatus = 'AGOTADO';
-    else if (isLowStock) stockStatus = 'STOCK BAJO';
+    if (stock <= 0) stockStatus = 'AGOTADO';
+    else if (stock <= p.minStock) stockStatus = 'STOCK BAJO';
 
-    return {
-      'Código de Barras': p.barcode || 'S/C',
-      'Producto': p.name,
-      'Categoría': p.category?.name || 'General',
-      'Unidad SUNAT': getUnitBadge(p.unitType),
-      'Stock Actual': stock,
-      'Stock Mínimo': p.minStock,
-      'Costo Unitario (S/.)': cost,
-      'Valor en Almacén (S/.)': totalValuedCost,
-      'Precio Menor (S/.)': p.retailPrice,
-      'Margen Menor (%)': `${retailMargin}%`,
-      'Precio Mayor (S/.)': p.wholesalePrice ? p.wholesalePrice : 'No aplica',
-      'Cant. Mín. Mayor': p.wholesaleMinQty ? p.wholesaleMinQty : '-',
-      'Estado': stockStatus,
-    };
+    return [
+      idx + 1,
+      p.barcode || 'S/C',
+      p.name,
+      p.category?.name || 'General',
+      getUnitBadge(p.unitType),
+      stock,
+      p.minStock,
+      cost,
+      totalValuedCost,
+      p.retailPrice,
+      `${retailMargin}%`,
+      p.wholesalePrice ? p.wholesalePrice : 'No aplica',
+      p.wholesaleMinQty ? p.wholesaleMinQty : '-',
+      totalValuedRetail,
+      stockStatus,
+    ];
   });
 
-  const wsStock = XLSX.utils.json_to_sheet(stockRows);
-  wsStock['!cols'] = calculateColWidths(stockRows);
+  const stockHeaders = [
+    'N°',
+    'Código Barras',
+    'Producto / Descripción',
+    'Categoría',
+    'Unidad SUNAT',
+    'Stock Actual',
+    'Stock Mínimo',
+    'Costo Unit. (S/.)',
+    'Valor Costo Total (S/.)',
+    'Precio Menor (S/.)',
+    'Margen Menor (%)',
+    'Precio Mayor (S/.)',
+    'Cant. Mín. Mayor',
+    'Valor Venta Total (S/.)',
+    'Estado',
+  ];
+
+  const stockTotals = [
+    'TOTALES GENERALES',
+    '',
+    `${products.length} productos registrados`,
+    '',
+    '',
+    Number(sumStock.toFixed(2)),
+    '',
+    '',
+    Number(sumValuedCost.toFixed(2)),
+    '',
+    '',
+    '',
+    '',
+    Number(sumValuedRetail.toFixed(2)),
+    '',
+  ];
+
+  const stockColWidths = [6, 17, 36, 18, 14, 13, 13, 16, 22, 16, 16, 16, 16, 22, 16];
+
+  const wsStock = createFormattedSheet({
+    storeName,
+    reportTitle: 'Control de Inventario & Stock Valorizado',
+    reportSubtitle: 'Auditoría física y valoración económica de almacén',
+    headers: stockHeaders,
+    dataRows: stockRows,
+    totalsRow: stockTotals,
+    columnWidths: stockColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsStock, 'Stock Valorizado');
 
-  // 2. HOJA 2: Movimientos Históricos de Kardex
-  const kardexRows = kardexMovements.map((m) => {
+  // --- HOJA 2: Movimientos de Kardex ---
+  let sumIncomeQty = 0;
+  let sumOutQty = 0;
+
+  const kardexRows = kardexMovements.map((m, idx) => {
     const isIncome =
       m.movementType === 'PURCHASE' ||
       m.movementType === 'RETURN_SALE' ||
       m.movementType === 'ADJUSTMENT_IN';
 
-    return {
-      'Fecha y Hora': formatDateTime(m.createdAt),
-      'Producto': m.productName,
-      'Código': m.barcode || 'S/C',
-      'Tipo de Movimiento': translateMovementType(m.movementType),
-      'Variación': `${isIncome ? '+' : '-'}${m.quantity}`,
-      'Unidad': getUnitShortName(m.unitType),
-      'Stock Anterior': m.previousStock,
-      'Stock Resultante': m.newStock,
-      'Costo Unit. (S/.)': m.unitCost,
-      'Operación / Referencia': m.reason,
-      'Responsable / Cajero': m.userName,
-    };
+    const qty = Number(m.quantity || 0);
+    if (isIncome) sumIncomeQty += qty;
+    else sumOutQty += qty;
+
+    return [
+      idx + 1,
+      formatDateTime(m.createdAt),
+      m.productName,
+      m.barcode || 'S/C',
+      translateMovementType(m.movementType),
+      isIncome ? qty : 0,
+      !isIncome ? qty : 0,
+      getUnitShortName(m.unitType),
+      m.previousStock,
+      m.newStock,
+      m.unitCost || 0,
+      m.reason || '--',
+      m.userName || 'Sistema',
+    ];
   });
 
-  const wsKardex = XLSX.utils.json_to_sheet(kardexRows);
-  wsKardex['!cols'] = calculateColWidths(kardexRows);
+  const kardexHeaders = [
+    'N°',
+    'Fecha y Hora',
+    'Producto',
+    'Código',
+    'Tipo Movimiento',
+    'Entradas (+)',
+    'Salidas (-)',
+    'Unidad',
+    'Stock Anterior',
+    'Stock Resultante',
+    'Costo Unit. (S/.)',
+    'Operación / Referencia',
+    'Responsable / Cajero',
+  ];
+
+  const kardexTotals = [
+    'TOTALES GENERALES',
+    '',
+    `${kardexMovements.length} movimientos registrados`,
+    '',
+    '',
+    Number(sumIncomeQty.toFixed(2)),
+    Number(sumOutQty.toFixed(2)),
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+  ];
+
+  const kardexColWidths = [6, 20, 32, 16, 20, 14, 14, 12, 14, 15, 16, 30, 20];
+
+  const wsKardex = createFormattedSheet({
+    storeName,
+    reportTitle: 'Auditoría y Trazabilidad de Kardex',
+    reportSubtitle: 'Historial cronológico de ventas, compras y ajustes de stock',
+    headers: kardexHeaders,
+    dataRows: kardexRows,
+    totalsRow: kardexTotals,
+    columnWidths: kardexColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsKardex, 'Movimientos Kardex');
 
-  // 3. HOJA 3: Alertas de Reposición (Stock Bajo / Agotado)
+  // --- HOJA 3: Alertas de Reposición (Stock Bajo / Agotado) ---
   const alertProducts = products.filter((p) => (p.currentStock || 0) <= (p.minStock || 0));
-  const alertRows = alertProducts.map((p) => {
+  let sumDeficit = 0;
+  let sumAlertBudget = 0;
+
+  const alertRows = alertProducts.map((p, idx) => {
     const deficit = Math.max(0, p.minStock - p.currentStock);
     const cost = p.costPrice || 0;
     const estPurchaseBudget = Number((deficit * cost).toFixed(2));
+    sumDeficit += deficit;
+    sumAlertBudget += estPurchaseBudget;
 
-    return {
-      'Código': p.barcode || 'S/C',
-      'Producto': p.name,
-      'Categoría': p.category?.name || 'General',
-      'Unidad': getUnitBadge(p.unitType),
-      'Stock Actual': p.currentStock,
-      'Stock Mínimo': p.minStock,
-      'Déficit a Comprar': deficit,
-      'Costo Unit. Estimado (S/.)': cost,
-      'Presupuesto Compra (S/.)': estPurchaseBudget,
-      'Prioridad': p.currentStock <= 0 ? 'URGENTE (AGOTADO)' : 'ATENCIÓN (STOCK BAJO)',
-    };
+    return [
+      idx + 1,
+      p.barcode || 'S/C',
+      p.name,
+      p.category?.name || 'General',
+      getUnitBadge(p.unitType),
+      p.currentStock,
+      p.minStock,
+      deficit,
+      cost,
+      estPurchaseBudget,
+      p.currentStock <= 0 ? 'URGENTE (AGOTADO)' : 'ATENCIÓN (STOCK BAJO)',
+    ];
   });
 
-  const wsAlerts = XLSX.utils.json_to_sheet(alertRows.length > 0 ? alertRows : [{ 'Estado': 'No hay productos con stock bajo' }]);
-  wsAlerts['!cols'] = calculateColWidths(alertRows.length > 0 ? alertRows : [{ 'Estado': 'No hay productos con stock bajo' }]);
+  const alertHeaders = [
+    'N°',
+    'Código',
+    'Producto',
+    'Categoría',
+    'Unidad SUNAT',
+    'Stock Actual',
+    'Stock Mínimo',
+    'Déficit a Reponer',
+    'Costo Unit. Estimado (S/.)',
+    'Presupuesto Compra (S/.)',
+    'Prioridad',
+  ];
+
+  const alertTotals = [
+    'TOTAL PRESUPUESTO REPOSICIÓN',
+    '',
+    `${alertProducts.length} artículos críticos`,
+    '',
+    '',
+    '',
+    '',
+    Number(sumDeficit.toFixed(2)),
+    '',
+    Number(sumAlertBudget.toFixed(2)),
+    '',
+  ];
+
+  const alertColWidths = [6, 16, 32, 18, 14, 13, 13, 16, 22, 22, 22];
+
+  const wsAlerts = createFormattedSheet({
+    storeName,
+    reportTitle: 'Alertas de Compra & Reposición de Mercadería',
+    reportSubtitle: 'Productos con stock crítico bajo o agotado que requieren reposición',
+    headers: alertHeaders,
+    dataRows: alertRows.length > 0 ? alertRows : [['--', '--', 'No hay productos con stock bajo', '--', '--', 0, 0, 0, 0, 0, 'ÓPTIMO']],
+    totalsRow: alertRows.length > 0 ? alertTotals : undefined,
+    columnWidths: alertColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsAlerts, 'Alertas de Compra');
 
-  // Descarga directa
   const cleanStore = storeName.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `Kardex_Inventario_${cleanStore}_${dateSuffix}.xlsx`;
   XLSX.writeFile(wb, filename);
 };
 
 /**
- * EXPORTAR REPORTE COMPLETO DE AUDITORÍA DE CAJAS & ARQUEOS A EXCEL
+ * =========================================================================
+ * 2. EXPORTAR REPORTE COMPLETO DE AUDITORÍA DE CAJAS & ARQUEOS A EXCEL
+ * =========================================================================
  */
 export const exportShiftAuditExcel = (
   shifts: any[],
@@ -181,101 +374,263 @@ export const exportShiftAuditExcel = (
   const wb = XLSX.utils.book_new();
   const dateSuffix = getPeruYMD();
 
-  // 1. HOJA 1: Resumen de Turnos y Arqueos Ciegos
-  const shiftRows = shifts.map((s) => {
-    const diff = s.difference !== null && s.difference !== undefined ? Number(s.difference) : null;
+  // --- HOJA 1: Resumen de Turnos y Arqueos ---
+  let sumInitial = 0;
+  let sumCash = 0;
+  let sumDigital = 0;
+  let sumCard = 0;
+  let sumMixed = 0;
+  let sumSales = 0;
+  let sumIncome = 0;
+  let sumExpenses = 0;
+  let sumExpected = 0;
+  let sumActual = 0;
+  let sumDiff = 0;
+
+  const shiftRows = shifts.map((s, idx) => {
+    const diff = s.difference !== null && s.difference !== undefined ? Number(s.difference) : 0;
+    const initial = Number(s.initialBalance || 0);
+    const cash = Number(s.metrics?.cashFromSales || 0);
+    const digital = Number(s.metrics?.yapePlinSales || 0);
+    const card = Number(s.metrics?.cardSales || 0);
+    const mixed = Number(s.metrics?.mixedSales || 0);
+    const totalSales = Number(s.metrics?.totalSales || 0);
+    const income = Number(s.metrics?.incomeMovements || 0);
+    const expenses = Number(s.metrics?.expenseMovements || 0);
+    const expected = s.expectedBalance !== null ? Number(s.expectedBalance) : initial + cash + income - expenses;
+    const actual = s.actualBalance !== null ? Number(s.actualBalance) : expected;
+
+    sumInitial += initial;
+    sumCash += cash;
+    sumDigital += digital;
+    sumCard += card;
+    sumMixed += mixed;
+    sumSales += totalSales;
+    sumIncome += income;
+    sumExpenses += expenses;
+    sumExpected += expected;
+    sumActual += actual;
+    sumDiff += diff;
+
     let diagnostic = 'TURNO ABIERTO';
     if (s.status === 'CLOSED') {
-      if (diff === null || Math.abs(diff) < 0.05) diagnostic = 'CONFORME (CUADRE EXACTO)';
+      if (Math.abs(diff) < 0.05) diagnostic = 'CONFORME (CUADRE EXACTO)';
       else if (diff > 0) diagnostic = `SOBRANTE (+S/ ${diff.toFixed(2)})`;
       else diagnostic = `FALTANTE (-S/ ${Math.abs(diff).toFixed(2)})`;
     }
 
-    return {
-      'Caja Física': s.cashRegister?.name || 'Caja',
-      'Identificador': s.cashRegister?.identifier || '--',
-      'Cajero Responsable': s.user?.name || '--',
-      'Fecha Apertura': formatDateTime(s.openedAt),
-      'Fecha Cierre': formatDateTime(s.closedAt),
-      'Estado': s.status === 'OPEN' ? 'ABIERTO' : 'CERRADO',
-      'Fondo Inicial (S/.)': s.initialBalance || 0,
-      'Ventas Efectivo (S/.)': s.metrics?.cashFromSales || 0,
-      'Ventas Yape/Plin (S/.)': s.metrics?.yapePlinSales || 0,
-      'Ventas Tarjeta (S/.)': s.metrics?.cardSales || 0,
-      'Ventas Mixtas (S/.)': s.metrics?.mixedSales || 0,
-      'Total Cobrado (S/.)': s.metrics?.totalSales || 0,
-      'Ingresos Caja Menor (S/.)': s.metrics?.incomeMovements || 0,
-      'Gastos Caja Menor (S/.)': s.metrics?.expenseMovements || 0,
-      'Saldo Esperado en Gaveta (S/.)': s.expectedBalance !== null ? s.expectedBalance : '--',
-      'Arqueo Físico Declarado (S/.)': s.actualBalance !== null ? s.actualBalance : '--',
-      'Diferencia Cuadre (S/.)': diff !== null ? diff : '--',
-      'Diagnóstico': diagnostic,
-      'Observaciones': s.notes || 'Ninguna',
-    };
+    return [
+      idx + 1,
+      s.cashRegister?.name || 'Caja',
+      s.cashRegister?.identifier || '--',
+      s.user?.name || '--',
+      formatDateTime(s.openedAt),
+      s.closedAt ? formatDateTime(s.closedAt) : 'En operación (Abierto)',
+      s.status === 'OPEN' ? 'ABIERTO' : 'CERRADO',
+      initial,
+      cash,
+      digital,
+      card,
+      mixed,
+      totalSales,
+      income,
+      expenses,
+      expected,
+      s.actualBalance !== null ? actual : '--',
+      s.difference !== null ? diff : '--',
+      diagnostic,
+      s.notes || 'Ninguna',
+    ];
   });
 
-  const wsShifts = XLSX.utils.json_to_sheet(shiftRows);
-  wsShifts['!cols'] = calculateColWidths(shiftRows);
+  const shiftHeaders = [
+    'N°',
+    'Caja Física',
+    'Identificador',
+    'Cajero Responsable',
+    'Fecha Apertura',
+    'Fecha Cierre',
+    'Estado',
+    'Fondo Inicial (S/.)',
+    'Ventas Efectivo (S/.)',
+    'Ventas Yape/Plin (S/.)',
+    'Ventas Tarjeta (S/.)',
+    'Ventas Mixtas (S/.)',
+    'Total Ventas Cobradas (S/.)',
+    'Ingresos Gaveta (S/.)',
+    'Gastos Gaveta (S/.)',
+    'Saldo Esperado (S/.)',
+    'Conteo Físico Declarado (S/.)',
+    'Diferencia Cuadre (S/.)',
+    'Diagnóstico',
+    'Observaciones',
+  ];
+
+  const shiftTotals = [
+    'TOTALES GENERALES',
+    '',
+    `${shifts.length} turnos auditados`,
+    '',
+    '',
+    '',
+    '',
+    Number(sumInitial.toFixed(2)),
+    Number(sumCash.toFixed(2)),
+    Number(sumDigital.toFixed(2)),
+    Number(sumCard.toFixed(2)),
+    Number(sumMixed.toFixed(2)),
+    Number(sumSales.toFixed(2)),
+    Number(sumIncome.toFixed(2)),
+    Number(sumExpenses.toFixed(2)),
+    Number(sumExpected.toFixed(2)),
+    Number(sumActual.toFixed(2)),
+    Number(sumDiff.toFixed(2)),
+    sumDiff === 0 ? 'CUADRE TOTAL EXACTO' : sumDiff > 0 ? 'SOBRANTE NETO' : 'FALTANTE NETO',
+    '',
+  ];
+
+  const shiftColWidths = [6, 14, 14, 24, 20, 20, 12, 17, 18, 18, 18, 18, 22, 17, 17, 18, 22, 18, 26, 26];
+
+  const wsShifts = createFormattedSheet({
+    storeName,
+    reportTitle: 'Auditoría de Turnos de Caja & Arqueos Físicos',
+    reportSubtitle: 'Control financiero de aperturas, cobros por canal, gavetas y diferencias de dinero',
+    headers: shiftHeaders,
+    dataRows: shiftRows,
+    totalsRow: shiftTotals,
+    columnWidths: shiftColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsShifts, 'Resumen de Cajas y Arqueos');
 
-  // 2. HOJA 2: Desglose de Ventas del Período
-  const salesRows: Record<string, any>[] = [];
+  // --- HOJA 2: Desglose de Tickets y Ventas ---
+  const salesRows: (string | number)[][] = [];
+  let sumSalesTickets = 0;
+  let sumCashPaid = 0;
+  let sumDigitalPaid = 0;
+
   shifts.forEach((s) => {
     const shiftLabel = `${s.cashRegister?.name} (${s.user?.name})`;
     const salesList = s.sales || [];
     salesList.forEach((sale: any) => {
-      salesRows.push({
-        'N° Ticket': `#${sale.saleNumber || '--'}`,
-        'Fecha y Hora': formatDateTime(sale.createdAt),
-        'Caja y Turno': shiftLabel,
-        'Método de Pago': translatePaymentMethod(sale.paymentMethod),
-        'Efectivo Recibido (S/.)': sale.cashPaid || 0,
-        'Digital Recibido (S/.)': sale.digitalPaid || 0,
-        'Total Ticket (S/.)': sale.totalAmount || 0,
-      });
+      const total = Number(sale.totalAmount || 0);
+      const cash = Number(sale.cashPaid || 0);
+      const digital = Number(sale.digitalPaid || 0);
+      sumSalesTickets += total;
+      sumCashPaid += cash;
+      sumDigitalPaid += digital;
+
+      salesRows.push([
+        `#${String(sale.saleNumber || '--').padStart(5, '0')}`,
+        formatDateTime(sale.createdAt),
+        shiftLabel,
+        translatePaymentMethod(sale.paymentMethod),
+        cash,
+        digital,
+        total,
+      ]);
     });
   });
 
-  const wsSales = XLSX.utils.json_to_sheet(
-    salesRows.length > 0 ? salesRows : [{ 'Detalle': 'No se encontraron tickets registrados en los turnos' }]
-  );
-  wsSales['!cols'] = calculateColWidths(
-    salesRows.length > 0 ? salesRows : [{ 'Detalle': 'No se encontraron tickets registrados en los turnos' }]
-  );
+  const salesHeaders = [
+    'N° Ticket',
+    'Fecha y Hora',
+    'Caja y Turno',
+    'Método de Pago',
+    'Efectivo Recibido (S/.)',
+    'Digital Recibido (S/.)',
+    'Total Cobrado (S/.)',
+  ];
+
+  const salesTotals = [
+    'TOTAL TICKETS EMITIDOS',
+    '',
+    `${salesRows.length} ventas realizadas`,
+    '',
+    Number(sumCashPaid.toFixed(2)),
+    Number(sumDigitalPaid.toFixed(2)),
+    Number(sumSalesTickets.toFixed(2)),
+  ];
+
+  const salesColWidths = [14, 20, 26, 16, 20, 20, 20];
+
+  const wsSales = createFormattedSheet({
+    storeName,
+    reportTitle: 'Relación de Tickets y Ventas de Turnos',
+    reportSubtitle: 'Detalle de comprobantes emitidos durante los turnos auditados',
+    headers: salesHeaders,
+    dataRows: salesRows.length > 0 ? salesRows : [['--', '--', 'Sin tickets registrados', '--', 0, 0, 0]],
+    totalsRow: salesRows.length > 0 ? salesTotals : undefined,
+    columnWidths: salesColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsSales, 'Tickets y Ventas');
 
-  // 3. HOJA 3: Movimientos de Caja Menor (Ingresos / Gastos de gaveta)
-  const movementRows: Record<string, any>[] = [];
+  // --- HOJA 3: Movimientos de Caja Menor (Gastos / Ingresos manuales) ---
+  const movementRows: (string | number)[][] = [];
+  let sumMovementExpenses = 0;
+  let sumMovementIncome = 0;
+
   shifts.forEach((s) => {
     const shiftLabel = `${s.cashRegister?.name} (${s.user?.name})`;
     const movementsList = s.cashMovements || [];
-    movementsList.forEach((m: any) => {
-      movementRows.push({
-        'Fecha y Hora': formatDateTime(m.createdAt),
-        'Caja y Turno': shiftLabel,
-        'Tipo Movimiento': m.type === 'INCOME' ? 'INGRESO (+)' : 'EGRESO / GASTO (-)',
-        'Monto (S/.)': m.amount || 0,
-        'Motivo / Justificación': m.reason || 'Sin motivo especificado',
-      });
+    movementsList.forEach((m: any, idx: number) => {
+      const amount = Number(m.amount || 0);
+      if (m.type === 'INCOME') sumMovementIncome += amount;
+      else sumMovementExpenses += amount;
+
+      movementRows.push([
+        idx + 1,
+        formatDateTime(m.createdAt),
+        shiftLabel,
+        m.type === 'INCOME' ? 'INGRESO (+)' : 'EGRESO / GASTO (-)',
+        amount,
+        m.reason || 'Sin motivo especificado',
+      ]);
     });
   });
 
-  const wsMovements = XLSX.utils.json_to_sheet(
-    movementRows.length > 0 ? movementRows : [{ 'Detalle': 'No se registraron movimientos manuales de gaveta' }]
-  );
-  wsMovements['!cols'] = calculateColWidths(
-    movementRows.length > 0 ? movementRows : [{ 'Detalle': 'No se registraron movimientos manuales de gaveta' }]
-  );
+  const movementHeaders = [
+    'N°',
+    'Fecha y Hora',
+    'Caja y Turno',
+    'Tipo Movimiento',
+    'Monto (S/.)',
+    'Motivo / Justificación',
+  ];
+
+  const movementTotals = [
+    'TOTALES CAJA MENOR',
+    '',
+    `${movementRows.length} movimientos de gaveta`,
+    `Ingresos: S/ ${sumMovementIncome.toFixed(2)} | Gastos: S/ ${sumMovementExpenses.toFixed(2)}`,
+    Number((sumMovementIncome - sumMovementExpenses).toFixed(2)),
+    'Saldo Neto Movimientos',
+  ];
+
+  const movementColWidths = [6, 20, 26, 20, 18, 36];
+
+  const wsMovements = createFormattedSheet({
+    storeName,
+    reportTitle: 'Movimientos Manuales de Caja Menor (Gaveta)',
+    reportSubtitle: 'Registro de gastos imprevistos, retiros autorizados e inyecciones de sencillo',
+    headers: movementHeaders,
+    dataRows: movementRows.length > 0 ? movementRows : [['--', '--', '--', 'Sin movimientos registrados', 0, '--']],
+    totalsRow: movementRows.length > 0 ? movementTotals : undefined,
+    columnWidths: movementColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsMovements, 'Caja Menor y Gastos');
 
-  // Descarga directa
   const cleanStore = storeName.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `Auditoria_Cajas_${cleanStore}_${dateSuffix}.xlsx`;
   XLSX.writeFile(wb, filename);
 };
 
 /**
- * EXPORTAR REPORTE COMPLETO DE GANANCIAS & RENTABILIDAD A EXCEL (.xlsx)
+ * =========================================================================
+ * 3. EXPORTAR REPORTE COMPLETO DE GANANCIAS & RENTABILIDAD A EXCEL (.xlsx)
+ * =========================================================================
  */
 export const exportProfitReportExcel = (
   reportData: {
@@ -346,98 +701,236 @@ export const exportProfitReportExcel = (
   const dateSuffix = getPeruYMD();
   const { summary, products, sales, expenses = [] } = reportData;
 
-  // 1. HOJA 1: Resumen Ejecutivo Financiero
-  const summaryRows = [
-    { 'Concepto Financiero': 'Empresa / Negocio', 'Detalle / Valor': storeName },
-    { 'Concepto Financiero': 'Período Evaluado', 'Detalle / Valor': dateLabel },
-    { 'Concepto Financiero': 'Fecha y Hora de Generación', 'Detalle / Valor': formatDateTime(new Date()) },
-    { 'Concepto Financiero': '----------------------------------', 'Detalle / Valor': '----------------------' },
-    { 'Concepto Financiero': 'Total Ingresos por Ventas (S/.)', 'Detalle / Valor': summary.totalSales },
-    { 'Concepto Financiero': 'Costo Total de Mercadería Vendida (S/.)', 'Detalle / Valor': summary.totalCost },
-    { 'Concepto Financiero': 'GANANCIA BRUTA (UTILIDAD) (S/.)', 'Detalle / Valor': summary.grossProfit },
-    { 'Concepto Financiero': 'Margen Bruto de Rentabilidad (%)', 'Detalle / Valor': `${summary.grossMarginPct}%` },
-    { 'Concepto Financiero': 'Total Gastos de Caja Menor (S/.)', 'Detalle / Valor': summary.totalExpenses },
-    { 'Concepto Financiero': 'GANANCIA NETA REAL (EN BOLSILLO) (S/.)', 'Detalle / Valor': summary.netProfit },
-    { 'Concepto Financiero': 'Margen Neto sobre Ventas (%)', 'Detalle / Valor': `${summary.netMarginPct}%` },
-    { 'Concepto Financiero': '----------------------------------', 'Detalle / Valor': '----------------------' },
-    { 'Concepto Financiero': 'Cantidad de Tickets / Ventas Realizadas', 'Detalle / Valor': summary.salesCount },
-    { 'Concepto Financiero': 'Cantidad de Unidades / Artículos Vendidos', 'Detalle / Valor': summary.totalUnitsSold },
-    { 'Concepto Financiero': 'Ticket Promedio (S/.)', 'Detalle / Valor': summary.salesCount > 0 ? Number((summary.totalSales / summary.salesCount).toFixed(2)) : 0 },
-    { 'Concepto Financiero': '----------------------------------', 'Detalle / Valor': '----------------------' },
-    { 'Concepto Financiero': 'Ventas en Efectivo Puro (S/.)', 'Detalle / Valor': summary.paymentMethods?.CASH || 0 },
-    { 'Concepto Financiero': 'Ventas Yape / Plin / Transferencias (S/.)', 'Detalle / Valor': summary.paymentMethods?.TRANSFER || 0 },
-    { 'Concepto Financiero': 'Ventas con Tarjeta Débito/Crédito (S/.)', 'Detalle / Valor': summary.paymentMethods?.CARD || 0 },
-    { 'Concepto Financiero': 'Ventas con Pago Mixto (S/.)', 'Detalle / Valor': summary.paymentMethods?.MIXED || 0 },
+  // --- HOJA 1: Resumen Ejecutivo Financiero ---
+  const summaryAoa: (string | number)[][] = [
+    [storeName.toUpperCase()],
+    ['ESTADO FINANCIERO DE GANANCIAS & RENTABILIDAD'],
+    [`Período de Análisis: ${dateLabel} | Emisión: ${formatDateTime(new Date())}`],
+    ['Moneda Oficial: Soles Peruanos (PEN)'],
+    [],
+    ['CONCEPTO FINANCIERO', 'VALOR / INDICADOR OFICIAL', 'OBSERVACIÓN / DETALLE'],
+    ['1. INGRESOS POR VENTAS NETAS', summary.totalSales, 'Facturación total cobrada en POS'],
+    ['2. COSTO DE MERCADERÍA VENDIDA (CMV)', summary.totalCost, 'Costo de adquisición de productos vendidos'],
+    ['3. GANANCIA BRUTA (UTILIDAD BRUTA)', summary.grossProfit, `Rentabilidad Bruta: ${summary.grossMarginPct}%`],
+    ['4. GASTOS OPERATIVOS DE CAJA MENOR', summary.totalExpenses, `${expenses.length} egresos o gastos registrados`],
+    ['5. GANANCIA NETA REAL (EN BOLSILLO)', summary.netProfit, `Margen Neto Real: ${summary.netMarginPct}%`],
+    [],
+    ['--- INDICADORES OPERATIVOS Y VOLUMEN ---', '', ''],
+    ['Total Tickets / Comprobantes Emitidos', summary.salesCount, 'Transacciones de venta realizadas'],
+    ['Total Unidades / Artículos Despachados', summary.totalUnitsSold, 'Cantidad física de productos vendidos'],
+    ['Ticket Promedio por Cliente (S/.)', summary.salesCount > 0 ? Number((summary.totalSales / summary.salesCount).toFixed(2)) : 0, 'Gasto medio por compra'],
+    [],
+    ['--- CANALES DE COBRO Y RECAUDACIÓN ---', '', ''],
+    ['Ventas en Efectivo Puro (S/.)', summary.paymentMethods?.CASH || 0, 'Dinero líquido recaudado'],
+    ['Ventas Yape / Plin / Transferencias (S/.)', summary.paymentMethods?.TRANSFER || 0, 'Cobros por billeteras digitales'],
+    ['Ventas con Tarjeta Débito / Crédito (S/.)', summary.paymentMethods?.CARD || 0, 'Cobros mediante POS bancario'],
+    ['Ventas con Pago Mixto (S/.)', summary.paymentMethods?.MIXED || 0, 'Combinación efectivo + digital'],
   ];
 
-  const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
-  wsSummary['!cols'] = [{ wch: 42 }, { wch: 30 }];
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryAoa);
+  wsSummary['!cols'] = [{ wch: 44 }, { wch: 28 }, { wch: 38 }];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen Financiero');
 
-  // 2. HOJA 2: Rentabilidad por Producto
-  const productRows = products.map((p, idx) => ({
-    'N°': idx + 1,
-    'Código / Barcode': p.barcode || 'S/C',
-    'Producto': p.productName,
-    'Categoría': p.categoryName,
-    'Unidad': getUnitShortName(p.unitType as any),
-    'Unidades Vendidas': p.quantitySold,
-    'Ingreso Total (S/.)': p.totalRevenue,
-    'Costo Total (S/.)': p.totalCost,
-    'Ganancia Neta (S/.)': p.profit,
-    'Margen Rentabilidad (%)': `${p.marginPct}%`,
-    'Rentabilidad': p.marginPct >= 30 ? 'Alta' : p.marginPct >= 15 ? 'Normal' : 'Baja',
-  }));
+  // --- HOJA 2: Rentabilidad por Producto ---
+  let sumProdQty = 0;
+  let sumProdRevenue = 0;
+  let sumProdCost = 0;
+  let sumProdProfit = 0;
 
-  const wsProducts = XLSX.utils.json_to_sheet(
-    productRows.length > 0 ? productRows : [{ 'Detalle': 'No hubo ventas de productos en este período' }]
-  );
-  wsProducts['!cols'] = calculateColWidths(
-    productRows.length > 0 ? productRows : [{ 'Detalle': 'No hubo ventas de productos en este período' }]
-  );
+  const productRows = products.map((p, idx) => {
+    sumProdQty += p.quantitySold;
+    sumProdRevenue += p.totalRevenue;
+    sumProdCost += p.totalCost;
+    sumProdProfit += p.profit;
+
+    const avgUnitCost = p.quantitySold > 0 ? Number((p.totalCost / p.quantitySold).toFixed(2)) : 0;
+    const avgUnitPrice = p.quantitySold > 0 ? Number((p.totalRevenue / p.quantitySold).toFixed(2)) : 0;
+
+    return [
+      idx + 1,
+      p.barcode || 'S/C',
+      p.productName,
+      p.categoryName || 'General',
+      getUnitShortName(p.unitType as any),
+      p.quantitySold,
+      avgUnitCost,
+      avgUnitPrice,
+      p.totalRevenue,
+      p.totalCost,
+      p.profit,
+      `${p.marginPct}%`,
+      p.marginPct >= 30 ? 'ALTA' : p.marginPct >= 15 ? 'MEDIA' : 'BAJA',
+    ];
+  });
+
+  const productHeaders = [
+    'N°',
+    'Código Barras',
+    'Producto / Descripción',
+    'Categoría',
+    'Unidad',
+    'Cant. Vendida',
+    'Costo Unit. Prom. (S/.)',
+    'Precio Unit. Prom. (S/.)',
+    'Venta Total (S/.)',
+    'Costo Total (S/.)',
+    'Ganancia Neta (S/.)',
+    'Margen (%)',
+    'Rentabilidad',
+  ];
+
+  const overallProdMargin = sumProdCost > 0 ? Number((((sumProdRevenue - sumProdCost) / sumProdCost) * 100).toFixed(1)) : 0;
+
+  const productTotals = [
+    'TOTALES GENERALES',
+    '',
+    `${products.length} productos analizados`,
+    '',
+    '',
+    Number(sumProdQty.toFixed(2)),
+    '',
+    '',
+    Number(sumProdRevenue.toFixed(2)),
+    Number(sumProdCost.toFixed(2)),
+    Number(sumProdProfit.toFixed(2)),
+    `${overallProdMargin}%`,
+    'MARGEN PROMEDIO',
+  ];
+
+  const productColWidths = [6, 16, 34, 18, 12, 14, 20, 20, 18, 18, 18, 14, 16];
+
+  const wsProducts = createFormattedSheet({
+    storeName,
+    reportTitle: 'Rentabilidad & Ganancia por Producto',
+    reportSubtitle: `Ranking de productos vendidos en el período (${dateLabel})`,
+    headers: productHeaders,
+    dataRows: productRows.length > 0 ? productRows : [['--', '--', 'Sin ventas en este período', '--', '--', 0, 0, 0, 0, 0, 0, '0%', '--']],
+    totalsRow: productRows.length > 0 ? productTotals : undefined,
+    columnWidths: productColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsProducts, 'Ganancia por Producto');
 
-  // 3. HOJA 3: Detalle por Ticket de Venta
-  const ticketRows = sales.map((s) => ({
-    'N° Ticket': `#${s.saleNumber}`,
-    'Fecha y Hora': formatDateTime(s.createdAt),
-    'Caja': s.cashRegister,
-    'Cajero': s.cashier,
-    'Cliente': s.customerName || 'Cliente Varios',
-    'Método de Pago': translatePaymentMethod(s.paymentMethod),
-    'Total Venta (S/.)': s.totalAmount,
-    'Costo Venta (S/.)': s.totalCost,
-    'Ganancia Ticket (S/.)': s.profit,
-    'Margen (%)': `${s.marginPct}%`,
-    'Unidades': s.unitsCount,
-  }));
+  // --- HOJA 3: Detalle por Ticket de Venta ---
+  let sumTicketSales = 0;
+  let sumTicketCost = 0;
+  let sumTicketProfit = 0;
+  let sumTicketUnits = 0;
 
-  const wsTickets = XLSX.utils.json_to_sheet(
-    ticketRows.length > 0 ? ticketRows : [{ 'Detalle': 'No se registraron tickets en este período' }]
-  );
-  wsTickets['!cols'] = calculateColWidths(
-    ticketRows.length > 0 ? ticketRows : [{ 'Detalle': 'No se registraron tickets en este período' }]
-  );
+  const ticketRows = sales.map((s) => {
+    sumTicketSales += s.totalAmount;
+    sumTicketCost += s.totalCost;
+    sumTicketProfit += s.profit;
+    sumTicketUnits += s.unitsCount;
+
+    return [
+      `#${String(s.saleNumber).padStart(5, '0')}`,
+      formatDateTime(s.createdAt),
+      s.cashRegister,
+      s.cashier,
+      s.customerName || 'Cliente Varios',
+      translatePaymentMethod(s.paymentMethod),
+      s.unitsCount,
+      s.totalAmount,
+      s.totalCost,
+      s.profit,
+      `${s.marginPct}%`,
+    ];
+  });
+
+  const ticketHeaders = [
+    'N° Ticket',
+    'Fecha y Hora',
+    'Caja',
+    'Cajero',
+    'Cliente',
+    'Método de Pago',
+    'Artículos',
+    'Total Venta (S/.)',
+    'Costo Venta (S/.)',
+    'Ganancia Ticket (S/.)',
+    'Margen (%)',
+  ];
+
+  const overallTicketMargin = sumTicketCost > 0 ? Number((((sumTicketSales - sumTicketCost) / sumTicketCost) * 100).toFixed(1)) : 0;
+
+  const ticketTotals = [
+    'TOTAL TICKETS',
+    '',
+    `${sales.length} comprobantes`,
+    '',
+    '',
+    '',
+    sumTicketUnits,
+    Number(sumTicketSales.toFixed(2)),
+    Number(sumTicketCost.toFixed(2)),
+    Number(sumTicketProfit.toFixed(2)),
+    `${overallTicketMargin}%`,
+  ];
+
+  const ticketColWidths = [14, 20, 16, 20, 24, 16, 12, 18, 18, 18, 14];
+
+  const wsTickets = createFormattedSheet({
+    storeName,
+    reportTitle: 'Auditoría Detallada por Ticket de Venta',
+    reportSubtitle: `Margen y ganancia ticket a ticket en el período (${dateLabel})`,
+    headers: ticketHeaders,
+    dataRows: ticketRows.length > 0 ? ticketRows : [['--', '--', '--', '--', 'Sin tickets', '--', 0, 0, 0, 0, '0%']],
+    totalsRow: ticketRows.length > 0 ? ticketTotals : undefined,
+    columnWidths: ticketColWidths,
+  });
+
   XLSX.utils.book_append_sheet(wb, wsTickets, 'Detalle por Ticket');
 
-  // 4. HOJA 4: Gastos y Salidas de Caja (si hubo)
+  // --- HOJA 4: Gastos de Caja Menor (si los hubo) ---
   if (expenses.length > 0) {
-    const expenseRows = expenses.map((e) => ({
-      'Fecha y Hora': formatDateTime(e.createdAt),
-      'Caja': e.cashRegister,
-      'Responsable': e.cashier,
-      'Monto Retirado (S/.)': e.amount,
-      'Motivo / Justificación': e.reason,
-    }));
+    let sumExpenseAmount = 0;
+    const expenseRows = expenses.map((e, idx) => {
+      sumExpenseAmount += e.amount;
+      return [
+        idx + 1,
+        formatDateTime(e.createdAt),
+        e.cashRegister,
+        e.cashier,
+        e.amount,
+        e.reason,
+      ];
+    });
 
-    const wsExpenses = XLSX.utils.json_to_sheet(expenseRows);
-    wsExpenses['!cols'] = calculateColWidths(expenseRows);
+    const expenseHeaders = [
+      'N°',
+      'Fecha y Hora',
+      'Caja',
+      'Responsable',
+      'Monto Retirado (S/.)',
+      'Motivo / Justificación',
+    ];
+
+    const expenseTotals = [
+      'TOTAL GASTOS RETIRADOS',
+      '',
+      `${expenses.length} egresos`,
+      '',
+      Number(sumExpenseAmount.toFixed(2)),
+      'Descontado de la ganancia neta',
+    ];
+
+    const expenseColWidths = [6, 20, 16, 20, 18, 38];
+
+    const wsExpenses = createFormattedSheet({
+      storeName,
+      reportTitle: 'Gastos y Salidas de Caja Menor',
+      reportSubtitle: `Egresos de gaveta que descuentan la utilidad (${dateLabel})`,
+      headers: expenseHeaders,
+      dataRows: expenseRows,
+      totalsRow: expenseTotals,
+      columnWidths: expenseColWidths,
+    });
+
     XLSX.utils.book_append_sheet(wb, wsExpenses, 'Gastos de Caja Menor');
   }
 
-  // Descarga directa
   const cleanStore = storeName.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `Reporte_Ganancias_${cleanStore}_${dateSuffix}.xlsx`;
   XLSX.writeFile(wb, filename);
 };
-

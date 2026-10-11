@@ -120,6 +120,7 @@ export const InventoryView: React.FC = () => {
   // Métricas de Almacén
   const totalProducts = products.length;
   const lowStockCount = products.filter((p) => p.currentStock <= p.minStock).length;
+  const totalUnitsStock = products.reduce((acc, p) => acc + (p.currentStock || 0), 0);
   const totalStockValue = products.reduce(
     (acc, p) => acc + p.currentStock * (p.costPrice || 0),
     0,
@@ -133,6 +134,22 @@ export const InventoryView: React.FC = () => {
           }, 0) / products.length
         ).toFixed(1)
       : '0';
+
+  const kardexIncomeTotal = kardexList.reduce((acc, m) => {
+    const isIncome =
+      m.movementType === 'PURCHASE' ||
+      m.movementType === 'RETURN_SALE' ||
+      m.movementType === 'ADJUSTMENT_IN';
+    return isIncome ? acc + (m.quantity || 0) : acc;
+  }, 0);
+
+  const kardexOutTotal = kardexList.reduce((acc, m) => {
+    const isIncome =
+      m.movementType === 'PURCHASE' ||
+      m.movementType === 'RETURN_SALE' ||
+      m.movementType === 'ADJUSTMENT_IN';
+    return !isIncome ? acc + (m.quantity || 0) : acc;
+  }, 0);
 
   // Eliminar producto
   const handleDeleteProduct = async (id: string, name: string) => {
@@ -292,63 +309,78 @@ export const InventoryView: React.FC = () => {
           </div>
 
           {/* Tabla de Productos */}
-          <div className="overflow-x-auto rounded-2xl border border-slate-800">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold uppercase tracking-wider text-[10px]">
-                  <th className="p-3">Código</th>
-                  <th className="p-3">Producto</th>
-                  <th className="p-3">Categoría</th>
-                  <th className="p-3 text-center">Unidad</th>
-                  <th className="p-3 text-right">Stock</th>
-                  <th className="p-3 text-right">Costo (Admin)</th>
-                  <th className="p-3 text-right">Precio Menor</th>
-                  <th className="p-3 text-right">Precio Mayor</th>
-                  <th className="p-3 text-right">Margen</th>
-                  <th className="p-3 text-center">Acciones</th>
+          <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner">
+            <table className="w-full text-left text-xs border-collapse min-w-[1080px]">
+              <thead className="sticky top-0 z-10 bg-slate-950 shadow-sm border-b border-slate-800">
+                <tr className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
+                  <th className="p-3 w-28">Código</th>
+                  <th className="p-3">Producto / Descripción</th>
+                  <th className="p-3 w-32">Categoría</th>
+                  <th className="p-3 text-center w-24">Unidad</th>
+                  <th className="p-3 text-right w-24">Stock</th>
+                  <th className="p-3 text-right w-28">Costo (Admin)</th>
+                  <th className="p-3 text-right w-28">P. Menor</th>
+                  <th className="p-3 text-right w-36">P. Mayor</th>
+                  <th className="p-3 text-right w-24">Margen</th>
+                  <th className="p-3 text-center w-36">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-slate-400">
-                      Cargando inventario...
+                    <td colSpan={10} className="p-10 text-center text-slate-400">
+                      <div className="flex items-center justify-center gap-2">
+                        <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                        <span>Cargando catálogo de productos...</span>
+                      </div>
                     </td>
                   </tr>
                 ) : products.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-slate-500">
-                      No se encontraron productos.
+                    <td colSpan={10} className="p-10 text-center text-slate-500">
+                      No se encontraron productos registrados en el inventario.
                     </td>
                   </tr>
                 ) : (
                   products.map((p) => {
-                    const isLow = p.currentStock <= p.minStock;
+                    const isOutOfStock = p.currentStock <= 0;
+                    const isLow = p.currentStock <= p.minStock && !isOutOfStock;
                     const margin =
                       p.costPrice && p.costPrice > 0
                         ? (((p.retailPrice - p.costPrice) / p.costPrice) * 100).toFixed(1)
                         : '--';
 
                     return (
-                      <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
+                      <tr key={p.id} className="hover:bg-slate-800/40 even:bg-slate-950/25 transition-colors">
                         <td className="p-3 font-mono text-[11px] text-slate-400">
-                          {p.barcode || '--'}
+                          {p.barcode || <span className="text-slate-600">S/C</span>}
                         </td>
-                        <td className="p-3 font-bold text-white max-w-[220px] truncate">
-                          {p.name}
+                        <td className="p-3">
+                          <div className="font-bold text-white max-w-[260px] truncate" title={p.name}>
+                            {p.name}
+                          </div>
+                          {p.barcode && (
+                            <span className="text-[10px] text-slate-500 font-mono sm:hidden">
+                              {p.barcode}
+                            </span>
+                          )}
                         </td>
-                        <td className="p-3 text-slate-400">{p.category?.name || '--'}</td>
+                        <td className="p-3 text-slate-400 truncate max-w-[130px]">
+                          {p.category?.name || '--'}
+                        </td>
                         <td className="p-3 text-center">
-                          <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-mono text-[10px] font-semibold whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 font-mono text-[10px] font-semibold whitespace-nowrap border border-indigo-500/20">
                             {getUnitBadge(p.unitType)}
                           </span>
                         </td>
                         <td className="p-3 text-right font-mono font-bold">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[11px] ${
-                              isLow
-                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                : 'bg-emerald-500/15 text-emerald-400'
+                            className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              isOutOfStock
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : isLow
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
                             }`}
                           >
                             {p.currentStock}
@@ -360,20 +392,24 @@ export const InventoryView: React.FC = () => {
                         <td className="p-3 text-right font-mono font-bold text-white">
                           {formatCurrency(p.retailPrice)}
                         </td>
-                        <td className="p-3 text-right font-mono text-amber-400">
+                        <td className="p-3 text-right font-mono">
                           {p.wholesalePrice != null && Number(p.wholesalePrice) > 0 ? (
-                            <>
-                              {formatCurrency(p.wholesalePrice)}
-                              <span className="text-[10px] text-slate-500 block">
-                                (≥{p.wholesaleMinQty || 3})
+                            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                              <span className="font-bold text-amber-300">
+                                {formatCurrency(p.wholesalePrice)}
                               </span>
-                            </>
+                              <span className="text-[10px] text-slate-400 font-mono px-1 py-0.5 rounded bg-slate-800 border border-slate-700/60">
+                                ≥{p.wholesaleMinQty || 3}
+                              </span>
+                            </div>
                           ) : (
                             <span className="text-slate-600 text-[10px] italic">No aplica</span>
                           )}
                         </td>
-                        <td className="p-3 text-right font-mono text-blue-400 font-semibold">
-                          {margin}%
+                        <td className="p-3 text-right font-mono">
+                          <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 font-semibold border border-blue-500/20 text-[11px]">
+                            {margin}%
+                          </span>
                         </td>
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
@@ -382,28 +418,28 @@ export const InventoryView: React.FC = () => {
                                 setKardexProductFilter(p.id);
                                 setActiveTab('kardex');
                               }}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700/80 transition-all cursor-pointer"
                               title="Ver Trazabilidad en Kardex"
                             >
                               <History className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => setAdjustingProduct(p)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700/80 transition-all cursor-pointer"
                               title="Ajustar Stock"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => setEditingProduct(p)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 transition-all cursor-pointer"
                               title="Editar Producto"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDeleteProduct(p.id, p.name)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-700/80 transition-all cursor-pointer"
                               title="Desactivar Producto"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -415,6 +451,28 @@ export const InventoryView: React.FC = () => {
                   })
                 )}
               </tbody>
+              {products.length > 0 && (
+                <tfoot className="sticky bottom-0 bg-slate-950/95 border-t-2 border-slate-700 text-slate-200 font-semibold text-xs shadow-md">
+                  <tr>
+                    <td colSpan={4} className="p-3 font-bold uppercase tracking-wider text-[11px] text-white">
+                      Totales Generales ({products.length} productos listados)
+                    </td>
+                    <td className="p-3 text-right font-mono font-extrabold text-emerald-400 text-sm">
+                      {totalUnitsStock} u.
+                    </td>
+                    <td className="p-3 text-right font-mono font-extrabold text-white text-sm">
+                      {formatCurrency(totalStockValue)}
+                    </td>
+                    <td colSpan={2} className="p-3 text-right text-[11px] text-slate-400">
+                      Margen Promedio:
+                    </td>
+                    <td className="p-3 text-right font-mono font-bold text-blue-400">
+                      +{avgMargin}%
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
@@ -469,25 +527,25 @@ export const InventoryView: React.FC = () => {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-800">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold uppercase tracking-wider text-[10px]">
-                  <th className="p-3">Fecha y Hora</th>
-                  <th className="p-3">Producto</th>
-                  <th className="p-3">Tipo Movimiento</th>
-                  <th className="p-3 text-right">Variación</th>
-                  <th className="p-3 text-right">Stock Anterior</th>
-                  <th className="p-3 text-right">Stock Resultante</th>
-                  <th className="p-3 text-right">Costo Unit.</th>
-                  <th className="p-3">Operación / Referencia</th>
-                  <th className="p-3">Responsable</th>
+          <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner">
+            <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
+              <thead className="sticky top-0 z-10 bg-slate-950 shadow-sm border-b border-slate-800">
+                <tr className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
+                  <th className="p-3 w-40">Fecha y Hora</th>
+                  <th className="p-3">Producto / Código</th>
+                  <th className="p-3 w-36">Tipo Movimiento</th>
+                  <th className="p-3 text-right w-28">Variación</th>
+                  <th className="p-3 text-right w-24">Stk. Ant.</th>
+                  <th className="p-3 text-right w-24">Stk. Nuevo</th>
+                  <th className="p-3 text-right w-28">Costo Unit.</th>
+                  <th className="p-3 w-44">Operación / Ref.</th>
+                  <th className="p-3 w-32">Responsable</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {kardexList.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-slate-500">
+                    <td colSpan={9} className="p-10 text-center text-slate-500">
                       No hay registros en el Kardex para los criterios seleccionados.
                     </td>
                   </tr>
@@ -499,16 +557,22 @@ export const InventoryView: React.FC = () => {
                       m.movementType === 'ADJUSTMENT_IN';
 
                     return (
-                      <tr key={m.id} className="hover:bg-slate-800/40 transition-colors">
+                      <tr key={m.id} className="hover:bg-slate-800/40 even:bg-slate-950/25 transition-colors">
                         <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                           {formatPeruDateTime(m.createdAt)}
                         </td>
-                        <td className="p-3 font-bold text-white whitespace-nowrap">
-                          <div>{m.productName}</div>
-                          {m.barcode && (
-                            <div className="text-[9px] text-slate-500 font-mono font-normal">
+                        <td className="p-3">
+                          <div className="font-bold text-white max-w-[240px] truncate" title={m.productName}>
+                            {m.productName}
+                          </div>
+                          {m.barcode ? (
+                            <span className="text-[10px] text-slate-500 font-mono">
                               {m.barcode}
-                            </div>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-600 font-mono italic">
+                              S/C
+                            </span>
                           )}
                         </td>
                         <td className="p-3 whitespace-nowrap">
@@ -558,19 +622,35 @@ export const InventoryView: React.FC = () => {
                           {m.newStock}
                         </td>
                         <td className="p-3 text-right font-mono text-slate-300 whitespace-nowrap">
-                          {formatCurrency(m.unitCost)}
+                          {formatCurrency(m.unitCost || 0)}
                         </td>
-                        <td className="p-3 text-slate-300 text-[11px] max-w-xs truncate">
-                          {m.reason}
+                        <td className="p-3 text-slate-300 text-[11px] max-w-[200px] truncate" title={m.reason}>
+                          {m.reason || '--'}
                         </td>
                         <td className="p-3 text-slate-300 font-medium whitespace-nowrap">
-                          {m.userName}
+                          {m.userName || 'Sistema'}
                         </td>
                       </tr>
                     );
                   })
                 )}
               </tbody>
+              {kardexList.length > 0 && (
+                <tfoot className="sticky bottom-0 bg-slate-950/95 border-t-2 border-slate-700 text-slate-200 font-semibold text-xs shadow-md">
+                  <tr>
+                    <td colSpan={3} className="p-3 font-bold uppercase tracking-wider text-[11px] text-white">
+                      Totales ({kardexList.length} movimientos de trazabilidad)
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs">
+                      <span className="text-emerald-400 font-bold block">+{kardexIncomeTotal} u.</span>
+                      <span className="text-rose-400 font-bold block">-{kardexOutTotal} u.</span>
+                    </td>
+                    <td colSpan={5} className="p-3 text-slate-400 text-[11px]">
+                      Auditoría integral de movimientos físicos
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>

@@ -63,6 +63,14 @@ export const ShiftAuditView: React.FC = () => {
   const closedShifts = shifts.filter((s) => s.status === 'CLOSED');
   const discrepancyCount = closedShifts.filter((s) => s.difference && Math.abs(s.difference) > 0.1).length;
 
+  const sumInitial = filteredShifts.reduce((acc, s) => acc + (Number(s.initialBalance) || 0), 0);
+  const sumSales = filteredShifts.reduce((acc, s) => acc + (Number(s.metrics?.totalSales) || 0), 0);
+  const sumCashSales = filteredShifts.reduce((acc, s) => acc + (Number(s.metrics?.cashFromSales) || 0), 0);
+  const sumDigitalSales = filteredShifts.reduce((acc, s) => acc + (Number(s.metrics?.digitalFromSales) || 0), 0);
+  const sumActual = filteredShifts.reduce((acc, s) => acc + (s.actualBalance !== null ? Number(s.actualBalance) : 0), 0);
+  const sumExpected = filteredShifts.reduce((acc, s) => acc + (s.expectedBalance !== null ? Number(s.expectedBalance) : 0), 0);
+  const sumDiff = filteredShifts.reduce((acc, s) => acc + (s.difference !== null ? Number(s.difference) : 0), 0);
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-slate-100">
       {/* Header */}
@@ -144,34 +152,37 @@ export const ShiftAuditView: React.FC = () => {
           />
         </div>
 
-        <div className="overflow-x-auto rounded-2xl border border-slate-800">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold uppercase tracking-wider text-[10px]">
-                <th className="p-3">Caja</th>
-                <th className="p-3">Cajero</th>
-                <th className="p-3">Apertura</th>
-                <th className="p-3">Cierre</th>
-                <th className="p-3 text-right">Fondo Inicial</th>
-                <th className="p-3 text-right">Cobros en Turno</th>
-                <th className="p-3 text-right">Conteo Cajero</th>
-                <th className="p-3 text-right">Esperado Gaveta</th>
-                <th className="p-3 text-center">Diferencia</th>
-                <th className="p-3 text-center">Estado</th>
-                <th className="p-3 text-center">Auditoría</th>
+        <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner bg-slate-950/40">
+          <table className="w-full min-w-[1150px] text-left text-xs border-collapse">
+            <thead className="sticky top-0 z-10 bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold uppercase tracking-wider text-[10px] shadow-sm">
+              <tr>
+                <th className="p-3.5 w-44">Caja</th>
+                <th className="p-3.5 w-36">Cajero</th>
+                <th className="p-3.5 w-32">Apertura</th>
+                <th className="p-3.5 w-32">Cierre</th>
+                <th className="p-3.5 text-right w-28">Fondo Inicial</th>
+                <th className="p-3.5 text-right w-44">Cobros en Turno</th>
+                <th className="p-3.5 text-right w-32">Conteo Cajero</th>
+                <th className="p-3.5 text-right w-32">Esperado Gaveta</th>
+                <th className="p-3.5 text-center w-36">Diferencia Arqueo</th>
+                <th className="p-3.5 text-center w-24">Estado</th>
+                <th className="p-3.5 text-center w-20">Auditoría</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
               {isLoading ? (
                 <tr>
-                  <td colSpan={11} className="p-8 text-center text-slate-400">
-                    Cargando auditoría de turnos...
+                  <td colSpan={11} className="p-10 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="w-6 h-6 border-2 border-slate-700 border-t-indigo-400 rounded-full animate-spin" />
+                      <span>Cargando auditoría de turnos...</span>
+                    </div>
                   </td>
                 </tr>
               ) : filteredShifts.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="p-8 text-center text-slate-500">
-                    No hay turnos registrados aún.
+                  <td colSpan={11} className="p-10 text-center text-slate-500">
+                    No hay turnos registrados con el filtro aplicado.
                   </td>
                 </tr>
               ) : (
@@ -182,100 +193,98 @@ export const ShiftAuditView: React.FC = () => {
                   const metrics = s.metrics || {};
 
                   return (
-                    <tr key={s.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3 font-bold text-white whitespace-nowrap">
-                        {s.cashRegister?.name}{' '}
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          ({s.cashRegister?.identifier})
-                        </span>
+                    <tr key={s.id} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="p-3.5 font-bold text-white whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span>{s.cashRegister?.name}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                            {s.cashRegister?.identifier}
+                          </span>
+                        </div>
                       </td>
 
-                      <td className="p-3 text-slate-200 font-medium whitespace-nowrap">{s.user?.name}</td>
+                      <td className="p-3.5 text-slate-200 font-medium whitespace-nowrap">{s.user?.name}</td>
 
-                      <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                        {formatPeruTime(s.openedAt)}
-                        <span className="text-[10px] text-slate-600 block">
-                          {formatPeruDate(s.openedAt)}
-                        </span>
+                      <td className="p-3.5 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                        <div className="font-semibold text-slate-200">{formatPeruTime(s.openedAt)}</div>
+                        <div className="text-[10px] text-slate-500">{formatPeruDate(s.openedAt)}</div>
                       </td>
 
-                      <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                      <td className="p-3.5 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                         {s.closedAt ? (
                           <>
-                            {formatPeruTime(s.closedAt)}
-                            <span className="text-[10px] text-slate-600 block">
-                              {formatPeruDate(s.closedAt)}
-                            </span>
+                            <div className="font-semibold text-slate-200">{formatPeruTime(s.closedAt)}</div>
+                            <div className="text-[10px] text-slate-500">{formatPeruDate(s.closedAt)}</div>
                           </>
                         ) : (
-                          '--'
+                          <span className="text-emerald-400 font-semibold font-sans">En curso</span>
                         )}
                       </td>
 
-                      <td className="p-3 text-right font-mono text-slate-300">
+                      <td className="p-3.5 text-right font-mono text-slate-300 whitespace-nowrap font-medium">
                         {formatCurrency(s.initialBalance)}
                       </td>
 
                       {/* Cobros en Turno (Efectivo vs Digital) */}
-                      <td className="p-3 text-right font-mono">
+                      <td className="p-3.5 text-right font-mono whitespace-nowrap">
                         <div className="font-bold text-white">
                           {formatCurrency(metrics.totalSales || 0)}
                         </div>
                         <div className="text-[10px] flex items-center justify-end gap-1.5 mt-0.5">
-                          <span className="text-emerald-400" title="Cobrado en Efectivo">
+                          <span className="text-emerald-400 font-medium" title="Cobrado en Efectivo">
                             Ef: {formatCurrency(metrics.cashFromSales || 0)}
                           </span>
-                          <span className="text-slate-600">|</span>
-                          <span className="text-indigo-400" title="Cobrado Digital (Yape, Plin, Tarjetas)">
+                          <span className="text-slate-700">|</span>
+                          <span className="text-indigo-400 font-medium" title="Cobrado Digital (Yape, Plin, Tarjetas)">
                             Dig: {formatCurrency(metrics.digitalFromSales || 0)}
                           </span>
                         </div>
                       </td>
 
-                      <td className="p-3 text-right font-mono font-bold text-white">
-                        {s.actualBalance !== null ? formatCurrency(s.actualBalance) : '--'}
+                      <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                        {s.actualBalance !== null ? formatCurrency(s.actualBalance) : <span className="text-slate-600 font-sans font-normal">--</span>}
                       </td>
 
-                      <td className="p-3 text-right font-mono text-slate-400">
-                        {s.expectedBalance !== null ? formatCurrency(s.expectedBalance) : '--'}
+                      <td className="p-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
+                        {s.expectedBalance !== null ? formatCurrency(s.expectedBalance) : <span className="text-slate-600 font-sans font-normal">--</span>}
                       </td>
 
-                      <td className="p-3 text-center">
+                      <td className="p-3.5 text-center whitespace-nowrap">
                         {isOpen ? (
-                          <span className="text-[10px] text-slate-500">En turno</span>
+                          <span className="text-[10px] text-slate-500 font-medium">En turno</span>
                         ) : diff === null ? (
-                          <span className="text-[10px] text-slate-500">--</span>
+                          <span className="text-[10px] text-slate-500 font-medium">--</span>
                         ) : !hasDiscrepancy ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold text-[10px] border border-emerald-500/20 whitespace-nowrap">
-                            Cuadrado (S/ 0.00)
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold text-[10px] border border-emerald-500/25">
+                            CUADRADO (S/ 0.00)
                           </span>
                         ) : diff < 0 ? (
-                          <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px] border border-rose-500/30 whitespace-nowrap">
-                            Faltante: {formatCurrency(diff)}
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px] border border-rose-500/30">
+                            FALTANTE: {formatCurrency(diff)}
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold text-[10px] border border-amber-500/30 whitespace-nowrap">
-                            Sobrante: +{formatCurrency(diff)}
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold text-[10px] border border-amber-500/30">
+                            SOBRANTE: +{formatCurrency(diff)}
                           </span>
                         )}
                       </td>
 
-                      <td className="p-3 text-center">
+                      <td className="p-3.5 text-center whitespace-nowrap">
                         <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             isOpen
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-slate-800 text-slate-400'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700/60'
                           }`}
                         >
                           {isOpen ? 'OPERANDO' : 'CERRADO'}
                         </span>
                       </td>
 
-                      <td className="p-3 text-center">
+                      <td className="p-3.5 text-center whitespace-nowrap">
                         <button
                           onClick={() => setSelectedShift(s)}
-                          className="p-1.5 rounded-xl bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-all cursor-pointer inline-flex items-center gap-1 text-[11px] font-semibold"
+                          className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-all cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-semibold border border-slate-700"
                           title="Inspeccionar auditoría completa de este turno"
                         >
                           <Eye className="w-3.5 h-3.5" />
@@ -287,6 +296,51 @@ export const ShiftAuditView: React.FC = () => {
                 })
               )}
             </tbody>
+            {filteredShifts.length > 0 && (
+              <tfoot className="sticky bottom-0 z-10 bg-slate-950 border-t-2 border-slate-700 text-xs font-semibold text-slate-300 shadow-lg">
+                <tr>
+                  <td colSpan={4} className="p-3.5 text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-bold">TOTALES AUDITORÍA:</span>
+                      <span className="text-slate-400 text-[11px]">({filteredShifts.length} turnos listados)</span>
+                    </div>
+                  </td>
+                  <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                    {formatCurrency(sumInitial)}
+                  </td>
+                  <td className="p-3.5 text-right font-mono font-bold whitespace-nowrap">
+                    <div className="text-white">{formatCurrency(sumSales)}</div>
+                    <div className="text-[10px] flex items-center justify-end gap-1.5 mt-0.5 font-normal">
+                      <span className="text-emerald-400">Ef: {formatCurrency(sumCashSales)}</span>
+                      <span className="text-slate-700">|</span>
+                      <span className="text-indigo-400">Dig: {formatCurrency(sumDigitalSales)}</span>
+                    </div>
+                  </td>
+                  <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                    {formatCurrency(sumActual)}
+                  </td>
+                  <td className="p-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
+                    {formatCurrency(sumExpected)}
+                  </td>
+                  <td className="p-3.5 text-center whitespace-nowrap">
+                    <span
+                      className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                        Math.abs(sumDiff) < 0.05
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25'
+                          : sumDiff < 0
+                          ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      }`}
+                    >
+                      {Math.abs(sumDiff) < 0.05
+                        ? 'S/ 0.00'
+                        : `${sumDiff > 0 ? '+' : ''}${formatCurrency(sumDiff)}`}
+                    </span>
+                  </td>
+                  <td colSpan={2} className="p-3.5 text-center text-slate-600 text-[11px]">--</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
