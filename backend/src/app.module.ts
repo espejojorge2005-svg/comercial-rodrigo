@@ -8,6 +8,7 @@ import { CashShiftsModule } from './cash-shifts/cash-shifts.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { SalesModule } from './sales/sales.module.js';
 import { SettingsModule } from './settings/settings.module.js';
+import { BillingModule } from './billing/billing.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SettingsModule } from './settings/settings.module.js';
     ProductsModule,
     SalesModule,
     SettingsModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

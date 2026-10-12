@@ -15,6 +15,8 @@ export interface SoldProductSummary {
 export interface ShiftSaleSummary {
   id?: string;
   saleNumber: number | string;
+  fullReceiptNumber?: string;
+  receiptType?: string;
   totalAmount: number;
   paymentMethod: string;
   createdAt: string | Date;
@@ -101,7 +103,7 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
         <div style="font-size: ${is58 ? '8.5px' : '9.5px'}; line-height: 1.3;">
           ${salesList.slice(0, 15).map((s) => `
             <div style="display: flex; justify-content: space-between;">
-              <span>#${String(s.saleNumber).padStart(6, '0')} (${formatPeruTime(s.createdAt)})</span>
+              <span>${s.fullReceiptNumber || `#${String(s.saleNumber).padStart(6, '0')}`} (${formatPeruTime(s.createdAt)})</span>
               <span style="font-weight: bold;">${formatCurrency(s.totalAmount)}</span>
             </div>
           `).join('')}

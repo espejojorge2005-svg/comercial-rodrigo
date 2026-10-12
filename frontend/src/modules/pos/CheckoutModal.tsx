@@ -13,10 +13,16 @@ import {
   User,
   AlertCircle,
   Check,
+  Receipt,
+  FileText,
+  Building2,
+  AlertTriangle,
+  MapPin,
+  Sparkles,
 } from 'lucide-react';
 import { offlineStorage, type OfflineSale } from '../../lib/offlineStorage.js';
 import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
-import type { PaymentMethod } from '../../types/index.js';
+import type { PaymentMethod, ReceiptType } from '../../types/index.js';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -43,13 +49,27 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const totalAmount = getTotalAmount();
   const savings = getTotalWholesaleSavings();
 
+  // Tipo de comprobante: Por defecto NOTA_VENTA (Prioridad operativa)
+  const [receiptType, setReceiptType] = useState<ReceiptType>('NOTA_VENTA');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [cashPaid, setCashPaid] = useState<string>(String(totalAmount));
   const [digitalPaid, setDigitalPaid] = useState<string>('0');
   const [custName, setCustName] = useState<string>(customerName);
   const [custDoc, setCustDoc] = useState<string>(customerDocument);
+  const [custAddress, setCustAddress] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sincronizar efectivo al abrir el modal
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  if (isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen);
+    if (isOpen) {
+      setCashPaid(String(totalAmount));
+      setDigitalPaid('0');
+      setError(null);
+    }
+  }
 
   if (!isOpen) return null;
 
@@ -63,6 +83,58 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   } else if (paymentMethod === 'MIXED') {
     const requiredCash = Math.max(0, totalAmount - digitalNum);
     changeAmount = Math.max(0, Number((cashNum - requiredCash).toFixed(2)));
+  }
+
+  // Cálculos fiscales informativos
+  const taxableBase = Number((totalAmount / 1.18).toFixed(2));
+  const igvAmount = Number((totalAmount - taxableBase).toFixed(2));
+
+  // Validaciones según el tipo de comprobante
+  const isBoletaOver700 = receiptType === 'BOLETA' && totalAmount >= 700;
+  const dniDigitsOnly = custDoc.replace(/\D/g, '');
+  const rucDigitsOnly = custDoc.replace(/\D/g, '');
+
+  const isDniValidForBoleta = !isBoletaOver700 || dniDigitsOnly.length === 8;
+  const isNameValidForBoleta =
+    !isBoletaOver700 ||
+    (custName.trim().length >= 3 && custName.trim().toLowerCase() !== 'cliente varios');
+
+  const validRucPrefixes = ['10', '20', '15', '17'];
+  const isRucValidForFactura =
+    receiptType !== 'FACTURA' ||
+    (rucDigitsOnly.length === 11 &&
+      validRucPrefixes.some((p) => rucDigitsOnly.startsWith(p)));
+
+  const isNameValidForFactura =
+    receiptType !== 'FACTURA' ||
+    (custName.trim().length >= 2 && custName.trim().toLowerCase() !== 'cliente varios');
+
+  const isAddressValidForFactura =
+    receiptType !== 'FACTURA' || custAddress.trim().length >= 3;
+
+  // Determinar si el formulario es válido para procesar cobro
+  let isFormValid = true;
+  let validationMessage = '';
+
+  if (receiptType === 'BOLETA' && isBoletaOver700) {
+    if (!isDniValidForBoleta) {
+      isFormValid = false;
+      validationMessage = 'SUNAT exige DNI obligatorio de 8 dígitos para boletas ≥ S/ 700.00';
+    } else if (!isNameValidForBoleta) {
+      isFormValid = false;
+      validationMessage = 'Ingrese los nombres y apellidos completos del cliente';
+    }
+  } else if (receiptType === 'FACTURA') {
+    if (!isRucValidForFactura) {
+      isFormValid = false;
+      validationMessage = 'El RUC debe tener 11 dígitos e iniciar con 10, 20, 15 o 17';
+    } else if (!isNameValidForFactura) {
+      isFormValid = false;
+      validationMessage = 'La Razón Social de la empresa es obligatoria para Factura';
+    } else if (!isAddressValidForFactura) {
+      isFormValid = false;
+      validationMessage = 'La Dirección Fiscal es obligatoria para Factura';
+    }
   }
 
   const handleSetExactCash = () => {
@@ -79,10 +151,25 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setCashPaid(String(current + amount));
   };
 
+  // Atajo de teclado: Enter en Nota de Venta para cobro ultrarrápido
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !isLoading && isFormValid) {
+      // Si está en un input multilínea o cancelando, ignorar
+      if ((e.target as HTMLElement).tagName !== 'TEXTAREA') {
+        handleSubmit(e);
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift) {
       setError('No hay un turno de caja activo para procesar la venta');
+      return;
+    }
+
+    if (!isFormValid) {
+      setError(validationMessage);
       return;
     }
 
@@ -101,19 +188,45 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setIsLoading(true);
     setError(null);
 
+    // Obtener serie tentativa según caja activa
+    const registerIdentifier = activeShift.cashRegister?.identifier || 'POS-01';
+    const boxMatch = registerIdentifier.match(/\d+/) || [1];
+    const boxNum = String(boxMatch[0]).padStart(2, '0');
+    let series = `NV${boxNum}`;
+    if (receiptType === 'BOLETA') series = `B${boxNum.padStart(3, '0')}`;
+    if (receiptType === 'FACTURA') series = `F${boxNum.padStart(3, '0')}`;
+
     const processOfflineSale = async () => {
       const nowIso = new Date().toISOString();
       const offlineId = `off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const offlineTicketNumber = `OFF-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+      const randomCorr = Math.floor(Math.random() * 9000) + 1000;
+      const offlineTicketNumber = `${series}-${String(randomCorr).padStart(8, '0')}`;
 
       const offlineSale: OfflineSale = {
         offlineId,
         offlineTicketNumber,
+        receiptType,
+        series,
+        correlativeNumber: randomCorr,
+        fullReceiptNumber: offlineTicketNumber,
+        isFiscal: receiptType !== 'NOTA_VENTA',
+        taxableBase,
+        igvAmount: receiptType !== 'NOTA_VENTA' ? igvAmount : 0,
+        customerAddress: custAddress || null,
+        hash: receiptType !== 'NOTA_VENTA' ? `SIM-${Date.now().toString(16)}` : null,
+        qrString: null,
+        emissionStatus: receiptType !== 'NOTA_VENTA' ? 'SIMULATED' : null,
         cashShiftId: activeShift.id,
         shiftRegisterName: activeShift.cashRegister?.name || 'Caja',
         userId: activeShift.userId || '',
         userName: activeShift.user?.name || '',
-        customerName: custName || 'Cliente Varios',
+        customerName:
+          custName ||
+          (receiptType === 'BOLETA'
+            ? 'Clientes Varios'
+            : receiptType === 'FACTURA'
+              ? 'EMPRESA'
+              : 'Cliente Varios'),
         customerDocument: custDoc || null,
         paymentMethod,
         cashPaid: paymentMethod === 'TRANSFER' || paymentMethod === 'CARD' ? 0 : cashNum,
@@ -149,9 +262,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       const syntheticSale = {
         id: offlineId,
-        saleNumber: offlineTicketNumber,
+        saleNumber: randomCorr,
+        receiptType,
+        series,
+        correlativeNumber: randomCorr,
+        fullReceiptNumber: offlineTicketNumber,
+        isFiscal: receiptType !== 'NOTA_VENTA',
+        taxableBase,
+        igvAmount: receiptType !== 'NOTA_VENTA' ? igvAmount : 0,
+        customerAddress: custAddress || null,
+        hash: offlineSale.hash,
+        qrString: null,
+        emissionStatus: offlineSale.emissionStatus,
         isOffline: true,
-        customerName: custName || 'Cliente Varios',
+        customerName: offlineSale.customerName,
         customerDocument: custDoc || null,
         paymentMethod,
         cashPaid: offlineSale.cashPaid,
@@ -191,8 +315,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     try {
       const payload = {
         cashShiftId: activeShift.id,
-        customerName: custName || 'Cliente Varios',
+        receiptType,
+        customerName:
+          custName ||
+          (receiptType === 'BOLETA'
+            ? 'Clientes Varios'
+            : receiptType === 'FACTURA'
+              ? 'EMPRESA'
+              : 'Cliente Varios'),
         customerDocument: custDoc || null,
+        customerAddress: custAddress || null,
         paymentMethod,
         cashPaid: paymentMethod === 'TRANSFER' || paymentMethod === 'CARD' ? 0 : cashNum,
         digitalPaid:
@@ -230,7 +362,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         (typeof navigator !== 'undefined' && !navigator.onLine);
 
       if (isConnectionIssue) {
-        // Fallback inmediato a venta offline
         await processOfflineSale();
       } else {
         setIsLoading(false);
@@ -242,8 +373,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const billButtons = [10, 20, 50, 100, 200];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-7 shadow-2xl relative text-slate-100 max-h-[92vh] overflow-y-auto">
+    <div
+      onKeyDown={handleKeyDown}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+    >
+      <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-7 shadow-2xl relative text-slate-100 max-h-[94vh] overflow-y-auto">
         <button
           onClick={onClose}
           className="absolute right-4 top-4 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
@@ -251,12 +385,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           <X className="w-5 h-5" />
         </button>
 
-        <h3 className="text-lg sm:text-xl font-bold text-white mb-1 flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-1">
           <CreditCard className="w-5 h-5 text-blue-400" />
-          Procesar Cobro
-        </h3>
+          <h3 className="text-lg sm:text-xl font-bold text-white">Procesar Cobro y Emisión</h3>
+        </div>
         <p className="text-xs text-slate-400 mb-4 sm:mb-5">
-          Seleccione método de pago y registre el importe entregado por el cliente.
+          Seleccione el tipo de comprobante (Triple Vía) y registre el pago del cliente.
         </p>
 
         {error && (
@@ -267,23 +401,258 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
-          {/* Tarjeta del Total a Pagar (Sobria y Profesional) */}
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-            <div>
-              <span className="text-xs text-slate-400 font-medium block">Total a Cobrar</span>
-              <span className="text-2xl sm:text-3xl font-extrabold text-white">
-                {formatCurrency(totalAmount)}
+          {/* SELECTOR DE TRIPLE VÍA DE COMPROBANTES */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Receipt className="w-3.5 h-3.5 text-blue-400" />
+                Tipo de Comprobante
+              </label>
+              <span className="text-[11px] text-slate-400 font-medium">
+                {receiptType === 'NOTA_VENTA' && 'Serie interna: NV01 / NV02'}
+                {receiptType === 'BOLETA' && 'Serie fiscal: B001 / B002'}
+                {receiptType === 'FACTURA' && 'Serie fiscal: F001 / F002'}
               </span>
             </div>
 
-            {savings > 0 && (
-              <div className="text-right">
-                <span className="text-[10px] text-amber-400 uppercase font-semibold block tracking-wider">
-                  Ahorro Tarifa Mayorista
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {/* Opción 1: NOTA DE VENTA (PREDETERMINADO) */}
+              <button
+                type="button"
+                onClick={() => setReceiptType('NOTA_VENTA')}
+                className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between relative ${
+                  receiptType === 'NOTA_VENTA'
+                    ? 'bg-blue-600/20 border-blue-500 text-white ring-2 ring-blue-500/30'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full mb-1">
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-white">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <span>Nota de Venta</span>
+                  </div>
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    Rápido
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Ticket Interno mostrador. Sin folios fiscales. Despacho ágil en 1 toque.
+                </p>
+              </button>
+
+              {/* Opción 2: BOLETA ELECTRÓNICA */}
+              <button
+                type="button"
+                onClick={() => setReceiptType('BOLETA')}
+                className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  receiptType === 'BOLETA'
+                    ? 'bg-indigo-600/20 border-indigo-500 text-white ring-2 ring-indigo-500/30'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full mb-1">
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-white">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    <span>Boleta Electrónica</span>
+                  </div>
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    Fiscal
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Cliente final. Clientes Varios o con DNI. QR y cálculo de IGV.
+                </p>
+              </button>
+
+              {/* Opción 3: FACTURA ELECTRÓNICA */}
+              <button
+                type="button"
+                onClick={() => setReceiptType('FACTURA')}
+                className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  receiptType === 'FACTURA'
+                    ? 'bg-purple-600/20 border-purple-500 text-white ring-2 ring-purple-500/30'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full mb-1">
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-white">
+                    <Building2 className="w-4 h-4 text-purple-400" />
+                    <span>Factura Electrónica</span>
+                  </div>
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    Fiscal
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Empresas con RUC. Exige Razón Social y Dirección Fiscal válida.
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Tarjeta del Total a Pagar y Desglose Financiero */}
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs text-slate-400 font-medium block">Total a Cobrar</span>
+                <span className="text-2xl sm:text-3xl font-extrabold text-white">
+                  {formatCurrency(totalAmount)}
                 </span>
-                <span className="text-xs font-bold text-emerald-400">
-                  -{formatCurrency(savings)}
+              </div>
+
+              {receiptType !== 'NOTA_VENTA' ? (
+                <div className="text-right text-xs space-y-0.5">
+                  <div className="text-slate-400">
+                    Op. Gravada: <span className="font-semibold text-slate-200">{formatCurrency(taxableBase)}</span>
+                  </div>
+                  <div className="text-slate-400">
+                    IGV (18%): <span className="font-semibold text-indigo-400">{formatCurrency(igvAmount)}</span>
+                  </div>
+                  {savings > 0 && (
+                    <div className="text-[11px] font-bold text-emerald-400">
+                      Ahorro mayorista: -{formatCurrency(savings)}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                savings > 0 && (
+                  <div className="text-right">
+                    <span className="text-[10px] text-amber-400 uppercase font-semibold block tracking-wider">
+                      Ahorro Tarifa Mayorista
+                    </span>
+                    <span className="text-xs font-bold text-emerald-400">
+                      -{formatCurrency(savings)}
+                    </span>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+
+          {/* ALERTA NORMATIVA SUNAT: Si Boleta es >= S/ 700.00 */}
+          {receiptType === 'BOLETA' && isBoletaOver700 && (
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+              <div>
+                <strong className="font-bold block text-amber-200">
+                  Exigencia Obligatoria SUNAT (Monto ≥ S/ 700.00)
+                </strong>
+                <span>
+                  Por normativa tributaria, toda Boleta de Venta igual o superior a S/ 700.00 debe
+                  identificar obligatoriamente al comprador con su DNI de 8 dígitos y nombres completos.
                 </span>
+              </div>
+            </div>
+          )}
+
+          {/* INFORMACIÓN DE FACTURA: Requerimiento Estricto */}
+          {receiptType === 'FACTURA' && (
+            <div className="p-3.5 rounded-2xl bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs flex items-start gap-2.5">
+              <Building2 className="w-4 h-4 shrink-0 text-purple-400 mt-0.5" />
+              <div>
+                <strong className="font-bold block text-purple-200">
+                  Datos Fiscales de Factura (Empresas)
+                </strong>
+                <span>
+                  Ingrese el RUC de 11 dígitos (iniciado en 10, 20, 15 o 17), Razón Social y Dirección Fiscal para habilitar la emisión.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* DATOS DEL CLIENTE (DINÁMICOS SEGÚN COMPROBANTE) */}
+          <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+            <span className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+              {receiptType === 'FACTURA'
+                ? 'Datos Fiscales del Cliente (Obligatorio)'
+                : receiptType === 'BOLETA' && isBoletaOver700
+                  ? 'Datos del Cliente (Obligatorio por monto ≥ S/ 700)'
+                  : 'Datos del Cliente (Opcional)'}
+            </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Documento (DNI o RUC) */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  {receiptType === 'FACTURA'
+                    ? 'RUC (11 dígitos) *'
+                    : receiptType === 'BOLETA' && isBoletaOver700
+                      ? 'DNI (8 dígitos) *'
+                      : 'DNI / RUC (Opcional)'}
+                </label>
+                <input
+                  type="text"
+                  maxLength={receiptType === 'FACTURA' ? 11 : 12}
+                  value={custDoc}
+                  onChange={(e) => setCustDoc(e.target.value)}
+                  placeholder={
+                    receiptType === 'FACTURA'
+                      ? 'ej. 20601234567'
+                      : receiptType === 'BOLETA'
+                        ? 'ej. 45892301'
+                        : 'ej. 45892301'
+                  }
+                  className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs text-white outline-none font-mono transition-all ${
+                    (receiptType === 'BOLETA' && isBoletaOver700 && !isDniValidForBoleta) ||
+                    (receiptType === 'FACTURA' && !isRucValidForFactura && custDoc.length > 0)
+                      ? 'border-rose-500/70 focus:border-rose-500'
+                      : 'border-slate-800 focus:border-blue-500'
+                  }`}
+                />
+                {receiptType === 'FACTURA' && custDoc && !isRucValidForFactura && (
+                  <span className="text-[10px] text-rose-400 mt-1 block">
+                    Debe iniciar con 10, 20, 15 o 17 (11 dígitos)
+                  </span>
+                )}
+                {receiptType === 'BOLETA' && isBoletaOver700 && !isDniValidForBoleta && (
+                  <span className="text-[10px] text-rose-400 mt-1 block">
+                    El DNI debe contener exactamente 8 dígitos
+                  </span>
+                )}
+              </div>
+
+              {/* Nombre / Razón Social */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  {receiptType === 'FACTURA'
+                    ? 'Razón Social *'
+                    : receiptType === 'BOLETA' && isBoletaOver700
+                      ? 'Nombres y Apellidos *'
+                      : 'Nombre de Cliente'}
+                </label>
+                <div className="relative">
+                  <User className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={custName}
+                    onChange={(e) => setCustName(e.target.value)}
+                    placeholder={
+                      receiptType === 'FACTURA'
+                        ? 'Razón Social de la empresa'
+                        : 'Cliente Varios'
+                    }
+                    className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl pl-8 pr-3 py-2 text-xs text-white outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Dirección Fiscal (Solo para Factura) */}
+            {receiptType === 'FACTURA' && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  Dirección Fiscal *
+                </label>
+                <div className="relative">
+                  <MapPin className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={custAddress}
+                    onChange={(e) => setCustAddress(e.target.value)}
+                    placeholder="Av. Ejemplo 123, Distrito, Lima"
+                    className="w-full bg-slate-900 border border-slate-800 focus:border-purple-500 rounded-xl pl-8 pr-3 py-2 text-xs text-white outline-none"
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -414,38 +783,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           )}
 
-          {/* Datos del Cliente (Opcional) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">
-                Cliente (Opcional)
-              </label>
-              <div className="relative">
-                <User className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={custName}
-                  onChange={(e) => setCustName(e.target.value)}
-                  placeholder="Cliente Varios"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-8 pr-3 py-2 text-xs text-white outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">
-                DNI / RUC (Opcional)
-              </label>
-              <input
-                type="text"
-                value={custDoc}
-                onChange={(e) => setCustDoc(e.target.value)}
-                placeholder="ej. 10458923011"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
-              />
-            </div>
-          </div>
-
           {/* Botones de acción */}
           <div className="flex gap-3 pt-2">
             <button
@@ -458,15 +795,27 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-2/3 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-sm text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              disabled={isLoading || !isFormValid}
+              className={`w-2/3 py-3 rounded-xl font-bold text-sm text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                receiptType === 'NOTA_VENTA'
+                  ? 'bg-emerald-600 hover:bg-emerald-500'
+                  : receiptType === 'BOLETA'
+                    ? 'bg-indigo-600 hover:bg-indigo-500'
+                    : 'bg-purple-600 hover:bg-purple-500'
+              }`}
             >
               {isLoading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>Confirmar y Emitir Ticket</span>
+                  <span>
+                    {receiptType === 'NOTA_VENTA'
+                      ? 'Cobrar y Emitir Nota de Venta (Enter)'
+                      : receiptType === 'BOLETA'
+                        ? 'Cobrar y Emitir Boleta Electrónica'
+                        : 'Cobrar y Emitir Factura Electrónica'}
+                  </span>
                 </>
               )}
             </button>

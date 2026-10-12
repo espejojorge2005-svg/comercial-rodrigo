@@ -15,6 +15,10 @@ export type MovementType =
 
 export type CashMovementType = 'INCOME' | 'EXPENSE';
 
+export type ReceiptType = 'NOTA_VENTA' | 'BOLETA' | 'FACTURA';
+
+export type EmissionStatus = 'SIMULATED' | 'ACCEPTED' | 'PENDING' | 'REJECTED';
+
 export interface User {
   id: string;
   name: string;
@@ -134,4 +138,61 @@ export interface StoreConfig {
   address: string;
   footerText: string;
   updatedAt?: string;
+}
+
+export interface SaleDetail {
+  id: string;
+  productId: string;
+  productName?: string;
+  product?: {
+    id: string;
+    name: string;
+    barcode?: string | null;
+    unitType?: UnitType;
+  };
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  costPriceSnapshot?: number;
+}
+
+export interface Sale {
+  id: string;
+  saleNumber: number;
+  receiptType: ReceiptType;
+  series: string;
+  correlativeNumber: number;
+  fullReceiptNumber?: string;
+  isFiscal: boolean;
+  taxableBase: number;
+  igvAmount: number;
+  customerAddress?: string | null;
+  hash?: string | null;
+  qrString?: string | null;
+  emissionStatus?: EmissionStatus | null;
+  createdAt: string;
+  customerName?: string | null;
+  customerDocument?: string | null;
+  paymentMethod: PaymentMethod;
+  cashPaid: number;
+  digitalPaid: number;
+  totalAmount: number;
+  changeAmount: number;
+  isVoided: boolean;
+  voidedReason?: string | null;
+  user?: {
+    id: string;
+    name: string;
+    username: string;
+  };
+  cashShift?: {
+    id: string;
+    cashRegister?: {
+      id: string;
+      name: string;
+      identifier: string;
+    };
+  };
+  items: SaleDetail[];
+  isOffline?: boolean;
 }

@@ -182,16 +182,26 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                     <div className="p-3.5 flex items-center justify-between gap-3 flex-wrap">
                       <div className="flex items-center gap-3">
                         <div
-                          className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center font-mono text-xs font-bold ${
+                          className={`w-auto min-w-[72px] px-2.5 h-10 rounded-xl flex flex-col items-center justify-center font-mono text-xs font-bold ${
                             sale.isVoided
                               ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                              : 'bg-slate-800 text-indigo-300 border border-slate-700'
+                              : sale.receiptType === 'FACTURA'
+                                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                : sale.receiptType === 'BOLETA'
+                                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                           }`}
                         >
-                          <span className="text-[9px] uppercase text-slate-400 font-sans font-normal">
-                            Ticket
+                          <span className="text-[8.5px] uppercase font-sans font-bold tracking-wider">
+                            {sale.receiptType === 'FACTURA'
+                              ? 'Factura'
+                              : sale.receiptType === 'BOLETA'
+                                ? 'Boleta'
+                                : 'Nota Venta'}
                           </span>
-                          #{String(sale.saleNumber).padStart(4, '0')}
+                          <span className="text-[11px] font-mono font-extrabold">
+                            {sale.fullReceiptNumber || `${sale.series || 'NV01'}-${String(sale.correlativeNumber || sale.saleNumber).padStart(8, '0')}`}
+                          </span>
                         </div>
 
                         <div>

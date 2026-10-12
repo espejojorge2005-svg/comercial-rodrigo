@@ -4,22 +4,89 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma, ShiftStatus, MovementType, Role, Product, CashMovementType } from '@prisma/client';
+import {
+  Prisma,
+  ShiftStatus,
+  MovementType,
+  Role,
+  Product,
+  CashMovementType,
+  ReceiptType,
+  EmissionStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { BillingService } from '../billing/billing.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
 import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 
 @Injectable()
 export class SalesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private billingService: BillingService,
+  ) {}
 
   /**
-   * Registro atómico de venta en POS con CONTROL DE CONCURRENCIA ACID y Kardex
+   * Helper para asignar series independientes por caja física y tipo de comprobante:
+   * Caja 1 (POS-01): NV01, B001, F001
+   * Caja 2 (POS-02): NV02, B002, F002
+   */
+  private getSeriesForRegister(
+    identifier: string,
+    name: string,
+    receiptType: ReceiptType,
+  ): string {
+    let boxNum = '01';
+    const match = identifier.match(/\d+/) || name.match(/\d+/);
+    if (match) {
+      boxNum = match[0].padStart(2, '0');
+    }
+
+    if (receiptType === ReceiptType.NOTA_VENTA) {
+      return `NV${boxNum}`;
+    } else if (receiptType === ReceiptType.BOLETA) {
+      return `B${boxNum.padStart(3, '0')}`;
+    } else if (receiptType === ReceiptType.FACTURA) {
+      return `F${boxNum.padStart(3, '0')}`;
+    }
+    return `NV${boxNum}`;
+  }
+
+  /**
+   * Registro atómico de venta en POS con CONTROL DE CONCURRENCIA ACID, Kardex
+   * y Arquitectura de Comprobantes de Triple Vía (Nota de Venta, Boleta y Factura)
    */
   async createSale(userId: string, dto: CreateSaleDto) {
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('La venta debe incluir al menos un producto');
+    }
+
+    const receiptType = dto.receiptType || ReceiptType.NOTA_VENTA;
+
+    // Validación preliminar estricta para Factura Electrónica
+    if (receiptType === ReceiptType.FACTURA) {
+      const ruc = (dto.customerDocument || '').trim();
+      const validRucPrefixes = ['10', '20', '15', '17'];
+      const hasValidPrefix = validRucPrefixes.some((prefix) => ruc.startsWith(prefix));
+
+      if (!/^\d{11}$/.test(ruc) || !hasValidPrefix) {
+        throw new BadRequestException(
+          'Para emitir Factura Electrónica se exige un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
+        );
+      }
+
+      if (!dto.customerName || dto.customerName.trim().length < 2 || dto.customerName === 'Cliente Varios') {
+        throw new BadRequestException(
+          'La Razón Social de la empresa es estrictamente obligatoria para emitir Factura.',
+        );
+      }
+
+      if (!dto.customerAddress || dto.customerAddress.trim().length < 3) {
+        throw new BadRequestException(
+          'La Dirección Fiscal de la empresa es estrictamente obligatoria para emitir Factura.',
+        );
+      }
     }
 
     // 1. Validar que el turno de caja esté ABIERTO
@@ -89,14 +156,121 @@ export class SalesService {
           });
         }
 
-        const totalAmountDecimal = new Prisma.Decimal(Number(totalCalculated.toFixed(2)));
+        totalCalculated = Number(totalCalculated.toFixed(2));
+        const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
 
-        // 2. Crear la Venta y sus Detalles de forma atómica
+        // Validación fiscal para Boletas de Venta: Exigencia de DNI si es >= S/ 700.00
+        if (receiptType === ReceiptType.BOLETA && totalCalculated >= 700) {
+          const dni = (dto.customerDocument || '').trim();
+          if (!/^\d{8}$/.test(dni)) {
+            throw new BadRequestException(
+              `Para Boletas de Venta con monto igual o superior a S/ 700.00 (Total: S/ ${totalCalculated.toFixed(2)}), SUNAT exige DNI obligatorio de 8 dígitos.`,
+            );
+          }
+          if (!dto.customerName || dto.customerName.trim().length < 3 || dto.customerName === 'Cliente Varios') {
+            throw new BadRequestException(
+              'Para Boletas de Venta con monto igual o superior a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
+            );
+          }
+        }
+
+        // 2. Control Concurrente de Correlativos Estrictamente Consecutivos (Bloqueo a nivel de fila)
+        const series = this.getSeriesForRegister(
+          shift.cashRegister.identifier,
+          shift.cashRegister.name,
+          receiptType,
+        );
+
+        const sequence = await tx.receiptSequence.upsert({
+          where: { series },
+          create: {
+            cashRegisterId: shift.cashRegisterId,
+            receiptType,
+            series,
+            currentNumber: 1,
+          },
+          update: {
+            currentNumber: { increment: 1 },
+          },
+        });
+
+        const correlativeNumber = sequence.currentNumber;
+        const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
+
+        // 3. Bifurcación del Flujo de Venta y Motor de Facturación
+        let isFiscal = false;
+        let taxableBase = 0;
+        let igvAmount = 0;
+        let hash: string | null = null;
+        let qrString: string | null = null;
+        let emissionStatus: EmissionStatus | null = null;
+
+        if (receiptType === ReceiptType.NOTA_VENTA) {
+          // VÍA 1: NOTA DE VENTA / TICKET INTERNO (Prioridad Operativa - Despacho Ultrarrápido)
+          // Se omite por completo cualquier llamada a servicios externos o motores de facturación.
+          isFiscal = false;
+          taxableBase = Number((totalCalculated / 1.18).toFixed(2));
+          igvAmount = 0;
+          hash = null;
+          qrString = null;
+          emissionStatus = null;
+        } else {
+          // VÍAS 2 & 3: BOLETA Y FACTURA ELECTRÓNICA (Fiscal)
+          isFiscal = true;
+          taxableBase = Number((totalCalculated / 1.18).toFixed(2));
+          igvAmount = Number((totalCalculated - taxableBase).toFixed(2));
+
+          const storeConfig = await tx.storeConfig.findFirst();
+          const billingRes = await this.billingService.issueReceipt({
+            receiptType,
+            series,
+            correlativeNumber,
+            totalAmount: totalCalculated,
+            taxableBase,
+            igvAmount,
+            customerName:
+              dto.customerName ||
+              (receiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : ''),
+            customerDocument: dto.customerDocument,
+            customerAddress: dto.customerAddress,
+            paymentMethod: dto.paymentMethod,
+            companyRuc: storeConfig?.ruc || '10458923011',
+            items: validatedItems.map((vi) => ({
+              name: vi.product.name,
+              quantity: vi.quantity,
+              unitPrice: vi.unitPrice,
+              subtotal: vi.subtotalItem,
+            })),
+          });
+
+          hash = billingRes.hash;
+          qrString = billingRes.qrString;
+          emissionStatus = billingRes.emissionStatus as EmissionStatus;
+        }
+
+        // 4. Crear la Venta y sus Detalles de forma atómica
         const sale = await tx.sale.create({
           data: {
             cashShiftId: shift.id,
             userId,
-            customerName: dto.customerName || 'Cliente Varios',
+            receiptType,
+            series,
+            correlativeNumber,
+            fullReceiptNumber,
+            isFiscal,
+            taxableBase: new Prisma.Decimal(taxableBase),
+            igvAmount: new Prisma.Decimal(igvAmount),
+            customerAddress: dto.customerAddress || null,
+            hash,
+            qrString,
+            emissionStatus,
+            customerName:
+              dto.customerName ||
+              (receiptType === ReceiptType.BOLETA
+                ? 'Clientes Varios'
+                : receiptType === ReceiptType.FACTURA
+                  ? 'EMPRESA'
+                  : 'Cliente Varios'),
             customerDocument: dto.customerDocument || null,
             paymentMethod: dto.paymentMethod,
             cashPaid: new Prisma.Decimal(dto.cashPaid),
@@ -124,7 +298,7 @@ export class SalesService {
           },
         });
 
-        // 3. Descontar stock atómicamente y asentar en Kardex con referencia exacta al ticket
+        // 5. Descontar stock atómicamente y asentar en Kardex con referencia exacta al comprobante
         for (const item of validatedItems) {
           const currentStockNum = Number(item.product.currentStock);
           const newStock = Number((currentStockNum - item.quantity).toFixed(3));
@@ -147,17 +321,21 @@ export class SalesService {
               newStock: new Prisma.Decimal(newStock),
               unitCost: item.product.costPrice,
               referenceId: sale.id,
-              reason: `Venta POS #${sale.saleNumber} - ${shift.cashRegister.name}`,
+              reason: `Venta POS [${fullReceiptNumber}] - ${shift.cashRegister.name}`,
               userId,
             },
           });
         }
 
         return {
-          message: 'Venta registrada exitosamente',
+          message: isFiscal
+            ? `Comprobante electrónico (${receiptType}) emitido con éxito: ${fullReceiptNumber}`
+            : `Nota de venta interna registrada con éxito: ${fullReceiptNumber}`,
           sale: {
             ...sale,
             totalAmount: Number(sale.totalAmount),
+            taxableBase: Number(sale.taxableBase),
+            igvAmount: Number(sale.igvAmount),
             cashPaid: Number(sale.cashPaid),
             digitalPaid: Number(sale.digitalPaid),
             changeAmount: Number(sale.changeAmount),
@@ -292,6 +470,18 @@ export class SalesService {
       const base = {
         id: s.id,
         saleNumber: s.saleNumber,
+        receiptType: s.receiptType,
+        series: s.series,
+        correlativeNumber: s.correlativeNumber,
+        fullReceiptNumber:
+          s.fullReceiptNumber || `${s.series}-${String(s.correlativeNumber).padStart(8, '0')}`,
+        isFiscal: s.isFiscal,
+        taxableBase: Number(s.taxableBase),
+        igvAmount: Number(s.igvAmount),
+        customerAddress: s.customerAddress,
+        hash: s.hash,
+        qrString: s.qrString,
+        emissionStatus: s.emissionStatus,
         createdAt: s.createdAt,
         customerName: s.customerName,
         customerDocument: s.customerDocument,
@@ -511,6 +701,13 @@ export class SalesService {
       return {
         id: s.id,
         saleNumber: s.saleNumber,
+        receiptType: s.receiptType,
+        series: s.series,
+        fullReceiptNumber:
+          s.fullReceiptNumber || `${s.series}-${String(s.correlativeNumber).padStart(8, '0')}`,
+        isFiscal: s.isFiscal,
+        taxableBase: Number(s.taxableBase),
+        igvAmount: Number(s.igvAmount),
         createdAt: s.createdAt,
         customerName: s.customerName,
         paymentMethod: s.paymentMethod,
@@ -722,10 +919,79 @@ export class SalesService {
             const totalAmountDecimal = new Prisma.Decimal(Number(totalCalculated.toFixed(2)));
             const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
 
+            const receiptType = offlineSale.receiptType || ReceiptType.NOTA_VENTA;
+            const isFiscal = receiptType !== ReceiptType.NOTA_VENTA;
+            const taxableBase = Number((totalCalculated / 1.18).toFixed(2));
+            const igvAmount = isFiscal ? Number((totalCalculated - taxableBase).toFixed(2)) : 0;
+
+            const series = this.getSeriesForRegister(
+              targetShift.cashRegister.identifier,
+              targetShift.cashRegister.name,
+              receiptType,
+            );
+
+            const sequence = await tx.receiptSequence.upsert({
+              where: { series },
+              create: {
+                cashRegisterId: targetShift.cashRegisterId,
+                receiptType,
+                series,
+                currentNumber: 1,
+              },
+              update: {
+                currentNumber: { increment: 1 },
+              },
+            });
+
+            const correlativeNumber = sequence.currentNumber;
+            const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
+
+            let hash: string | null = null;
+            let qrString: string | null = null;
+            let emissionStatus: EmissionStatus | null = null;
+
+            if (isFiscal) {
+              const storeConfig = await tx.storeConfig.findFirst();
+              const billingRes = await this.billingService.issueReceipt({
+                receiptType,
+                series,
+                correlativeNumber,
+                totalAmount: totalCalculated,
+                taxableBase,
+                igvAmount,
+                customerName: offlineSale.customerName || 'CLIENTES VARIOS',
+                customerDocument: offlineSale.customerDocument,
+                customerAddress: offlineSale.customerAddress,
+                paymentMethod: offlineSale.paymentMethod,
+                companyRuc: storeConfig?.ruc || '10458923011',
+                items: validatedItems.map((vi) => ({
+                  name: vi.product.name,
+                  quantity: vi.quantity,
+                  unitPrice: vi.unitPrice,
+                  subtotal: vi.subtotalItem,
+                })),
+                createdAt: saleDate,
+              });
+              hash = billingRes.hash;
+              qrString = billingRes.qrString;
+              emissionStatus = billingRes.emissionStatus as EmissionStatus;
+            }
+
             const sale = await tx.sale.create({
               data: {
                 cashShiftId: targetShift.id,
                 userId,
+                receiptType,
+                series,
+                correlativeNumber,
+                fullReceiptNumber,
+                isFiscal,
+                taxableBase: new Prisma.Decimal(taxableBase),
+                igvAmount: new Prisma.Decimal(igvAmount),
+                customerAddress: offlineSale.customerAddress || null,
+                hash,
+                qrString,
+                emissionStatus,
                 customerName: offlineSale.customerName || 'Cliente Varios',
                 customerDocument: offlineSale.customerDocument || null,
                 paymentMethod: offlineSale.paymentMethod,
@@ -794,6 +1060,8 @@ export class SalesService {
           sale: {
             ...saleResult,
             totalAmount: Number(saleResult.totalAmount),
+            taxableBase: Number(saleResult.taxableBase),
+            igvAmount: Number(saleResult.igvAmount),
             cashPaid: Number(saleResult.cashPaid),
             digitalPaid: Number(saleResult.digitalPaid),
             changeAmount: Number(saleResult.changeAmount),

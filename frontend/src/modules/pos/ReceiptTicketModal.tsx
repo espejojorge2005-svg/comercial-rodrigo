@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
-import { Printer, CheckCircle, ArrowRight, X } from 'lucide-react';
+import { Printer, ArrowRight, X, ShieldCheck, Sparkles } from 'lucide-react';
+import type { Sale } from '../../types/index.js';
 
 interface ReceiptTicketModalProps {
   isOpen: boolean;
   onClose: () => void;
-  saleData: any;
+  saleData: Sale | any;
 }
 
 export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
@@ -16,6 +18,50 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 }) => {
   const { config } = useConfigStore();
   const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>('80mm');
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+
+  const receiptType = saleData?.receiptType || 'NOTA_VENTA';
+  const isFiscal = saleData?.isFiscal || receiptType === 'BOLETA' || receiptType === 'FACTURA';
+
+  // Generar código QR oficial en DataURL para comprobantes fiscales
+  useEffect(() => {
+    let active = true;
+    if (!isOpen || !saleData || !isFiscal) {
+      return;
+    }
+
+    const companyRuc = config.ruc || '10458923011';
+    const docTypeCode = receiptType === 'FACTURA' ? '01' : '03';
+    const series = saleData.series || (receiptType === 'FACTURA' ? 'F001' : 'B001');
+    const paddedNum = String(saleData.correlativeNumber || saleData.saleNumber || 1).padStart(8, '0');
+    const igvFormatted = Number(saleData.igvAmount || 0).toFixed(2);
+    const totalFormatted = Number(saleData.totalAmount || 0).toFixed(2);
+    const dateFormatted = (saleData.createdAt || new Date().toISOString()).split('T')[0];
+    const customerDoc = (saleData.customerDocument || '').trim();
+    const customerDocType = customerDoc.length === 11 ? '6' : customerDoc.length === 8 ? '1' : '-';
+    const hashVal = saleData.hash || 's1mU14t3dH4shC0d3SuN4tP53==';
+
+    const rawQrString =
+      saleData.qrString ||
+      `${companyRuc}|${docTypeCode}|${series}|${paddedNum}|${igvFormatted}|${totalFormatted}|${dateFormatted}|${customerDocType}|${customerDoc || '-'}|${hashVal}|`;
+
+    QRCode.toDataURL(rawQrString, {
+      margin: 1,
+      width: 140,
+      color: {
+        dark: '#000000',
+        light: '#ffffff',
+      },
+    })
+      .then((url) => {
+        if (active) setQrCodeDataUrl(url);
+      })
+      .catch((err) => console.error('Error generando QR oficial:', err));
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen, saleData, isFiscal, receiptType, config.ruc]);
 
   if (!isOpen || !saleData) return null;
 
@@ -32,6 +78,13 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
       default:
         return method || 'EFECTIVO';
     }
+  };
+
+  const getFullReceiptNumber = () => {
+    if (saleData.fullReceiptNumber) return saleData.fullReceiptNumber;
+    const series = saleData.series || (receiptType === 'FACTURA' ? 'F001' : receiptType === 'BOLETA' ? 'B001' : 'NV01');
+    const corr = String(saleData.correlativeNumber || saleData.saleNumber || 1).padStart(8, '0');
+    return `${series}-${corr}`;
   };
 
   const handlePrint = () => {
@@ -70,7 +123,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
       <html>
         <head>
           <meta charset="utf-8">
-          <title>Ticket #${String(saleData.saleNumber || '0001').padStart(6, '0')}</title>
+          <title>${getFullReceiptNumber()}</title>
           <style>
             @page {
               margin: 0mm;
@@ -117,9 +170,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             .border-t { border-top: 1px dashed #000 !important; }
             .pb-3 { padding-bottom: 6px !important; }
             .mb-3 { margin-bottom: 6px !important; }
-            .pb-2\.5 { padding-bottom: 5px !important; }
-            .mb-2\.5 { margin-bottom: 5px !important; }
-            .pt-2\.5 { padding-top: 5px !important; }
+            .pb-2\\.5 { padding-bottom: 5px !important; }
+            .mb-2\\.5 { margin-bottom: 5px !important; }
+            .pt-2\\.5 { padding-top: 5px !important; }
             .pt-1 { padding-top: 3px !important; }
             .space-y-1 > div { margin-bottom: 2px !important; }
             .flex { display: flex !important; }
@@ -129,6 +182,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             td { padding: 2px 0 !important; vertical-align: top !important; }
             .whitespace-nowrap { white-space: nowrap !important; }
             .truncate { overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+            img { display: block; margin: 0 auto; max-width: 100%; }
           </style>
         </head>
         <body>
@@ -146,9 +200,13 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     }, 250);
   };
 
+  const fullReceiptNumber = getFullReceiptNumber();
+  const taxableBase = saleData.taxableBase || Number((saleData.totalAmount / 1.18).toFixed(2));
+  const igvAmount = saleData.igvAmount || Number((saleData.totalAmount - taxableBase).toFixed(2));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative text-slate-100 max-h-[95vh] flex flex-col justify-between">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative text-slate-100 max-h-[96vh] flex flex-col justify-between">
         <button
           onClick={onClose}
           className="absolute right-4 top-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer print:hidden"
@@ -160,18 +218,28 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         <div className="text-center pb-3 border-b border-slate-800 print:hidden">
           <div
             className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2 border ${
-              saleData.isOffline
-                ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+              receiptType === 'NOTA_VENTA'
+                ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                : receiptType === 'BOLETA'
+                  ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                  : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
             }`}
           >
-            <CheckCircle className="w-6 h-6" />
+            {receiptType === 'NOTA_VENTA' ? (
+              <Sparkles className="w-6 h-6" />
+            ) : (
+              <ShieldCheck className="w-6 h-6" />
+            )}
           </div>
           <h3 className="text-lg font-bold text-white">
-            {saleData.isOffline ? '¡Venta Guardada Localmente (Offline)!' : '¡Venta Realizada con Éxito!'}
+            {receiptType === 'NOTA_VENTA'
+              ? '¡Nota de Venta Generada!'
+              : receiptType === 'BOLETA'
+                ? '¡Boleta Electrónica Emitida!'
+                : '¡Factura Electrónica Emitida!'}
           </h3>
           <p className="text-xs text-slate-400">
-            Formato optimizado para tiqueteras térmicas de 80mm / 58mm
+            {fullReceiptNumber} • Formato para tiqueteras térmicas de 80mm y 58mm
           </p>
 
           {/* Selector de Ancho de Tiquetera (80mm vs 58mm) */}
@@ -207,7 +275,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         {/* VISTA PREVIA DEL TICKET TÉRMICO */}
         <div
           id="printable-ticket"
-          className={`my-3 p-4 bg-white text-slate-900 rounded-2xl font-mono text-xs shadow-inner overflow-y-auto max-h-[420px] mx-auto w-full transition-all ${
+          className={`my-3 p-4 bg-white text-slate-900 rounded-2xl font-mono text-xs shadow-inner overflow-y-auto max-h-[440px] mx-auto w-full transition-all ${
             paperWidth === '58mm' ? 'max-w-[270px]' : 'max-w-[320px]'
           }`}
         >
@@ -217,58 +285,82 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             </div>
           )}
 
-          {/* Cabecera del ticket */}
-          <div className="text-center border-b border-dashed border-slate-400 pb-3 mb-3">
+          {/* CABECERA: COMERCIAL RODRIGO */}
+          <div className="text-center border-b border-dashed border-slate-400 pb-3 mb-2.5">
             <h4 className="text-base font-extrabold tracking-wider">{config.name}</h4>
             {config.subtitle && (
-              <p className="text-[11px] text-slate-600 font-sans">{config.subtitle}</p>
+              <p className="text-[10px] text-slate-600 font-sans uppercase">{config.subtitle}</p>
             )}
-            <p className="text-[10px] text-slate-500 mt-1">
+            <p className="text-[10px] text-slate-600 mt-1">
               RUC: {config.ruc} {config.phone ? `• Tel: ${config.phone}` : ''}
             </p>
-            <p className="text-[10px] text-slate-500">{config.address}</p>
-          </div>
+            <p className="text-[9.5px] text-slate-500">{config.address}</p>
 
-          {/* Información de la venta */}
-          <div className="text-[11px] space-y-1 border-b border-dashed border-slate-400 pb-2.5 mb-2.5">
-            <div className="flex justify-between">
-              <span>TICKET #:</span>
-              <span className="font-bold">
-                {typeof saleData.saleNumber === 'number'
-                  ? String(saleData.saleNumber).padStart(6, '0')
-                  : String(saleData.saleNumber || '0001')}
+            {/* TÍTULO DESTACADO SEGÚN EL TIPO DE COMPROBANTE */}
+            <div className="mt-2 py-1 px-1.5 border-t border-b border-slate-300 font-bold text-center">
+              {receiptType === 'NOTA_VENTA' && (
+                <span className="text-[11px] font-extrabold block">
+                  NOTA DE VENTA - CONTROL INTERNO
+                </span>
+              )}
+              {receiptType === 'BOLETA' && (
+                <span className="text-[11px] font-extrabold block">
+                  BOLETA DE VENTA ELECTRÓNICA
+                </span>
+              )}
+              {receiptType === 'FACTURA' && (
+                <span className="text-[11px] font-extrabold block">
+                  FACTURA ELECTRÓNICA
+                </span>
+              )}
+              <span className="text-xs font-extrabold block tracking-wider mt-0.5">
+                {fullReceiptNumber}
               </span>
             </div>
+          </div>
+
+          {/* INFORMACIÓN DE LA OPERACIÓN Y CLIENTE */}
+          <div className="text-[10.5px] space-y-0.5 border-b border-dashed border-slate-400 pb-2 mb-2">
             <div className="flex justify-between">
               <span>FECHA:</span>
-              <span>
-                {formatPeruDateTime(saleData.createdAt || Date.now(), true)}
-              </span>
+              <span>{formatPeruDateTime(saleData.createdAt, true)}</span>
             </div>
             <div className="flex justify-between">
               <span>CAJA:</span>
-              <span className="font-bold">{saleData.cashShift?.cashRegister?.name || 'Caja 1'}</span>
+              <span className="font-bold">
+                {saleData.cashShift?.cashRegister?.name || saleData.cashRegister || 'Caja 1'}
+              </span>
             </div>
             <div className="flex justify-between">
               <span>CAJERO:</span>
-              <span>{saleData.user?.name || 'Cajero'}</span>
+              <span>{saleData.user?.name || saleData.cashier || 'Cajero de Turno'}</span>
             </div>
             <div className="flex justify-between">
-              <span>CLIENTE:</span>
-              <span className="truncate max-w-[180px]">{saleData.customerName || 'Cliente Varios'}</span>
+              <span>{receiptType === 'FACTURA' ? 'RAZÓN SOCIAL:' : 'CLIENTE:'}</span>
+              <span className="truncate max-w-[170px] font-semibold text-right">
+                {saleData.customerName || 'Cliente Varios'}
+              </span>
             </div>
             {saleData.customerDocument && (
               <div className="flex justify-between">
-                <span>DOC/DNI/RUC:</span>
-                <span>{saleData.customerDocument}</span>
+                <span>{receiptType === 'FACTURA' ? 'RUC:' : 'DNI/DOC:'}</span>
+                <span className="font-bold">{saleData.customerDocument}</span>
+              </div>
+            )}
+            {saleData.customerAddress && (
+              <div className="flex justify-between text-[10px]">
+                <span>DIRECCIÓN:</span>
+                <span className="text-right truncate max-w-[170px]">
+                  {saleData.customerAddress}
+                </span>
               </div>
             )}
           </div>
 
-          {/* Detalle de Artículos */}
-          <table className="w-full text-[11px] mb-3">
+          {/* TABLA DE DETALLE DE PRODUCTOS */}
+          <table className="w-full text-[10.5px] mb-2.5">
             <thead>
-              <tr className="border-b border-slate-300 text-left">
+              <tr className="border-b border-slate-400 text-left">
                 <th className="py-1">CANT</th>
                 <th className="py-1">DESCRIPCIÓN</th>
                 <th className="py-1 text-right">TOTAL</th>
@@ -278,22 +370,24 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               {saleData.items?.map((item: any, idx: number) => {
                 const qty = Number(item.quantity);
                 const hasMultiple = qty > 1;
+                const unitPrice = Number(item.unitPrice);
+                const subtotal = Number(item.subtotal);
 
                 return (
                   <tr key={idx} className="py-1">
-                    <td className="py-1 align-top font-bold">{item.quantity}</td>
-                    <td className="py-1 align-top pr-2">
-                      <div className="font-semibold text-slate-900">
+                    <td className="py-1 align-top font-bold">{qty}</td>
+                    <td className="py-1 align-top pr-1.5">
+                      <div className="font-semibold text-slate-900 leading-tight">
                         {item.product?.name || item.productName}
                       </div>
                       {hasMultiple && (
-                        <div className="text-[10px] text-slate-500">
-                          {item.quantity} × {formatCurrency(item.unitPrice)}
+                        <div className="text-[9.5px] text-slate-500">
+                          {qty} × {formatCurrency(unitPrice)}
                         </div>
                       )}
                     </td>
                     <td className="py-1 align-top text-right font-bold whitespace-nowrap">
-                      {formatCurrency(item.subtotal)}
+                      {formatCurrency(subtotal)}
                     </td>
                   </tr>
                 );
@@ -301,14 +395,28 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             </tbody>
           </table>
 
-          {/* Totales */}
-          <div className="border-t border-dashed border-slate-400 pt-2.5 space-y-1 text-[11px]">
-            <div className="flex justify-between font-bold text-sm">
+          {/* TOTALES Y DESGLOSE FINANCIERO */}
+          <div className="border-t border-dashed border-slate-400 pt-2 space-y-1 text-[11px]">
+            {/* Si es fiscal (Boleta o Factura), mostrar desglose formal de Op. Gravada e IGV */}
+            {isFiscal && (
+              <div className="space-y-0.5 pb-1 border-b border-dotted border-slate-300 text-[10px] text-slate-700">
+                <div className="flex justify-between">
+                  <span>OP. GRAVADA:</span>
+                  <span>{formatCurrency(taxableBase)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>I.G.V. (18%):</span>
+                  <span>{formatCurrency(igvAmount)}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-between font-extrabold text-sm pt-0.5">
               <span>TOTAL A PAGAR:</span>
               <span>{formatCurrency(saleData.totalAmount)}</span>
             </div>
 
-            <div className="flex justify-between text-slate-700 pt-1">
+            <div className="flex justify-between text-slate-700 pt-1 text-[10.5px]">
               <span>MÉTODO DE PAGO:</span>
               <span className="font-bold uppercase text-slate-900">
                 {getPaymentMethodLabel(saleData.paymentMethod)}
@@ -328,22 +436,86 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               </div>
             )}
 
-            {saleData.paymentMethod === 'CASH' && saleData.amountReceived && (
+            {saleData.paymentMethod === 'CASH' && (
               <div className="pt-1 border-t border-dotted border-slate-300 space-y-0.5 text-[10px] text-slate-600">
-                <div className="flex justify-between">
-                  <span>PAGÓ CON:</span>
-                  <span>{formatCurrency(saleData.amountReceived)}</span>
-                </div>
-                <div className="flex justify-between font-bold text-slate-900">
-                  <span>VUELTO:</span>
-                  <span>{formatCurrency(saleData.changeGiven || 0)}</span>
-                </div>
+                {saleData.cashPaid !== undefined && (
+                  <div className="flex justify-between">
+                    <span>PAGÓ CON:</span>
+                    <span>{formatCurrency(saleData.cashPaid)}</span>
+                  </div>
+                )}
+                {saleData.changeAmount !== undefined && (
+                  <div className="flex justify-between font-bold text-slate-900">
+                    <span>VUELTO:</span>
+                    <span>{formatCurrency(saleData.changeAmount || 0)}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          {/* Pie de ticket */}
-          <div className="text-center text-[10px] text-slate-500 border-t border-dashed border-slate-400 pt-3 mt-3">
+          {/* SECCIÓN FISCAL O CONTROL INTERNO */}
+          {isFiscal ? (
+            <div className="text-center border-t border-dashed border-slate-400 pt-3 mt-3 space-y-1.5">
+              {/* Código QR Oficial de SUNAT */}
+              {qrCodeDataUrl ? (
+                <div className="flex flex-col items-center justify-center my-1">
+                  <img
+                    src={qrCodeDataUrl}
+                    alt="Código QR SUNAT"
+                    className="w-28 h-28 mx-auto"
+                    style={{ width: '110px', height: '110px' }}
+                  />
+                </div>
+              ) : (
+                <div className="w-24 h-24 mx-auto border border-dashed border-slate-400 flex items-center justify-center text-[9px] text-slate-500">
+                  [CÓDIGO QR SUNAT]
+                </div>
+              )}
+
+              {/* Código Hash Impreso al pie del QR */}
+              {saleData.hash && (
+                <div className="text-[9px] font-mono text-slate-600 break-all px-1">
+                  <span>Hash: </span>
+                  <span className="font-bold">{saleData.hash}</span>
+                </div>
+              )}
+
+              {/* Leyenda Legal Oficial */}
+              <div className="text-[9px] text-slate-500 space-y-0.5 pt-1">
+                <p className="font-bold">
+                  Representación impresa del comprobante de pago electrónico
+                </p>
+                <p>Autorizado mediante resolución de SUNAT</p>
+                <p>Consulte su comprobante en www.sunat.gob.pe</p>
+              </div>
+            </div>
+          ) : (
+            /* PLANTILLA DE NOTA DE VENTA: Sin QR ni leyendas de SUNAT */
+            <div className="text-center border-t border-dashed border-slate-400 pt-3 mt-3 space-y-1.5">
+              {/* Código de barras interno de control para cambios/devoluciones */}
+              <div className="my-1.5 px-2 py-1 bg-slate-50 rounded border border-slate-200">
+                <div className="tracking-[4px] font-extrabold text-[12px] text-slate-800 font-mono">
+                  || | |||| | |||||| | ||| ||| |
+                </div>
+                <div className="text-[9px] text-slate-500 font-mono tracking-wider mt-0.5">
+                  ID: {saleData.id ? String(saleData.id).substring(0, 13).toUpperCase() : fullReceiptNumber}
+                </div>
+              </div>
+
+              <div className="text-[9.5px] text-slate-500">
+                <p className="font-semibold text-slate-700">
+                  Comprobante de control interno sin valor tributario.
+                </p>
+                <p className="mt-0.5">
+                  Para cambios o devoluciones es indispensable presentar este ticket.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Pie de ticket configurado */}
+          <div className="text-center text-[9.5px] text-slate-600 border-t border-dashed border-slate-400 pt-2.5 mt-2.5">
             <p className="font-bold whitespace-pre-line">{config.footerText}</p>
           </div>
         </div>
@@ -355,7 +527,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             className="w-1/2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>Imprimir Ticket ({paperWidth})</span>
+            <span>Imprimir ({paperWidth})</span>
           </button>
 
           <button

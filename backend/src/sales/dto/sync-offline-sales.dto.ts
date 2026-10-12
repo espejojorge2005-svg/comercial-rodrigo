@@ -11,7 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, ReceiptType } from '@prisma/client';
 
 export class SyncOfflineSaleItemDto {
   @IsString({ message: 'El ID del producto es obligatorio' })
@@ -40,12 +40,20 @@ export class SyncOfflineSaleDto {
   cashShiftId: string;
 
   @IsOptional()
+  @IsEnum(ReceiptType)
+  receiptType?: ReceiptType;
+
+  @IsOptional()
   @IsString()
   customerName?: string;
 
   @IsOptional()
   @IsString()
   customerDocument?: string;
+
+  @IsOptional()
+  @IsString()
+  customerAddress?: string;
 
   @IsEnum(PaymentMethod, {
     message: 'El método de pago debe ser CASH, TRANSFER, CARD o MIXED',

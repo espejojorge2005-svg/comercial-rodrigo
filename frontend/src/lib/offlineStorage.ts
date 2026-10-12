@@ -1,4 +1,4 @@
-import type { Product, CashShift, PaymentMethod } from '../types/index.js';
+import type { Product, CashShift, PaymentMethod, ReceiptType, EmissionStatus } from '../types/index.js';
 
 export interface OfflineSaleItem {
   productId: string;
@@ -13,6 +13,17 @@ export interface OfflineSaleItem {
 export interface OfflineSale {
   offlineId: string;
   offlineTicketNumber: string;
+  receiptType?: ReceiptType;
+  series?: string;
+  correlativeNumber?: number;
+  fullReceiptNumber?: string;
+  isFiscal?: boolean;
+  taxableBase?: number;
+  igvAmount?: number;
+  customerAddress?: string | null;
+  hash?: string | null;
+  qrString?: string | null;
+  emissionStatus?: EmissionStatus | null;
   cashShiftId: string;
   shiftRegisterName?: string;
   userId: string;

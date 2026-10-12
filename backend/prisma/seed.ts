@@ -1,4 +1,4 @@
-import { PrismaClient, Role, UnitType } from '@prisma/client';
+import { PrismaClient, Role, UnitType, ReceiptType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -28,6 +28,30 @@ async function main() {
   });
 
   console.log('✅ Cajas físicas registradas: Caja 1 y Caja 2');
+
+  // Inicializar secuencias de comprobantes por caja física
+  const initialSequences = [
+    { cashRegisterId: caja1.id, receiptType: ReceiptType.NOTA_VENTA, series: 'NV01' },
+    { cashRegisterId: caja1.id, receiptType: ReceiptType.BOLETA, series: 'B001' },
+    { cashRegisterId: caja1.id, receiptType: ReceiptType.FACTURA, series: 'F001' },
+    { cashRegisterId: caja2.id, receiptType: ReceiptType.NOTA_VENTA, series: 'NV02' },
+    { cashRegisterId: caja2.id, receiptType: ReceiptType.BOLETA, series: 'B002' },
+    { cashRegisterId: caja2.id, receiptType: ReceiptType.FACTURA, series: 'F002' },
+  ];
+
+  for (const seq of initialSequences) {
+    await prisma.receiptSequence.upsert({
+      where: { series: seq.series },
+      update: {},
+      create: {
+        cashRegisterId: seq.cashRegisterId,
+        receiptType: seq.receiptType,
+        series: seq.series,
+        currentNumber: 0,
+      },
+    });
+  }
+  console.log('✅ Secuencias de comprobantes (NV01, B001, F001, NV02, B002, F002) configuradas');
 
   // 2. Crear Usuarios (Admin y Cajeros)
   const passwordHashAdmin = await bcrypt.hash('admin123', 10);

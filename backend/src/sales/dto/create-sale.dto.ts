@@ -11,7 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, ReceiptType } from '@prisma/client';
 
 export class SaleItemDto {
   @IsString({ message: 'El ID del producto es obligatorio' })
@@ -36,12 +36,22 @@ export class CreateSaleDto {
   cashShiftId: string;
 
   @IsOptional()
+  @IsEnum(ReceiptType, {
+    message: 'El tipo de comprobante debe ser NOTA_VENTA, BOLETA o FACTURA',
+  })
+  receiptType?: ReceiptType;
+
+  @IsOptional()
   @IsString()
   customerName?: string;
 
   @IsOptional()
   @IsString()
   customerDocument?: string;
+
+  @IsOptional()
+  @IsString()
+  customerAddress?: string;
 
   @IsEnum(PaymentMethod, {
     message: 'El método de pago debe ser CASH, TRANSFER, CARD o MIXED',
