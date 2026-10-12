@@ -55,3 +55,44 @@ export async function apiRequest<T = any>(
     throw error;
   }
 }
+
+export async function downloadReportBlob(endpoint: string, fallbackFilename: string): Promise<void> {
+  const token = localStorage.getItem('auth_token');
+  const url = `${API_BASE_URL.replace(/\/$/, '')}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    let errMsg = `Error al descargar reporte (${response.status})`;
+    try {
+      const errJson = await response.json();
+      if (errJson.message) errMsg = errJson.message;
+    } catch {
+      // Ignorar
+    }
+    throw new Error(errMsg);
+  }
+
+  // Obtener nombre del archivo de Content-Disposition si existe
+  const disposition = response.headers.get('Content-Disposition');
+  let filename = fallbackFilename;
+  if (disposition && disposition.includes('filename=')) {
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match && match[1]) filename = match[1];
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(downloadUrl);
+}

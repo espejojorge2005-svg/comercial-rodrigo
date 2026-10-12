@@ -9,6 +9,7 @@ import { ProductsModule } from './products/products.module.js';
 import { SalesModule } from './sales/sales.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { BillingModule } from './billing/billing.module.js';
+import { ReportsModule } from './reports/reports.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { BillingModule } from './billing/billing.module.js';
     SalesModule,
     SettingsModule,
     BillingModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

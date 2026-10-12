@@ -131,11 +131,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
                       ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
                       : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
                   }`}
-                  title="Reporte de Ganancias, Rentabilidad y Costos de Venta"
+                  title="Módulo Contable: Libro SUNAT (Contador) y Reporte Gerencial 100% (Dueña)"
                 >
                   <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-                  <span className="hidden xl:inline">Ganancias del Día</span>
-                  <span className="xl:hidden">Ganancias</span>
+                  <span className="hidden xl:inline">Reportes & Contabilidad</span>
+                  <span className="xl:hidden">Reportes</span>
                 </button>
 
                 <button

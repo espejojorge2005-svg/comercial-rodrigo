@@ -196,3 +196,74 @@ export interface Sale {
   items: SaleDetail[];
   isOffline?: boolean;
 }
+
+export interface TaxBookRecord {
+  itemNumber: number;
+  id: string;
+  createdAt: string;
+  issueDate: string;
+  receiptType: ReceiptType;
+  sunatDocTypeCode: string; // "01" | "03"
+  receiptTypeName: string;
+  series: string;
+  correlativeNumber: number;
+  formattedCorrelative: string;
+  fullReceiptNumber: string;
+  customerDocType: string; // "1" (DNI), "6" (RUC), "0" (Sin Doc)
+  customerDocument: string;
+  customerName: string;
+  customerAddress?: string;
+  taxableBase: number;
+  igvAmount: number;
+  totalAmount: number;
+  emissionStatus: string;
+  cashRegister: string;
+}
+
+export interface TaxBookResponse {
+  period: {
+    startDate?: string | null;
+    endDate?: string | null;
+  };
+  summary: {
+    totalFiscalSales: number;
+    invoiceCount: number;
+    receiptCount: number;
+    totalTaxableBase: number;
+    totalIgv: number;
+    totalAmount: number;
+  };
+  records: TaxBookRecord[];
+}
+
+export interface ManagementReportSummary {
+  totalGrossRevenue: number;
+  totalCogs: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  totalExpenses: number;
+  totalIncomes: number;
+  netProfit: number;
+  netMarginPct: number;
+  salesCount: number;
+  totalUnitsSold: number;
+  cashPaidTotal: number;
+  digitalPaidTotal: number;
+  theoreticalDrawerCash: number;
+  paymentMethods: Record<string, number>;
+  receiptTypeSummary: {
+    notaVenta: { count: number; total: number; profit: number; sharePct: number };
+    boleta: { count: number; total: number; profit: number; sharePct: number };
+    factura: { count: number; total: number; profit: number; sharePct: number };
+  };
+}
+
+export interface ManagementReportResponse {
+  period: {
+    startDate?: string | null;
+    endDate?: string | null;
+  };
+  summary: ManagementReportSummary;
+  salesDetail: any[];
+  cashMovementsDetail: any[];
+}
