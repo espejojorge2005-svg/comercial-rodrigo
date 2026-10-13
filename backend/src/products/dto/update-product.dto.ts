@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsNumber,
   IsOptional,
@@ -55,4 +56,8 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsDateString({}, { message: 'La fecha de vencimiento debe tener un formato válido (YYYY-MM-DD)' })
+  expirationDate?: string | null;
 }

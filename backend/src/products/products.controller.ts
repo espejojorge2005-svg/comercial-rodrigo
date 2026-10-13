@@ -28,8 +28,10 @@ export class ProductsController {
     @CurrentUser('role') userRole: Role,
     @Query('search') search?: string,
     @Query('category') categoryId?: string,
+    @Query('expirationStatus') expirationStatus?: string,
+    @Query('sortBy') sortBy?: string,
   ) {
-    return this.productsService.getProducts(userRole, search, categoryId);
+    return this.productsService.getProducts(userRole, search, categoryId, expirationStatus, sortBy);
   }
 
   @Get('categories')

@@ -3,7 +3,7 @@ import { useShiftStore } from '../../store/useShiftStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
 import { useCartStore } from '../../store/useCartStore.js';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
+import { formatCurrency, formatPeruTime, getProductExpirationInfo } from '../../lib/utils.js';
 import {
   ShoppingCart,
   CreditCard,
@@ -15,6 +15,7 @@ import {
   Coins,
   History,
   ArrowLeft,
+  AlertTriangle,
 } from 'lucide-react';
 import type { Product, Category } from '../../types/index.js';
 import { getUnitBadge } from '../../lib/units.js';
@@ -270,6 +271,7 @@ export const PosView: React.FC = () => {
               {products.map((p) => {
                 const isOutOfStock = p.currentStock <= 0;
                 const isLowStock = p.currentStock <= p.minStock && !isOutOfStock;
+                const expInfo = getProductExpirationInfo(p.expirationDate);
 
                 return (
                   <div
@@ -284,18 +286,31 @@ export const PosView: React.FC = () => {
                     }`}
                   >
                     <div>
-                      <div className="flex items-center justify-between text-[11px] mb-1.5">
-                        <span
-                          className={`px-1.5 py-0.5 rounded font-mono text-[9px] font-semibold ${
-                            isOutOfStock
-                              ? 'bg-rose-500/20 text-rose-400'
-                              : isLowStock
-                                ? 'bg-amber-500/20 text-amber-400'
-                                : 'bg-slate-800 text-slate-400'
-                          }`}
-                        >
-                          Stock: {p.currentStock}
-                        </span>
+                      <div className="flex items-center justify-between text-[11px] mb-1.5 gap-1 flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={`px-1.5 py-0.5 rounded font-mono text-[9px] font-semibold ${
+                              isOutOfStock
+                                ? 'bg-rose-500/20 text-rose-400'
+                                : isLowStock
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            Stock: {p.currentStock}
+                          </span>
+                          {expInfo.state === 'EXPIRED' ? (
+                            <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 font-mono text-[9px] font-bold border border-rose-500/30 flex items-center gap-0.5">
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              Vencido
+                            </span>
+                          ) : expInfo.state === 'CRITICAL' ? (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[9px] font-bold border border-amber-500/30 flex items-center gap-0.5">
+                              <Clock className="w-2.5 h-2.5" />
+                              {expInfo.badgeText}
+                            </span>
+                          ) : null}
+                        </div>
 
                         <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[9px] whitespace-nowrap">
                           {getUnitBadge(p.unitType)}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
+import { formatCurrency, formatPeruDateTime, getProductExpirationInfo } from '../../lib/utils.js';
 import {
   Package,
   Plus,
@@ -18,6 +18,9 @@ import {
   RefreshCw,
   Filter,
   FileSpreadsheet,
+  Calendar,
+  Clock,
+  ArrowUpDown,
 } from 'lucide-react';
 import type { Product, Category, UnitType } from '../../types/index.js';
 import { SUNAT_UNITS, getUnitBadge, getUnitShortName } from '../../lib/units.js';
@@ -34,6 +37,8 @@ export const InventoryView: React.FC = () => {
   const [isKardexLoading, setIsKardexLoading] = useState<boolean>(false);
   const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [expirationFilter, setExpirationFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('name_asc');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -76,6 +81,8 @@ export const InventoryView: React.FC = () => {
       let url = '/products?';
       if (selectedCategory !== 'all') url += `category=${encodeURIComponent(selectedCategory)}&`;
       if (searchTerm.trim()) url += `search=${encodeURIComponent(searchTerm.trim())}&`;
+      if (expirationFilter !== 'all') url += `expirationStatus=${encodeURIComponent(expirationFilter)}&`;
+      if (sortBy !== 'name_asc') url += `sortBy=${encodeURIComponent(sortBy)}&`;
       const data = await apiRequest(url);
       setProducts(data || []);
     } catch (err) {
@@ -83,7 +90,7 @@ export const InventoryView: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCategory, searchTerm]);
+  }, [selectedCategory, searchTerm, expirationFilter, sortBy]);
 
   // Cargar Kardex con soporte de filtrado por producto y recarga en tiempo real
   const fetchKardex = useCallback(async (prodId?: string) => {
@@ -117,9 +124,17 @@ export const InventoryView: React.FC = () => {
     }
   }, [activeTab, fetchProducts, fetchKardex, kardexProductFilter]);
 
-  // Métricas de Almacén
+  // Métricas de Almacén y Vencimiento
   const totalProducts = products.length;
   const lowStockCount = products.filter((p) => p.currentStock <= p.minStock).length;
+  const expiredCount = products.filter((p) => {
+    const info = getProductExpirationInfo(p.expirationDate);
+    return info.state === 'EXPIRED';
+  }).length;
+  const expiringSoonCount = products.filter((p) => {
+    const info = getProductExpirationInfo(p.expirationDate);
+    return info.state === 'CRITICAL' || info.state === 'WARNING';
+  }).length;
   const totalUnitsStock = products.reduce((acc, p) => acc + (p.currentStock || 0), 0);
   const totalStockValue = products.reduce(
     (acc, p) => acc + p.currentStock * (p.costPrice || 0),
@@ -225,7 +240,7 @@ export const InventoryView: React.FC = () => {
       </div>
 
       {/* Tarjetas Estadísticas */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
             <span>Total Productos</span>
@@ -243,6 +258,53 @@ export const InventoryView: React.FC = () => {
             className={`text-xl font-extrabold ${lowStockCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}
           >
             {lowStockCount}
+          </div>
+        </div>
+
+        <div
+          onClick={() => {
+            if (expiredCount > 0) {
+              setExpirationFilter('expired');
+            } else if (expiringSoonCount > 0) {
+              setExpirationFilter('expiring_soon');
+            } else {
+              setExpirationFilter('with_expiration');
+            }
+          }}
+          className={`p-4 rounded-2xl bg-slate-900 border transition-all cursor-pointer ${
+            expiredCount > 0
+              ? 'border-rose-500/40 hover:border-rose-500/70 shadow-rose-950/20 shadow-lg'
+              : expiringSoonCount > 0
+              ? 'border-amber-500/40 hover:border-amber-500/70'
+              : 'border-slate-800 hover:border-slate-700'
+          }`}
+          title="Haga clic para filtrar productos con control de vencimiento"
+        >
+          <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
+            <span>Control Vencimiento</span>
+            <Calendar className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            <span
+              className={`text-xl font-extrabold ${
+                expiredCount > 0
+                  ? 'text-rose-400'
+                  : expiringSoonCount > 0
+                  ? 'text-amber-400'
+                  : 'text-emerald-400'
+              }`}
+            >
+              {expiredCount > 0
+                ? `${expiredCount} venc.`
+                : expiringSoonCount > 0
+                ? `${expiringSoonCount} por vencer`
+                : 'Al día'}
+            </span>
+            {expiredCount > 0 && expiringSoonCount > 0 && (
+              <span className="text-[10px] text-amber-300 font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+                +{expiringSoonCount} pronto
+              </span>
+            )}
           </div>
         </div>
 
@@ -268,55 +330,149 @@ export const InventoryView: React.FC = () => {
       {/* PESTAÑA 1: CATÁLOGO & STOCK */}
       {activeTab === 'catalog' && (
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
-          {/* Filtros */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar por código de barras o nombre de producto..."
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
-              />
+          {/* Panel Superior de Filtros Formales */}
+          <div className="space-y-3.5 mb-5">
+            {/* Buscador y Ordenamiento */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Buscar por código de barras o nombre de producto..."
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                />
+              </div>
+
+              {/* Ordenamiento Formal */}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="text-slate-400 text-[11px] font-medium hidden sm:inline">Ordenar:</span>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="bg-transparent text-xs text-slate-200 outline-none font-medium cursor-pointer"
+                  >
+                    <option value="name_asc" className="bg-slate-900 text-white">Nombre (A - Z)</option>
+                    <option value="expiration_asc" className="bg-slate-900 text-white">Vencimiento (Más Próximo Primero)</option>
+                    <option value="expiration_desc" className="bg-slate-900 text-white">Vencimiento (Más Lejano Primero)</option>
+                    <option value="stock_asc" className="bg-slate-900 text-white">Stock (Menor a Mayor)</option>
+                    <option value="stock_desc" className="bg-slate-900 text-white">Stock (Mayor a Menor)</option>
+                  </select>
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                  selectedCategory === 'all'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                Todas
-              </button>
-              {categories.map((c) => (
+            {/* Fila 2: Filtro por Categorías y Filtro por Vencimiento */}
+            <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 pt-3 border-t border-slate-800/60">
+              {/* Filtro por Categorías */}
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full xl:w-auto pb-1 xl:pb-0 text-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
+                  Categoría:
+                </span>
                 <button
-                  key={c.id}
-                  onClick={() => setSelectedCategory(c.id)}
-                  className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                    selectedCategory === c.id
-                      ? 'bg-indigo-600 text-white'
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    selectedCategory === 'all'
+                      ? 'bg-indigo-600 text-white shadow-sm'
                       : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
                 >
-                  {c.name}
+                  Todas ({categories.length})
                 </button>
-              ))}
+                {categories.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedCategory(c.id)}
+                    className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                      selectedCategory === c.id
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+
+              {/* Filtro por Fecha de Vencimiento */}
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full xl:w-auto pb-1 xl:pb-0 text-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-amber-400" />
+                  Vencimiento:
+                </span>
+                <button
+                  onClick={() => setExpirationFilter('all')}
+                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    expirationFilter === 'all'
+                      ? 'bg-slate-200 text-slate-900 font-bold shadow-sm'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setExpirationFilter('expiring_soon')}
+                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs flex items-center gap-1 ${
+                    expirationFilter === 'expiring_soon'
+                      ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                      : 'bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20'
+                  }`}
+                  title="Vence dentro de los próximos 30 días"
+                >
+                  <Clock className="w-3 h-3" />
+                  Por Vencer (≤30d)
+                </button>
+                <button
+                  onClick={() => setExpirationFilter('expired')}
+                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs flex items-center gap-1 ${
+                    expirationFilter === 'expired'
+                      ? 'bg-rose-600 text-white font-bold shadow-sm'
+                      : 'bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/20'
+                  }`}
+                  title="Productos vencidos"
+                >
+                  <AlertTriangle className="w-3 h-3" />
+                  Ya Vencidos
+                </button>
+                <button
+                  onClick={() => setExpirationFilter('with_expiration')}
+                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    expirationFilter === 'with_expiration'
+                      ? 'bg-blue-600 text-white font-bold shadow-sm'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                  title="Solo productos con fecha asignada"
+                >
+                  Con Vencimiento
+                </button>
+                <button
+                  onClick={() => setExpirationFilter('without_expiration')}
+                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
+                    expirationFilter === 'without_expiration'
+                      ? 'bg-slate-700 text-white font-bold shadow-sm'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                  title="Productos no perecibles sin fecha"
+                >
+                  Sin Vencimiento
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Tabla de Productos */}
           <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner">
-            <table className="w-full text-left text-xs border-collapse min-w-[1080px]">
+            <table className="w-full text-left text-xs border-collapse min-w-[1180px]">
               <thead className="sticky top-0 z-10 bg-slate-950 shadow-sm border-b border-slate-800">
                 <tr className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
                   <th className="p-3 w-28">Código</th>
                   <th className="p-3">Producto / Descripción</th>
                   <th className="p-3 w-32">Categoría</th>
                   <th className="p-3 text-center w-24">Unidad</th>
+                  <th className="p-3 w-36">F. Vencimiento</th>
                   <th className="p-3 text-right w-24">Stock</th>
                   <th className="p-3 text-right w-28">Costo (Admin)</th>
                   <th className="p-3 text-right w-28">P. Menor</th>
@@ -328,7 +484,7 @@ export const InventoryView: React.FC = () => {
               <tbody className="divide-y divide-slate-800/60">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={10} className="p-10 text-center text-slate-400">
+                    <td colSpan={11} className="p-10 text-center text-slate-400">
                       <div className="flex items-center justify-center gap-2">
                         <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
                         <span>Cargando catálogo de productos...</span>
@@ -337,8 +493,8 @@ export const InventoryView: React.FC = () => {
                   </tr>
                 ) : products.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-10 text-center text-slate-500">
-                      No se encontraron productos registrados en el inventario.
+                    <td colSpan={11} className="p-10 text-center text-slate-500">
+                      No se encontraron productos registrados con los filtros seleccionados.
                     </td>
                   </tr>
                 ) : (
@@ -349,6 +505,7 @@ export const InventoryView: React.FC = () => {
                       p.costPrice && p.costPrice > 0
                         ? (((p.retailPrice - p.costPrice) / p.costPrice) * 100).toFixed(1)
                         : '--';
+                    const expInfo = getProductExpirationInfo(p.expirationDate);
 
                     return (
                       <tr key={p.id} className="hover:bg-slate-800/40 even:bg-slate-950/25 transition-colors">
@@ -372,6 +529,53 @@ export const InventoryView: React.FC = () => {
                           <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 font-mono text-[10px] font-semibold whitespace-nowrap border border-indigo-500/20">
                             {getUnitBadge(p.unitType)}
                           </span>
+                        </td>
+                        <td className="p-3">
+                          {expInfo.state === 'EXPIRED' ? (
+                            <div className="flex flex-col gap-0.5" title={expInfo.label}>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono text-[10px] font-bold w-fit">
+                                <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+                                {expInfo.formattedDate}
+                              </span>
+                              <span className="text-[10px] text-rose-400 font-semibold truncate max-w-[130px]">
+                                {expInfo.label}
+                              </span>
+                            </div>
+                          ) : expInfo.state === 'CRITICAL' ? (
+                            <div className="flex flex-col gap-0.5" title={expInfo.label}>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono text-[10px] font-bold w-fit">
+                                <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                                {expInfo.formattedDate}
+                              </span>
+                              <span className="text-[10px] text-amber-400 font-semibold truncate max-w-[130px]">
+                                {expInfo.label}
+                              </span>
+                            </div>
+                          ) : expInfo.state === 'WARNING' ? (
+                            <div className="flex flex-col gap-0.5" title={expInfo.label}>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-200 border border-amber-500/20 font-mono text-[10px] font-medium w-fit">
+                                <Calendar className="w-3 h-3 text-amber-300 shrink-0" />
+                                {expInfo.formattedDate}
+                              </span>
+                              <span className="text-[10px] text-slate-400 truncate max-w-[130px]">
+                                {expInfo.label}
+                              </span>
+                            </div>
+                          ) : expInfo.state === 'GOOD' ? (
+                            <div className="flex flex-col gap-0.5" title={expInfo.label}>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-mono text-[10px] font-medium w-fit">
+                                <Calendar className="w-3 h-3 text-emerald-400 shrink-0" />
+                                {expInfo.formattedDate}
+                              </span>
+                              <span className="text-[10px] text-slate-400 truncate max-w-[130px]">
+                                {expInfo.label}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 text-[10px] italic px-1.5 py-0.5 rounded bg-slate-950/60 border border-slate-800/80 inline-block">
+                              No perecible
+                            </span>
+                          )}
                         </td>
                         <td className="p-3 text-right font-mono font-bold">
                           <span
@@ -454,7 +658,7 @@ export const InventoryView: React.FC = () => {
               {products.length > 0 && (
                 <tfoot className="sticky bottom-0 bg-slate-950/95 border-t-2 border-slate-700 text-slate-200 font-semibold text-xs shadow-md">
                   <tr>
-                    <td colSpan={4} className="p-3 font-bold uppercase tracking-wider text-[11px] text-white">
+                    <td colSpan={5} className="p-3 font-bold uppercase tracking-wider text-[11px] text-white">
                       Totales Generales ({products.length} productos listados)
                     </td>
                     <td className="p-3 text-right font-mono font-extrabold text-emerald-400 text-sm">
@@ -731,6 +935,11 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
   );
   const [currentStock, setCurrentStock] = useState(String(initialData?.currentStock || '0'));
   const [minStock, setMinStock] = useState(String(initialData?.minStock || '5'));
+  const [expirationDate, setExpirationDate] = useState<string>(
+    initialData?.expirationDate
+      ? new Date(initialData.expirationDate).toISOString().split('T')[0]
+      : '',
+  );
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -763,6 +972,7 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
       wholesalePrice: parsedWholesale,
       wholesaleMinQty: parsedMinQty,
       minStock: parseFloat(minStock) || 5,
+      expirationDate: expirationDate.trim() ? expirationDate.trim() : null,
     };
 
     if (!initialData) {
@@ -962,6 +1172,117 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 font-mono"
               />
             </div>
+          </div>
+
+          {/* Campo Fecha de Vencimiento (Opcional) */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label className="font-semibold text-slate-200 flex items-center gap-1.5 text-xs">
+                <Calendar className="w-4 h-4 text-amber-400" />
+                Fecha de Vencimiento
+                <span className="text-[11px] font-normal text-slate-400">(Opcional)</span>
+              </label>
+
+              {expirationDate && (
+                <button
+                  type="button"
+                  onClick={() => setExpirationDate('')}
+                  className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold cursor-pointer underline"
+                >
+                  Quitar fecha (No perecible)
+                </button>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-400 mb-2.5">
+              Ingrese la fecha de caducidad si el producto es perecible (ej: yogurt, leche, embutidos). Si no vence, déjelo vacío.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
+              <div>
+                <input
+                  type="date"
+                  value={expirationDate}
+                  onChange={(e) => setExpirationDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700/80 focus:border-indigo-500 rounded-xl px-3 py-2 text-white outline-none text-xs font-mono"
+                />
+              </div>
+
+              {/* Botones de sugerencia rápida */}
+              <div className="flex items-center gap-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 15);
+                    setExpirationDate(d.toISOString().split('T')[0]);
+                  }}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
+                >
+                  +15 días
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() + 1);
+                    setExpirationDate(d.toISOString().split('T')[0]);
+                  }}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
+                >
+                  +1 mes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() + 6);
+                    setExpirationDate(d.toISOString().split('T')[0]);
+                  }}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
+                >
+                  +6 meses
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setFullYear(d.getFullYear() + 1);
+                    setExpirationDate(d.toISOString().split('T')[0]);
+                  }}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
+                >
+                  +1 año
+                </button>
+              </div>
+            </div>
+
+            {/* Vista previa del estado de vencimiento */}
+            {expirationDate && (
+              <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center gap-2">
+                {(() => {
+                  const info = getProductExpirationInfo(expirationDate);
+                  return (
+                    <div className="flex items-center gap-1.5 text-[11px]">
+                      <span className="text-slate-400">Estado proyectado:</span>
+                      <span
+                        className={`font-semibold px-2 py-0.5 rounded-md border ${
+                          info.state === 'EXPIRED'
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                            : info.state === 'CRITICAL'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            : info.state === 'WARNING'
+                            ? 'bg-amber-500/15 text-amber-200 border-amber-500/20'
+                            : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20'
+                        }`}
+                      >
+                        {info.label}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           <div className="pt-3 flex items-center gap-2">

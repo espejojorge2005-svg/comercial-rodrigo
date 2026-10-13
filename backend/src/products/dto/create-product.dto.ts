@@ -1,4 +1,5 @@
 import {
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -50,4 +51,8 @@ export class CreateProductDto {
   @IsNumber({}, { message: 'El stock mínimo debe ser numérico' })
   @Min(0, { message: 'El stock mínimo no puede ser negativo' })
   minStock: number;
+
+  @IsOptional()
+  @IsDateString({}, { message: 'La fecha de vencimiento debe tener un formato válido (YYYY-MM-DD)' })
+  expirationDate?: string | null;
 }

@@ -100,6 +100,7 @@ export interface Product {
   currentStock: number;
   minStock: number;
   isActive: boolean;
+  expirationDate?: string | null; // Fecha de vencimiento opcional (ej: lácteos, embutidos)
   marginRetailPercent?: number;
   marginWholesalePercent?: number;
 }

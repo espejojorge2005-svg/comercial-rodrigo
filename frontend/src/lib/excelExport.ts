@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import type { Product, KardexMovement } from '../types/index.js';
 import { getUnitBadge, getUnitShortName } from './units.js';
-import { formatPeruDateTime, getPeruYMD } from './utils.js';
+import { formatPeruDateTime, getPeruYMD, getProductExpirationInfo } from './utils.js';
 
 /**
  * Función auxiliar para formatear fecha y hora a hora peruana
@@ -133,6 +133,7 @@ export const exportKardexAndInventoryExcel = (
     const totalValuedCost = Number((stock * cost).toFixed(2));
     const totalValuedRetail = Number((stock * (p.retailPrice || 0)).toFixed(2));
     const retailMargin = cost > 0 ? Number((((p.retailPrice - cost) / cost) * 100).toFixed(1)) : 0;
+    const expInfo = getProductExpirationInfo(p.expirationDate);
     
     sumStock += stock;
     sumValuedCost += totalValuedCost;
@@ -150,6 +151,8 @@ export const exportKardexAndInventoryExcel = (
       getUnitBadge(p.unitType),
       stock,
       p.minStock,
+      expInfo.formattedDate !== '--' ? expInfo.formattedDate : 'No perecible',
+      expInfo.label,
       cost,
       totalValuedCost,
       p.retailPrice,
@@ -169,6 +172,8 @@ export const exportKardexAndInventoryExcel = (
     'Unidad SUNAT',
     'Stock Actual',
     'Stock Mínimo',
+    'F. Vencimiento',
+    'Estado Vencimiento',
     'Costo Unit. (S/.)',
     'Valor Costo Total (S/.)',
     'Precio Menor (S/.)',
@@ -176,7 +181,7 @@ export const exportKardexAndInventoryExcel = (
     'Precio Mayor (S/.)',
     'Cant. Mín. Mayor',
     'Valor Venta Total (S/.)',
-    'Estado',
+    'Estado Stock',
   ];
 
   const stockTotals = [
@@ -188,6 +193,8 @@ export const exportKardexAndInventoryExcel = (
     Number(sumStock.toFixed(2)),
     '',
     '',
+    '',
+    '',
     Number(sumValuedCost.toFixed(2)),
     '',
     '',
@@ -197,7 +204,7 @@ export const exportKardexAndInventoryExcel = (
     '',
   ];
 
-  const stockColWidths = [6, 17, 36, 18, 14, 13, 13, 16, 22, 16, 16, 16, 16, 22, 16];
+  const stockColWidths = [6, 17, 36, 18, 14, 13, 13, 16, 22, 16, 22, 16, 16, 16, 16, 22, 16];
 
   const wsStock = createFormattedSheet({
     storeName,

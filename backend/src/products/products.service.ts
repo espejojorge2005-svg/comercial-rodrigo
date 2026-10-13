@@ -9,9 +9,15 @@ export class ProductsService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Obtiene catálogo de productos con FILTRADO ESTRICTO DE COSTOS POR ROL
+   * Obtiene catálogo de productos con FILTRADO ESTRICTO DE COSTOS POR ROL y filtros avanzados
    */
-  async getProducts(userRole: Role, search?: string, categoryId?: string) {
+  async getProducts(
+    userRole: Role,
+    search?: string,
+    categoryId?: string,
+    expirationStatus?: string,
+    sortBy?: string,
+  ) {
     const where: Prisma.ProductWhereInput = {
       isActive: true,
     };
@@ -27,12 +33,49 @@ export class ProductsService {
       ];
     }
 
+    const now = new Date();
+    // Inicio del día UTC para comparación estricta de fechas de vencimiento
+    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    const in15Days = new Date(todayStart.getTime() + 15 * 24 * 60 * 60 * 1000);
+    const in30Days = new Date(todayStart.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    if (expirationStatus === 'expired') {
+      where.expirationDate = { lt: todayStart };
+    } else if (expirationStatus === 'expiring_soon_15') {
+      where.expirationDate = { gte: todayStart, lte: in15Days };
+    } else if (expirationStatus === 'expiring_soon' || expirationStatus === 'expiring_soon_30') {
+      where.expirationDate = { gte: todayStart, lte: in30Days };
+    } else if (expirationStatus === 'with_expiration') {
+      where.expirationDate = { not: null };
+    } else if (expirationStatus === 'without_expiration') {
+      where.expirationDate = null;
+    }
+
+    let orderBy: Prisma.ProductOrderByWithRelationInput | Prisma.ProductOrderByWithRelationInput[] = { name: 'asc' };
+    if (sortBy === 'expiration_asc') {
+      orderBy = [
+        { expirationDate: { sort: 'asc', nulls: 'last' } },
+        { name: 'asc' },
+      ];
+    } else if (sortBy === 'expiration_desc') {
+      orderBy = [
+        { expirationDate: { sort: 'desc', nulls: 'last' } },
+        { name: 'asc' },
+      ];
+    } else if (sortBy === 'stock_asc') {
+      orderBy = { currentStock: 'asc' };
+    } else if (sortBy === 'stock_desc') {
+      orderBy = { currentStock: 'desc' };
+    } else if (sortBy === 'name_asc') {
+      orderBy = { name: 'asc' };
+    }
+
     const products = await this.prisma.product.findMany({
       where,
       include: {
         category: { select: { id: true, name: true } },
       },
-      orderBy: { name: 'asc' },
+      orderBy,
     });
 
     // 🛡️ REGLA DE SEGURIDAD ESTRICTA:
@@ -51,6 +94,7 @@ export class ProductsService {
         currentStock: Number(p.currentStock),
         minStock: Number(p.minStock),
         isActive: p.isActive,
+        expirationDate: p.expirationDate ? p.expirationDate.toISOString() : null,
       };
 
       if (userRole === Role.ADMIN) {
@@ -101,6 +145,7 @@ export class ProductsService {
       currentStock: Number(product.currentStock),
       minStock: Number(product.minStock),
       isActive: product.isActive,
+      expirationDate: product.expirationDate ? product.expirationDate.toISOString() : null,
     };
 
     if (userRole === Role.ADMIN) {
@@ -154,6 +199,7 @@ export class ProductsService {
               : (null as any),
           currentStock: new Prisma.Decimal(dto.currentStock),
           minStock: new Prisma.Decimal(dto.minStock),
+          expirationDate: dto.expirationDate ? new Date(dto.expirationDate) : null,
         },
       });
 
@@ -200,6 +246,9 @@ export class ProductsService {
         dto.wholesaleMinQty !== null ? new Prisma.Decimal(dto.wholesaleMinQty) : (null as any);
     if (dto.minStock !== undefined) data.minStock = new Prisma.Decimal(dto.minStock);
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.expirationDate !== undefined) {
+      data.expirationDate = dto.expirationDate ? new Date(dto.expirationDate) : null;
+    }
 
     // Si hay ajuste manual de stock, registrarlo en Kardex
     if (dto.currentStock !== undefined && dto.currentStock !== Number(product.currentStock)) {

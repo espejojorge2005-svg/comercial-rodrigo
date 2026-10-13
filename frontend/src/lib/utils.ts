@@ -92,3 +92,101 @@ export function formatPeruTime(
     hour12: true,
   }).format(d);
 }
+
+/**
+ * Estado formal de vencimiento de un producto
+ */
+export type ProductExpirationState = 'EXPIRED' | 'CRITICAL' | 'WARNING' | 'GOOD' | 'NO_EXPIRATION';
+
+export interface ProductExpirationInfo {
+  state: ProductExpirationState;
+  daysDiff: number | null;
+  label: string;
+  badgeText: string;
+  formattedDate: string;
+}
+
+/**
+ * Calcula el estado de vencimiento de un producto contra la fecha actual
+ */
+export function getProductExpirationInfo(
+  expirationDate?: Date | string | null,
+): ProductExpirationInfo {
+  if (!expirationDate) {
+    return {
+      state: 'NO_EXPIRATION',
+      daysDiff: null,
+      label: 'Sin vencimiento',
+      badgeText: 'No perecible',
+      formattedDate: '--',
+    };
+  }
+
+  const exp = new Date(expirationDate);
+  if (isNaN(exp.getTime())) {
+    return {
+      state: 'NO_EXPIRATION',
+      daysDiff: null,
+      label: 'Sin vencimiento',
+      badgeText: 'No perecible',
+      formattedDate: '--',
+    };
+  }
+
+  // Normalizar día exacto
+  const expYear = exp.getUTCFullYear();
+  const expMonth = exp.getUTCMonth();
+  const expDay = exp.getUTCDate();
+
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const expUtc = Date.UTC(expYear, expMonth, expDay);
+
+  const diffMs = expUtc - todayUtc;
+  const daysDiff = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const formattedDate = formatPeruDate(exp);
+
+  if (daysDiff < 0) {
+    const absDays = Math.abs(daysDiff);
+    return {
+      state: 'EXPIRED',
+      daysDiff,
+      label: `Vencido hace ${absDays} ${absDays === 1 ? 'día' : 'días'}`,
+      badgeText: `Vencido (${absDays}d)`,
+      formattedDate,
+    };
+  } else if (daysDiff === 0) {
+    return {
+      state: 'CRITICAL',
+      daysDiff: 0,
+      label: 'Vence hoy',
+      badgeText: '¡Vence Hoy!',
+      formattedDate,
+    };
+  } else if (daysDiff <= 7) {
+    return {
+      state: 'CRITICAL',
+      daysDiff,
+      label: `Vence en ${daysDiff} ${daysDiff === 1 ? 'día' : 'días'}`,
+      badgeText: `Vence en ${daysDiff}d`,
+      formattedDate,
+    };
+  } else if (daysDiff <= 30) {
+    return {
+      state: 'WARNING',
+      daysDiff,
+      label: `Vence en ${daysDiff} días`,
+      badgeText: `En ${daysDiff} días`,
+      formattedDate,
+    };
+  } else {
+    return {
+      state: 'GOOD',
+      daysDiff,
+      label: `Vigente (vence en ${daysDiff} días)`,
+      badgeText: 'Vigente',
+      formattedDate,
+    };
+  }
+}
+

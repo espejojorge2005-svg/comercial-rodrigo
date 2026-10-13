@@ -152,6 +152,7 @@ model Product {
   currentStock    Decimal          @default(0) @db.Decimal(12, 3)
   minStock        Decimal          @default(5) @db.Decimal(12, 3)
   isActive        Boolean          @default(true)
+  expirationDate  DateTime?        // Fecha de vencimiento (Opcional, ej: lácteos, embutidos)
   saleDetails     SaleDetail[]
   kardexMovements KardexMovement[]
   createdAt       DateTime         @default(now())

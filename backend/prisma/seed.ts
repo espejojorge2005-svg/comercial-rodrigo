@@ -115,6 +115,18 @@ async function main() {
     create: { name: 'Limpieza', description: 'Artículos de higiene y aseo' },
   });
 
+  const catLacteos = await prisma.category.upsert({
+    where: { name: 'Lácteos & Perecibles' },
+    update: {},
+    create: { name: 'Lácteos & Perecibles', description: 'Yogurt, leche, quesos y embutidos' },
+  });
+
+  // Fechas de prueba de vencimiento
+  const today = new Date();
+  const dateExpired = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000); // Vencido hace 2 días
+  const dateExpiringSoon = new Date(today.getTime() + 8 * 24 * 60 * 60 * 1000); // Vence en 8 días
+  const dateFuture = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000); // Vence en 3 meses
+
   // 4. Crear Productos iniciales de prueba con precios menor/mayor y stock
   const sampleProducts = [
     {
@@ -128,6 +140,7 @@ async function main() {
       wholesaleMinQty: 6,
       currentStock: 100,
       minStock: 20,
+      expirationDate: null, // No perecible
     },
     {
       barcode: '7750987654321',
@@ -140,6 +153,7 @@ async function main() {
       wholesaleMinQty: 4,
       currentStock: 60,
       minStock: 15,
+      expirationDate: null, // No perecible
     },
     {
       barcode: '7750111222333',
@@ -152,6 +166,7 @@ async function main() {
       wholesaleMinQty: 6,
       currentStock: 80,
       minStock: 15,
+      expirationDate: null,
     },
     {
       barcode: '7750444555666',
@@ -164,6 +179,46 @@ async function main() {
       wholesaleMinQty: 3,
       currentStock: 50,
       minStock: 10,
+      expirationDate: null,
+    },
+    {
+      barcode: '7750777888999',
+      name: 'Yogurt Gloria Fresa 1kg',
+      categoryId: catLacteos.id,
+      unitType: UnitType.UNIT,
+      costPrice: 5.5,
+      retailPrice: 7.2,
+      wholesalePrice: 6.5,
+      wholesaleMinQty: 4,
+      currentStock: 24,
+      minStock: 6,
+      expirationDate: dateExpiringSoon, // Vence en 8 días
+    },
+    {
+      barcode: '7750333222111',
+      name: 'Yogurt Laive Vainilla Francesa 1kg',
+      categoryId: catLacteos.id,
+      unitType: UnitType.UNIT,
+      costPrice: 5.8,
+      retailPrice: 7.5,
+      wholesalePrice: 6.8,
+      wholesaleMinQty: 4,
+      currentStock: 8,
+      minStock: 5,
+      expirationDate: dateExpired, // Ya vencido
+    },
+    {
+      barcode: '7750666777888',
+      name: 'Leche Evaporada Gloria Azul 400g',
+      categoryId: catLacteos.id,
+      unitType: UnitType.UNIT,
+      costPrice: 3.4,
+      retailPrice: 4.2,
+      wholesalePrice: 3.8,
+      wholesaleMinQty: 6,
+      currentStock: 48,
+      minStock: 12,
+      expirationDate: dateFuture, // Vence en 3 meses
     },
   ];
 
