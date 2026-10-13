@@ -190,6 +190,7 @@ export interface Sale {
   taxableBase: number;
   igvAmount: number;
   customerAddress?: string | null;
+  customerEmail?: string | null;
   hash?: string | null;
   qrString?: string | null;
   emissionStatus?: EmissionStatus | null;

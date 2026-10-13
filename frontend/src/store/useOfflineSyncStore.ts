@@ -56,6 +56,8 @@ export const useOfflineSyncStore = create<OfflineSyncState>((set, get) => ({
           cashShiftId: s.cashShiftId,
           customerName: s.customerName || 'Cliente Varios',
           customerDocument: s.customerDocument || null,
+          customerAddress: s.customerAddress || null,
+          customerEmail: s.customerEmail || null,
           paymentMethod: s.paymentMethod,
           cashPaid: s.cashPaid,
           digitalPaid: s.digitalPaid,

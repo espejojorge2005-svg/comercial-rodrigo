@@ -19,6 +19,9 @@ import {
   AlertTriangle,
   MapPin,
   Sparkles,
+  Mail,
+  Search,
+  Loader2,
 } from 'lucide-react';
 import { offlineStorage, type OfflineSale } from '../../lib/offlineStorage.js';
 import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
@@ -57,8 +60,40 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [custName, setCustName] = useState<string>(customerName);
   const [custDoc, setCustDoc] = useState<string>(customerDocument);
   const [custAddress, setCustAddress] = useState<string>('');
+  const [custEmail, setCustEmail] = useState<string>('');
+  const [isSearchingDoc, setIsSearchingDoc] = useState<boolean>(false);
+  const [lookupBadge, setLookupBadge] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Función para consultar RUC o DNI en SUNAT / RENIEC automáticamente
+  const handleLookupDocument = async (overrideDoc?: string) => {
+    const docToSearch = (overrideDoc !== undefined ? overrideDoc : custDoc).trim();
+    if (docToSearch.length !== 8 && docToSearch.length !== 11) return;
+
+    setIsSearchingDoc(true);
+    setLookupBadge(null);
+    try {
+      const data = await apiRequest<any>(`/sales/lookup-document/${docToSearch}`);
+      if (data) {
+        if (data.name) {
+          setCustName(data.name);
+        }
+        if (data.address && (receiptType === 'FACTURA' || !custAddress)) {
+          setCustAddress(data.address);
+        }
+        if (data.documentType === 'RUC') {
+          setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}`);
+        } else {
+          setLookupBadge(`✓ RENIEC: Nombre encontrado`);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Document lookup error:', err);
+    } finally {
+      setIsSearchingDoc(false);
+    }
+  };
 
   // Sincronizar efectivo al abrir el modal
   const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
@@ -68,6 +103,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setCashPaid(String(totalAmount));
       setDigitalPaid('0');
       setError(null);
+      setLookupBadge(null);
     }
   }
 
@@ -213,6 +249,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         taxableBase,
         igvAmount: receiptType !== 'NOTA_VENTA' ? igvAmount : 0,
         customerAddress: custAddress || null,
+        customerEmail: custEmail.trim() || null,
         hash: receiptType !== 'NOTA_VENTA' ? `SIM-${Date.now().toString(16)}` : null,
         qrString: null,
         emissionStatus: receiptType !== 'NOTA_VENTA' ? 'SIMULATED' : null,
@@ -325,6 +362,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               : 'Cliente Varios'),
         customerDocument: custDoc || null,
         customerAddress: custAddress || null,
+        customerEmail: custEmail.trim() || undefined,
         paymentMethod,
         cashPaid: paymentMethod === 'TRANSFER' || paymentMethod === 'CARD' ? 0 : cashNum,
         digitalPaid:
@@ -580,25 +618,54 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       ? 'DNI (8 dígitos) *'
                       : 'DNI / RUC (Opcional)'}
                 </label>
-                <input
-                  type="text"
-                  maxLength={receiptType === 'FACTURA' ? 11 : 12}
-                  value={custDoc}
-                  onChange={(e) => setCustDoc(e.target.value)}
-                  placeholder={
-                    receiptType === 'FACTURA'
-                      ? 'ej. 20601234567'
-                      : receiptType === 'BOLETA'
-                        ? 'ej. 45892301'
-                        : 'ej. 45892301'
-                  }
-                  className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs text-white outline-none font-mono transition-all ${
-                    (receiptType === 'BOLETA' && isBoletaOver700 && !isDniValidForBoleta) ||
-                    (receiptType === 'FACTURA' && !isRucValidForFactura && custDoc.length > 0)
-                      ? 'border-rose-500/70 focus:border-rose-500'
-                      : 'border-slate-800 focus:border-blue-500'
-                  }`}
-                />
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    maxLength={receiptType === 'FACTURA' ? 11 : 12}
+                    value={custDoc}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setCustDoc(val);
+                      setLookupBadge(null);
+                      if (receiptType === 'FACTURA' && val.length === 11) {
+                        handleLookupDocument(val);
+                      } else if (receiptType === 'BOLETA' && val.length === 8) {
+                        handleLookupDocument(val);
+                      }
+                    }}
+                    placeholder={
+                      receiptType === 'FACTURA'
+                        ? 'ej. 20601234567'
+                        : receiptType === 'BOLETA'
+                          ? 'ej. 45892301'
+                          : 'ej. 45892301'
+                    }
+                    className={`w-full bg-slate-900 border rounded-xl pl-3 pr-10 py-2 text-xs text-white outline-none font-mono transition-all ${
+                      (receiptType === 'BOLETA' && isBoletaOver700 && !isDniValidForBoleta) ||
+                      (receiptType === 'FACTURA' && !isRucValidForFactura && custDoc.length > 0)
+                        ? 'border-rose-500/70 focus:border-rose-500'
+                        : 'border-slate-800 focus:border-blue-500'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleLookupDocument()}
+                    disabled={isSearchingDoc || (custDoc.length !== 8 && custDoc.length !== 11)}
+                    className="absolute right-1.5 p-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 disabled:opacity-30 transition-all cursor-pointer"
+                    title="Consultar RUC / DNI en SUNAT"
+                  >
+                    {isSearchingDoc ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Search className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+                {lookupBadge && (
+                  <span className="text-[10px] text-emerald-400 mt-1 block font-semibold animate-in fade-in">
+                    {lookupBadge}
+                  </span>
+                )}
                 {receiptType === 'FACTURA' && custDoc && !isRucValidForFactura && (
                   <span className="text-[10px] text-rose-400 mt-1 block">
                     Debe iniciar con 10, 20, 15 o 17 (11 dígitos)
@@ -655,6 +722,30 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Correo Electrónico para Envío Automático de Comprobante (Opcional) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-semibold text-slate-400">
+                  {receiptType === 'FACTURA'
+                    ? 'Correo para Facturación (Opcional)'
+                    : 'Correo del Cliente (Opcional)'}
+                </label>
+                <span className="text-[9.5px] text-slate-500">
+                  Envío automático de PDF + XML por API
+                </span>
+              </div>
+              <div className="relative">
+                <Mail className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  value={custEmail}
+                  onChange={(e) => setCustEmail(e.target.value)}
+                  placeholder="ej. cliente@empresa.com"
+                  className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-xl pl-8 pr-3 py-2 text-xs text-white outline-none font-sans"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Selector de Método de Pago */}

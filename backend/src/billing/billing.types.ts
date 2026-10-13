@@ -10,6 +10,7 @@ export interface IssueReceiptInput {
   customerName: string;
   customerDocument?: string | null;
   customerAddress?: string | null;
+  customerEmail?: string | null;
   paymentMethod: string;
   items: Array<{
     name: string;
@@ -50,6 +51,7 @@ export interface IssueCreditNoteInput {
   customerName: string;
   customerDocument?: string | null;
   customerAddress?: string | null;
+  customerEmail?: string | null;
   items: Array<{
     name: string;
     quantity: number;

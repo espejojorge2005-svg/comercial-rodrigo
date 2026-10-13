@@ -53,6 +53,10 @@ export class CreateSaleDto {
   @IsString()
   customerAddress?: string;
 
+  @IsOptional()
+  @IsString()
+  customerEmail?: string;
+
   @IsEnum(PaymentMethod, {
     message: 'El método de pago debe ser CASH, TRANSFER, CARD o MIXED',
   })

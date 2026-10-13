@@ -36,6 +36,11 @@ export class SalesController {
     return this.salesService.voidSale(id, dto);
   }
 
+  @Get('lookup-document/:doc')
+  async lookupDocument(@Param('doc') doc: string) {
+    return this.salesService.lookupDocument(doc);
+  }
+
   @Get('profit-report')
   async getProfitReport(
     @CurrentUser('role') userRole: Role,

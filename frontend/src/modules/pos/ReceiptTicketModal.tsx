@@ -430,6 +430,14 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                 </span>
               </div>
             )}
+            {saleData.customerEmail && (
+              <div className="flex justify-between text-[10px]">
+                <span>CORREO:</span>
+                <span className="text-right truncate max-w-[170px] font-mono">
+                  {saleData.customerEmail}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* TABLA DE DETALLE DE PRODUCTOS */}

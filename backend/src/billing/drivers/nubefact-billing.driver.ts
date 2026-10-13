@@ -34,6 +34,7 @@ export class NubefactBillingDriver implements IBillingDriver {
       customerName,
       customerDocument,
       customerAddress,
+      customerEmail,
       items,
       createdAt = new Date(),
     } = input;
@@ -66,7 +67,7 @@ export class NubefactBillingDriver implements IBillingDriver {
       cliente_numero_de_documento: cleanDoc || '-',
       cliente_denominacion: customerName || 'CLIENTES VARIOS',
       cliente_direccion: customerAddress || '-',
-      cliente_email: '',
+      cliente_email: (customerEmail || '').trim(),
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
       porcentaje_de_igv: 18.0,
@@ -160,6 +161,7 @@ export class NubefactBillingDriver implements IBillingDriver {
       customerName,
       customerDocument,
       customerAddress,
+      customerEmail,
       items,
       createdAt = new Date(),
     } = input;
@@ -195,7 +197,7 @@ export class NubefactBillingDriver implements IBillingDriver {
       cliente_numero_de_documento: cleanDoc || '-',
       cliente_denominacion: customerName || 'CLIENTES VARIOS',
       cliente_direccion: customerAddress || '-',
-      cliente_email: '',
+      cliente_email: (customerEmail || '').trim(),
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
       porcentaje_de_igv: 18.0,
