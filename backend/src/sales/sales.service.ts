@@ -29,8 +29,8 @@ export class SalesService {
 
   /**
    * Helper para asignar series independientes por caja física y tipo de comprobante:
-   * Caja 1 (POS-01): NV01, B001, F001
-   * Caja 2 (POS-02): NV02, B002, F002
+   * Caja 1 (POS-01): NV01, B001, F001, BC01, FC01
+   * Caja 2 (POS-02): NV02, B002, F002, BC02, FC02
    */
   private getSeriesForRegister(
     identifier: string,
