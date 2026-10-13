@@ -82,7 +82,13 @@ export const InventoryView: React.FC = () => {
       if (selectedCategory !== 'all') url += `category=${encodeURIComponent(selectedCategory)}&`;
       if (searchTerm.trim()) url += `search=${encodeURIComponent(searchTerm.trim())}&`;
       if (expirationFilter !== 'all') url += `expirationStatus=${encodeURIComponent(expirationFilter)}&`;
-      if (sortBy !== 'name_asc') url += `sortBy=${encodeURIComponent(sortBy)}&`;
+      if (sortBy !== 'name_asc') {
+        if (sortBy === 'only_expired' || sortBy === 'only_expiring_soon') {
+          url += `sortBy=expiration_asc&`;
+        } else {
+          url += `sortBy=${encodeURIComponent(sortBy)}&`;
+        }
+      }
       const data = await apiRequest(url);
       setProducts(data || []);
     } catch (err) {
@@ -239,8 +245,8 @@ export const InventoryView: React.FC = () => {
         </div>
       </div>
 
-      {/* Tarjetas Estadísticas */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
+      {/* Tarjetas Estadísticas Limpias y Espaciosas (4 Columnas) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
             <span>Total Productos</span>
@@ -251,58 +257,41 @@ export const InventoryView: React.FC = () => {
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Stock Bajo / Agotado</span>
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span>Alertas (Stock & Venc.)</span>
+            <AlertTriangle
+              className={`w-4 h-4 ${
+                expiredCount > 0
+                  ? 'text-rose-400'
+                  : lowStockCount > 0
+                  ? 'text-amber-400'
+                  : 'text-slate-500'
+              }`}
+            />
           </div>
-          <div
-            className={`text-xl font-extrabold ${lowStockCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}
-          >
-            {lowStockCount}
-          </div>
-        </div>
-
-        <div
-          onClick={() => {
-            if (expiredCount > 0) {
-              setExpirationFilter('expired');
-            } else if (expiringSoonCount > 0) {
-              setExpirationFilter('expiring_soon');
-            } else {
-              setExpirationFilter('with_expiration');
-            }
-          }}
-          className={`p-4 rounded-2xl bg-slate-900 border transition-all cursor-pointer ${
-            expiredCount > 0
-              ? 'border-rose-500/40 hover:border-rose-500/70 shadow-rose-950/20 shadow-lg'
-              : expiringSoonCount > 0
-              ? 'border-amber-500/40 hover:border-amber-500/70'
-              : 'border-slate-800 hover:border-slate-700'
-          }`}
-          title="Haga clic para filtrar productos con control de vencimiento"
-        >
-          <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Control Vencimiento</span>
-            <Calendar className="w-4 h-4 text-amber-400" />
-          </div>
-          <div className="flex items-baseline gap-1.5 flex-wrap">
+          <div className="flex items-baseline gap-2 flex-wrap">
             <span
               className={`text-xl font-extrabold ${
                 expiredCount > 0
                   ? 'text-rose-400'
-                  : expiringSoonCount > 0
+                  : lowStockCount > 0
                   ? 'text-amber-400'
                   : 'text-emerald-400'
               }`}
             >
               {expiredCount > 0
-                ? `${expiredCount} venc.`
-                : expiringSoonCount > 0
-                ? `${expiringSoonCount} por vencer`
-                : 'Al día'}
+                ? `${expiredCount} vencido${expiredCount > 1 ? 's' : ''}`
+                : lowStockCount > 0
+                ? `${lowStockCount} stock bajo`
+                : 'Sin alertas'}
             </span>
-            {expiredCount > 0 && expiringSoonCount > 0 && (
-              <span className="text-[10px] text-amber-300 font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
-                +{expiringSoonCount} pronto
+            {lowStockCount > 0 && expiredCount > 0 && (
+              <span className="text-[10px] text-amber-300 font-medium">
+                • {lowStockCount} bajo stock
+              </span>
+            )}
+            {expiredCount === 0 && expiringSoonCount > 0 && (
+              <span className="text-[10px] text-amber-300 font-medium">
+                ({expiringSoonCount} por vencer)
               </span>
             )}
           </div>
@@ -330,135 +319,81 @@ export const InventoryView: React.FC = () => {
       {/* PESTAÑA 1: CATÁLOGO & STOCK */}
       {activeTab === 'catalog' && (
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
-          {/* Panel Superior de Filtros Formales */}
-          <div className="space-y-3.5 mb-5">
-            {/* Buscador y Ordenamiento */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Buscar por código de barras o nombre de producto..."
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
-                />
-              </div>
-
-              {/* Ordenamiento Formal */}
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs">
-                  <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="text-slate-400 text-[11px] font-medium hidden sm:inline">Ordenar:</span>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
-                    className="bg-transparent text-xs text-slate-200 outline-none font-medium cursor-pointer"
-                  >
-                    <option value="name_asc" className="bg-slate-900 text-white">Nombre (A - Z)</option>
-                    <option value="expiration_asc" className="bg-slate-900 text-white">Vencimiento (Más Próximo Primero)</option>
-                    <option value="expiration_desc" className="bg-slate-900 text-white">Vencimiento (Más Lejano Primero)</option>
-                    <option value="stock_asc" className="bg-slate-900 text-white">Stock (Menor a Mayor)</option>
-                    <option value="stock_desc" className="bg-slate-900 text-white">Stock (Mayor a Menor)</option>
-                  </select>
-                </div>
-              </div>
+          {/* Barra de Filtros Limpia y Despejada (Una Sola Fila) */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5">
+            {/* Buscador */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar por código de barras o nombre de producto..."
+                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
+              />
             </div>
 
-            {/* Fila 2: Filtro por Categorías y Filtro por Vencimiento */}
-            <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 pt-3 border-t border-slate-800/60">
-              {/* Filtro por Categorías */}
-              <div className="flex items-center gap-1.5 overflow-x-auto w-full xl:w-auto pb-1 xl:pb-0 text-xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
-                  Categoría:
-                </span>
-                <button
-                  onClick={() => setSelectedCategory('all')}
-                  className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
-                    selectedCategory === 'all'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
+            {/* Controles Compactos: Categoría + Ordenar por Vencimiento */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Filtro de Categoría */}
+              <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs">
+                <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span className="text-slate-400 text-[11px] font-medium hidden sm:inline">Categoría:</span>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="bg-transparent text-xs text-slate-200 outline-none font-medium cursor-pointer"
                 >
-                  Todas ({categories.length})
-                </button>
-                {categories.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => setSelectedCategory(c.id)}
-                    className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
-                      selectedCategory === c.id
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {c.name}
-                  </button>
-                ))}
+                  <option value="all" className="bg-slate-900 text-white">Todas las categorías</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-slate-900 text-white">
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* Filtro por Fecha de Vencimiento */}
-              <div className="flex items-center gap-1.5 overflow-x-auto w-full xl:w-auto pb-1 xl:pb-0 text-xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-amber-400" />
-                  Vencimiento:
-                </span>
-                <button
-                  onClick={() => setExpirationFilter('all')}
-                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
-                    expirationFilter === 'all'
-                      ? 'bg-slate-200 text-slate-900 font-bold shadow-sm'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
+              {/* Selector de Ordenamiento / Filtro de Vencimiento */}
+              <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span className="text-slate-400 text-[11px] font-medium hidden sm:inline">Ordenar:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSortBy(val);
+                    if (val === 'only_expired') {
+                      setExpirationFilter('expired');
+                    } else if (val === 'only_expiring_soon') {
+                      setExpirationFilter('expiring_soon');
+                    } else {
+                      setExpirationFilter('all');
+                    }
+                  }}
+                  className="bg-transparent text-xs text-slate-200 outline-none font-semibold cursor-pointer"
                 >
-                  Todos
-                </button>
-                <button
-                  onClick={() => setExpirationFilter('expiring_soon')}
-                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs flex items-center gap-1 ${
-                    expirationFilter === 'expiring_soon'
-                      ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
-                      : 'bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20'
-                  }`}
-                  title="Vence dentro de los próximos 30 días"
-                >
-                  <Clock className="w-3 h-3" />
-                  Por Vencer (≤30d)
-                </button>
-                <button
-                  onClick={() => setExpirationFilter('expired')}
-                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs flex items-center gap-1 ${
-                    expirationFilter === 'expired'
-                      ? 'bg-rose-600 text-white font-bold shadow-sm'
-                      : 'bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/20'
-                  }`}
-                  title="Productos vencidos"
-                >
-                  <AlertTriangle className="w-3 h-3" />
-                  Ya Vencidos
-                </button>
-                <button
-                  onClick={() => setExpirationFilter('with_expiration')}
-                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
-                    expirationFilter === 'with_expiration'
-                      ? 'bg-blue-600 text-white font-bold shadow-sm'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                  title="Solo productos con fecha asignada"
-                >
-                  Con Vencimiento
-                </button>
-                <button
-                  onClick={() => setExpirationFilter('without_expiration')}
-                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap text-xs ${
-                    expirationFilter === 'without_expiration'
-                      ? 'bg-slate-700 text-white font-bold shadow-sm'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                  title="Productos no perecibles sin fecha"
-                >
-                  Sin Vencimiento
-                </button>
+                  <option value="expiration_asc" className="bg-slate-900 text-white">
+                    ⏳ Vencimiento (Más próximo primero)
+                  </option>
+                  <option value="only_expiring_soon" className="bg-slate-900 text-white">
+                    ⚠️ Solo Por Vencer (≤ 30 días)
+                  </option>
+                  <option value="only_expired" className="bg-slate-900 text-white">
+                    🚨 Solo Ya Vencidos
+                  </option>
+                  <option value="name_asc" className="bg-slate-900 text-white">
+                    Nombre (A - Z)
+                  </option>
+                  <option value="stock_asc" className="bg-slate-900 text-white">
+                    Stock (Menor a Mayor)
+                  </option>
+                  <option value="stock_desc" className="bg-slate-900 text-white">
+                    Stock (Mayor a Menor)
+                  </option>
+                  <option value="expiration_desc" className="bg-slate-900 text-white">
+                    Vencimiento (Más lejano primero)
+                  </option>
+                </select>
               </div>
             </div>
           </div>
