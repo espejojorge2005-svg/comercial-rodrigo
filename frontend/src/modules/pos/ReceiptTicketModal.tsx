@@ -2,28 +2,32 @@ import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
 import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
-import { Printer, ArrowRight, X, ShieldCheck, Sparkles } from 'lucide-react';
+import { Printer, ArrowRight, X, ShieldCheck, Sparkles, FileText } from 'lucide-react';
 import type { Sale } from '../../types/index.js';
 
 interface ReceiptTicketModalProps {
   isOpen: boolean;
   onClose: () => void;
   saleData: Sale | any;
+  isCreditNoteTicket?: boolean;
 }
 
 export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   isOpen,
   onClose,
   saleData,
+  isCreditNoteTicket = false,
 }) => {
   const { config } = useConfigStore();
   const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>('80mm');
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
 
+  const isCreditNote = Boolean(isCreditNoteTicket || saleData?.isCreditNoteTicket);
+  const creditNote = saleData?.creditNote;
   const receiptType = saleData?.receiptType || 'NOTA_VENTA';
-  const isFiscal = saleData?.isFiscal || receiptType === 'BOLETA' || receiptType === 'FACTURA';
+  const isFiscal = isCreditNote || saleData?.isFiscal || receiptType === 'BOLETA' || receiptType === 'FACTURA';
 
-  // Generar código QR oficial en DataURL para comprobantes fiscales
+  // Generar código QR oficial en DataURL para comprobantes fiscales y notas de crédito
   useEffect(() => {
     let active = true;
     if (!isOpen || !saleData || !isFiscal) {
@@ -31,17 +35,32 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     }
 
     const companyRuc = config.ruc || '10458923011';
-    const docTypeCode = receiptType === 'FACTURA' ? '01' : '03';
-    const series = saleData.series || (receiptType === 'FACTURA' ? 'F001' : 'B001');
-    const paddedNum = String(saleData.correlativeNumber || saleData.saleNumber || 1).padStart(8, '0');
-    const igvFormatted = Number(saleData.igvAmount || 0).toFixed(2);
-    const totalFormatted = Number(saleData.totalAmount || 0).toFixed(2);
-    const dateFormatted = (saleData.createdAt || new Date().toISOString()).split('T')[0];
+    // Tipo de comprobante SUNAT Catálogo 01: 07 = Nota de Crédito, 01 = Factura, 03 = Boleta
+    const docTypeCode = isCreditNote ? '07' : receiptType === 'FACTURA' ? '01' : '03';
+    const series = isCreditNote
+      ? creditNote?.series || (receiptType === 'FACTURA' ? 'FC01' : 'BC01')
+      : saleData.series || (receiptType === 'FACTURA' ? 'F001' : 'B001');
+    const paddedNum = isCreditNote
+      ? String(creditNote?.correlativeNumber || 1).padStart(8, '0')
+      : String(saleData.correlativeNumber || saleData.saleNumber || 1).padStart(8, '0');
+    const igvFormatted = Number(
+      isCreditNote ? (creditNote?.igvAmount ?? saleData.igvAmount ?? 0) : (saleData.igvAmount || 0),
+    ).toFixed(2);
+    const totalFormatted = Number(
+      isCreditNote ? (creditNote?.totalAmount ?? saleData.totalAmount ?? 0) : (saleData.totalAmount || 0),
+    ).toFixed(2);
+    const dateFormatted = (
+      isCreditNote && creditNote?.createdAt
+        ? creditNote.createdAt
+        : saleData.createdAt || new Date().toISOString()
+    ).split('T')[0];
     const customerDoc = (saleData.customerDocument || '').trim();
     const customerDocType = customerDoc.length === 11 ? '6' : customerDoc.length === 8 ? '1' : '-';
-    const hashVal = saleData.hash || 's1mU14t3dH4shC0d3SuN4tP53==';
+    const hashVal =
+      (isCreditNote && creditNote?.hash) || saleData.hash || 's1mU14t3dH4shC0d3SuN4tNC==';
 
     const rawQrString =
+      (isCreditNote && creditNote?.qrString) ||
       saleData.qrString ||
       `${companyRuc}|${docTypeCode}|${series}|${paddedNum}|${igvFormatted}|${totalFormatted}|${dateFormatted}|${customerDocType}|${customerDoc || '-'}|${hashVal}|`;
 
@@ -61,7 +80,8 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     return () => {
       active = false;
     };
-  }, [isOpen, saleData, isFiscal, receiptType, config.ruc]);
+  }, [isOpen, saleData, isFiscal, isCreditNote, creditNote, receiptType, config.ruc]);
+
 
   if (!isOpen || !saleData) return null;
 
@@ -218,28 +238,36 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         <div className="text-center pb-3 border-b border-slate-800 print:hidden">
           <div
             className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2 border ${
-              receiptType === 'NOTA_VENTA'
-                ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                : receiptType === 'BOLETA'
-                  ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                  : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+              isCreditNote
+                ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                : receiptType === 'NOTA_VENTA'
+                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                  : receiptType === 'BOLETA'
+                    ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                    : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
             }`}
           >
-            {receiptType === 'NOTA_VENTA' ? (
+            {isCreditNote ? (
+              <FileText className="w-6 h-6" />
+            ) : receiptType === 'NOTA_VENTA' ? (
               <Sparkles className="w-6 h-6" />
             ) : (
               <ShieldCheck className="w-6 h-6" />
             )}
           </div>
           <h3 className="text-lg font-bold text-white">
-            {receiptType === 'NOTA_VENTA'
-              ? '¡Nota de Venta Generada!'
-              : receiptType === 'BOLETA'
-                ? '¡Boleta Electrónica Emitida!'
-                : '¡Factura Electrónica Emitida!'}
+            {isCreditNote
+              ? '¡Nota de Crédito Electrónica!'
+              : receiptType === 'NOTA_VENTA'
+                ? '¡Nota de Venta Generada!'
+                : receiptType === 'BOLETA'
+                  ? '¡Boleta Electrónica Emitida!'
+                  : '¡Factura Electrónica Emitida!'}
           </h3>
           <p className="text-xs text-slate-400">
-            {fullReceiptNumber} • Formato para tiqueteras térmicas de 80mm y 58mm
+            {isCreditNote
+              ? `${creditNote?.fullNumber || 'NC'} • Anulación fiscal de ${fullReceiptNumber}`
+              : `${fullReceiptNumber} • Formato para tiqueteras térmicas de 80mm y 58mm`}
           </p>
 
           {/* Selector de Ancho de Tiquetera (80mm vs 58mm) */}
@@ -297,27 +325,74 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             <p className="text-[9.5px] text-slate-500">{config.address}</p>
 
             {/* TÍTULO DESTACADO SEGÚN EL TIPO DE COMPROBANTE */}
-            <div className="mt-2 py-1 px-1.5 border-t border-b border-slate-300 font-bold text-center">
-              {receiptType === 'NOTA_VENTA' && (
-                <span className="text-[11px] font-extrabold block">
-                  NOTA DE VENTA - CONTROL INTERNO
-                </span>
+            <div
+              className={`mt-2 py-1 px-1.5 border-t border-b font-bold text-center ${
+                isCreditNote ? 'border-rose-400 bg-rose-50 text-rose-900' : 'border-slate-300'
+              }`}
+            >
+              {isCreditNote ? (
+                <>
+                  <span className="text-[11px] font-extrabold block text-rose-800">
+                    NOTA DE CRÉDITO ELECTRÓNICA
+                  </span>
+                  <span className="text-xs font-extrabold block tracking-wider mt-0.5 font-mono text-rose-950">
+                    {creditNote?.fullNumber || `${creditNote?.series || 'BC01'}-${String(creditNote?.correlativeNumber || 1).padStart(8, '0')}`}
+                  </span>
+                </>
+              ) : (
+                <>
+                  {receiptType === 'NOTA_VENTA' && (
+                    <span className="text-[11px] font-extrabold block">
+                      NOTA DE VENTA - CONTROL INTERNO
+                    </span>
+                  )}
+                  {receiptType === 'BOLETA' && (
+                    <span className="text-[11px] font-extrabold block">
+                      BOLETA DE VENTA ELECTRÓNICA
+                    </span>
+                  )}
+                  {receiptType === 'FACTURA' && (
+                    <span className="text-[11px] font-extrabold block">
+                      FACTURA ELECTRÓNICA
+                    </span>
+                  )}
+                  <span className="text-xs font-extrabold block tracking-wider mt-0.5">
+                    {fullReceiptNumber}
+                  </span>
+                </>
               )}
-              {receiptType === 'BOLETA' && (
-                <span className="text-[11px] font-extrabold block">
-                  BOLETA DE VENTA ELECTRÓNICA
-                </span>
-              )}
-              {receiptType === 'FACTURA' && (
-                <span className="text-[11px] font-extrabold block">
-                  FACTURA ELECTRÓNICA
-                </span>
-              )}
-              <span className="text-xs font-extrabold block tracking-wider mt-0.5">
-                {fullReceiptNumber}
-              </span>
             </div>
           </div>
+
+          {/* SECCIÓN DOCUMENTO AFECTADO (SOLO EN NOTA DE CRÉDITO) */}
+          {isCreditNote && (
+            <div className="my-2 p-2 rounded bg-slate-50 border border-slate-300 text-[10px] space-y-1 text-slate-800 text-left">
+              <div className="flex justify-between font-bold">
+                <span>DOC. AFECTADO:</span>
+                <span className="font-mono font-extrabold text-slate-900">{fullReceiptNumber}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>TIPO COMPROBANTE:</span>
+                <span>{receiptType === 'FACTURA' ? 'FACTURA ELECTRÓNICA (01)' : 'BOLETA ELECTRÓNICA (03)'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>FECHA EMISIÓN REF:</span>
+                <span>{formatPeruDateTime(saleData.createdAt, true)}</span>
+              </div>
+              <div className="pt-1 border-t border-slate-200">
+                <span className="font-bold text-slate-700">MOTIVO SUNAT (CAT. 09):</span>
+                <div className="font-bold text-rose-700 mt-0.5">
+                  {creditNote?.reasonDescription || '01 - ANULACIÓN DE LA OPERACIÓN'}
+                </div>
+              </div>
+              {creditNote?.customReason && (
+                <div className="text-[9px] text-slate-600 italic">
+                  Sustento: {creditNote.customReason}
+                </div>
+              )}
+            </div>
+          )}
+
 
           {/* INFORMACIÓN DE LA OPERACIÓN Y CLIENTE */}
           <div className="text-[10.5px] space-y-0.5 border-b border-dashed border-slate-400 pb-2 mb-2">
@@ -397,11 +472,11 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 
           {/* TOTALES Y DESGLOSE FINANCIERO */}
           <div className="border-t border-dashed border-slate-400 pt-2 space-y-1 text-[11px]">
-            {/* Si es fiscal (Boleta o Factura), mostrar desglose formal de Op. Gravada e IGV */}
+            {/* Si es fiscal (Boleta o Factura o Nota de Crédito), mostrar desglose formal de Op. Gravada e IGV */}
             {isFiscal && (
               <div className="space-y-0.5 pb-1 border-b border-dotted border-slate-300 text-[10px] text-slate-700">
                 <div className="flex justify-between">
-                  <span>OP. GRAVADA:</span>
+                  <span>{isCreditNote ? 'OP. GRAVADA DEVUELTA:' : 'OP. GRAVADA:'}</span>
                   <span>{formatCurrency(taxableBase)}</span>
                 </div>
                 <div className="flex justify-between">
@@ -412,8 +487,10 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             )}
 
             <div className="flex justify-between font-extrabold text-sm pt-0.5">
-              <span>TOTAL A PAGAR:</span>
-              <span>{formatCurrency(saleData.totalAmount)}</span>
+              <span>{isCreditNote ? 'TOTAL ANULADO:' : 'TOTAL A PAGAR:'}</span>
+              <span className={isCreditNote ? 'text-rose-600' : ''}>
+                {formatCurrency(isCreditNote && creditNote?.totalAmount ? creditNote.totalAmount : saleData.totalAmount)}
+              </span>
             </div>
 
             <div className="flex justify-between text-slate-700 pt-1 text-[10.5px]">
@@ -474,17 +551,17 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               )}
 
               {/* Código Hash Impreso al pie del QR */}
-              {saleData.hash && (
+              {((isCreditNote && creditNote?.hash) || saleData.hash) && (
                 <div className="text-[9px] font-mono text-slate-600 break-all px-1">
                   <span>Hash: </span>
-                  <span className="font-bold">{saleData.hash}</span>
+                  <span className="font-bold">{(isCreditNote && creditNote?.hash) || saleData.hash}</span>
                 </div>
               )}
 
               {/* Leyenda Legal Oficial */}
               <div className="text-[9px] text-slate-500 space-y-0.5 pt-1">
                 <p className="font-bold">
-                  Representación impresa del comprobante de pago electrónico
+                  Representación impresa de la {isCreditNote ? 'NOTA DE CRÉDITO ELECTRÓNICA' : 'comprobante de pago electrónico'}
                 </p>
                 <p>Autorizado mediante resolución de SUNAT</p>
                 <p>Consulte su comprobante en www.sunat.gob.pe</p>

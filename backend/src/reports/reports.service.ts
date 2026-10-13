@@ -432,10 +432,12 @@ export class ReportsService {
     let digitalPaidTotal = 0;
 
     // Métricas por tipo de comprobante
-    const receiptTypeSummary = {
+    const receiptTypeSummary: Record<string, { count: number; total: number; profit: number }> = {
       NOTA_VENTA: { count: 0, total: 0, profit: 0 },
       BOLETA: { count: 0, total: 0, profit: 0 },
       FACTURA: { count: 0, total: 0, profit: 0 },
+      NOTA_CREDITO_BOLETA: { count: 0, total: 0, profit: 0 },
+      NOTA_CREDITO_FACTURA: { count: 0, total: 0, profit: 0 },
     };
 
     // Métodos de pago

@@ -6,6 +6,7 @@ import {
   BillingIssueResult,
   IBillingDriver,
   IssueReceiptInput,
+  IssueCreditNoteInput,
 } from './billing.types.js';
 
 @Injectable()
@@ -51,4 +52,19 @@ export class BillingService {
       return await this.mockDriver.issueReceipt(input);
     }
   }
+
+  /**
+   * Canaliza la emisión fiscal de Nota de Crédito Electrónica a través del driver desacoplado
+   */
+  async issueCreditNote(input: IssueCreditNoteInput): Promise<BillingIssueResult> {
+    try {
+      return await this.activeDriver.issueCreditNote(input);
+    } catch (err: any) {
+      this.logger.error(
+        `Error al emitir Nota de Crédito con driver ${this.activeDriver.driverName}: ${err.message}. Intentando fallback a MOCK...`,
+      );
+      return await this.mockDriver.issueCreditNote(input);
+    }
+  }
 }
+

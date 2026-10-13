@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { IBillingDriver, IssueReceiptInput, BillingIssueResult } from '../billing.types.js';
+import {
+  IBillingDriver,
+  IssueReceiptInput,
+  IssueCreditNoteInput,
+  BillingIssueResult,
+} from '../billing.types.js';
 
 @Injectable()
 export class NubefactBillingDriver implements IBillingDriver {
@@ -127,4 +132,141 @@ export class NubefactBillingDriver implements IBillingDriver {
       rawResponse: data,
     };
   }
+
+  async issueCreditNote(input: IssueCreditNoteInput): Promise<BillingIssueResult> {
+    const apiUrl = process.env.NUBEFACT_URL;
+    const apiToken = process.env.NUBEFACT_TOKEN;
+
+    if (!apiUrl || !apiToken) {
+      this.logger.warn(
+        'Credenciales de Nubefact (NUBEFACT_URL / NUBEFACT_TOKEN) no encontradas en .env. Se usará simulación.',
+      );
+      throw new Error(
+        'El driver NUBEFACT requiere configurar NUBEFACT_URL y NUBEFACT_TOKEN en las variables de entorno.',
+      );
+    }
+
+    const {
+      creditNoteSeries,
+      creditNoteCorrelative,
+      modifiedDocTypeCode,
+      modifiedSeries,
+      modifiedCorrelative,
+      reasonCode,
+      reasonDescription,
+      totalAmount,
+      taxableBase,
+      igvAmount,
+      customerName,
+      customerDocument,
+      customerAddress,
+      items,
+      createdAt = new Date(),
+    } = input;
+
+    // Catálogo Nubefact: 3 = Nota de Crédito
+    const tipoDeComprobante = 3;
+
+    let clienteTipoDoc = '-';
+    const cleanDoc = (customerDocument || '').trim();
+    if (cleanDoc.length === 11) {
+      clienteTipoDoc = '6';
+    } else if (cleanDoc.length === 8) {
+      clienteTipoDoc = '1';
+    }
+
+    // Formatear fecha a DD-MM-YYYY
+    const d = createdAt.getDate().toString().padStart(2, '0');
+    const m = (createdAt.getMonth() + 1).toString().padStart(2, '0');
+    const y = createdAt.getFullYear();
+    const fechaEmision = `${d}-${m}-${y}`;
+
+    // Nubefact: documento_que_se_modifica_tipo: 1 = Factura, 2 = Boleta
+    const docModificaTipo = modifiedDocTypeCode === '01' ? 1 : 2;
+    const tipoNotaCreditoNum = parseInt(reasonCode, 10) || 1;
+
+    const payload = {
+      operacion: 'generar_comprobante',
+      tipo_de_comprobante: tipoDeComprobante,
+      serie: creditNoteSeries,
+      numero: creditNoteCorrelative,
+      sunat_transaction: 1,
+      cliente_tipo_de_documento: clienteTipoDoc,
+      cliente_numero_de_documento: cleanDoc || '-',
+      cliente_denominacion: customerName || 'CLIENTES VARIOS',
+      cliente_direccion: customerAddress || '-',
+      cliente_email: '',
+      fecha_de_emision: fechaEmision,
+      moneda: 1, // Soles
+      porcentaje_de_igv: 18.0,
+      total_gravada: Number(taxableBase.toFixed(2)),
+      total_igv: Number(igvAmount.toFixed(2)),
+      total: Number(totalAmount.toFixed(2)),
+      documento_que_se_modifica_tipo: docModificaTipo,
+      documento_que_se_modifica_serie: modifiedSeries,
+      documento_que_se_modifica_numero: modifiedCorrelative,
+      tipo_de_nota_de_credito: tipoNotaCreditoNum,
+      motivo: reasonDescription || 'ANULACION DE LA OPERACION',
+      detraccion: false,
+      items: items.map((item: any) => {
+        const itemSubtotal = Number(item.subtotal.toFixed(2));
+        const itemValorUnitario = Number((itemSubtotal / 1.18 / item.quantity).toFixed(4));
+        const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
+        const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
+
+        return {
+          unidad_de_medida: 'NIU',
+          codigo: '',
+          descripcion: item.name,
+          cantidad: item.quantity,
+          valor_unitario: itemValorUnitario,
+          precio_unitario: Number(item.unitPrice.toFixed(2)),
+          subtotal: itemValorTotal,
+          tipo_de_igv: 1,
+          igv: itemIgv,
+          total: itemSubtotal,
+          anticipo_regularizacion: false,
+        };
+      }),
+    };
+
+    this.logger.log(
+      `Enviando Nota de Crédito a Nubefact (${apiUrl}): ${creditNoteSeries}-${creditNoteCorrelative} (Modifica ${modifiedSeries}-${modifiedCorrelative})`,
+    );
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data: any = await response.json();
+
+    if (!response.ok || data.errors) {
+      const errorMsg = data.errors || data.message || 'Error en respuesta de Nubefact';
+      this.logger.error(`Error de emisión en Nubefact para Nota de Crédito: ${errorMsg}`);
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'REJECTED',
+        message: `Rechazado por PSE Nubefact: ${errorMsg}`,
+        rawResponse: data,
+      };
+    }
+
+    return {
+      success: true,
+      hash: data.codigo_hash || data.hash || '',
+      qrString: data.cadena_para_codigo_qr || '',
+      emissionStatus: 'ACCEPTED',
+      message: 'Nota de Crédito aceptada por SUNAT a través de Nubefact',
+      externalId: data.enlace || `${creditNoteSeries}-${creditNoteCorrelative}`,
+      rawResponse: data,
+    };
+  }
 }
+

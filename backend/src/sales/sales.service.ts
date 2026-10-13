@@ -49,6 +49,10 @@ export class SalesService {
       return `B${boxNum.padStart(3, '0')}`;
     } else if (receiptType === ReceiptType.FACTURA) {
       return `F${boxNum.padStart(3, '0')}`;
+    } else if (receiptType === ReceiptType.NOTA_CREDITO_BOLETA) {
+      return `BC${boxNum}`;
+    } else if (receiptType === ReceiptType.NOTA_CREDITO_FACTURA) {
+      return `FC${boxNum}`;
     }
     return `NV${boxNum}`;
   }
@@ -222,7 +226,7 @@ export class SalesService {
 
           const storeConfig = await tx.storeConfig.findFirst();
           const billingRes = await this.billingService.issueReceipt({
-            receiptType,
+            receiptType: receiptType as 'BOLETA' | 'FACTURA',
             series,
             correlativeNumber,
             totalAmount: totalCalculated,
@@ -355,7 +359,9 @@ export class SalesService {
   }
 
   /**
-   * Anulación de venta protegida con PIN de Administrador
+   * Anulación de venta protegida con PIN de Administrador.
+   * Si es Boleta o Factura electrónica, emite automáticamente la Nota de Crédito Oficial SUNAT
+   * y revierte el stock atómicamente a Kardex.
    */
   async voidSale(saleId: string, dto: VoidSaleDto) {
     // 1. Validar PIN del administrador
@@ -375,6 +381,7 @@ export class SalesService {
       where: { id: saleId },
       include: {
         items: { include: { product: true } },
+        cashShift: { include: { cashRegister: true } },
       },
     });
 
@@ -386,58 +393,189 @@ export class SalesService {
       throw new BadRequestException('Esta venta ya se encuentra anulada previamente');
     }
 
-    // 2. Reingresar stock a Kardex y anular venta atómicamente
-    return this.prisma.$transaction(async (tx) => {
-      for (const item of sale.items) {
-        const prod = await tx.product.findUnique({ where: { id: item.productId } });
-        if (!prod) continue;
+    const isFiscal =
+      sale.receiptType === ReceiptType.BOLETA || sale.receiptType === ReceiptType.FACTURA;
 
-        const currentStockNum = Number(prod.currentStock);
-        const qtyToReturn = Number(item.quantity);
-        const newStock = currentStockNum + qtyToReturn;
+    // 2. Reingresar stock a Kardex, emitir Nota de Crédito si aplica y anular venta atómicamente
+    return this.prisma.$transaction(
+      async (tx) => {
+        let creditNoteResult: any = null;
 
-        // Devolver stock
-        await tx.product.update({
-          where: { id: prod.id },
+        // Si es Boleta o Factura, generar Nota de Crédito Electrónica según normativa SUNAT
+        if (isFiscal) {
+          const ncReceiptType =
+            sale.receiptType === ReceiptType.BOLETA
+              ? ReceiptType.NOTA_CREDITO_BOLETA
+              : ReceiptType.NOTA_CREDITO_FACTURA;
+
+          const registerIdentifier = sale.cashShift.cashRegister.identifier;
+          const registerName = sale.cashShift.cashRegister.name;
+          const ncSeries = this.getSeriesForRegister(
+            registerIdentifier,
+            registerName,
+            ncReceiptType,
+          );
+
+          const sequence = await tx.receiptSequence.upsert({
+            where: { series: ncSeries },
+            create: {
+              cashRegisterId: sale.cashShift.cashRegisterId,
+              receiptType: ncReceiptType,
+              series: ncSeries,
+              currentNumber: 1,
+            },
+            update: {
+              currentNumber: { increment: 1 },
+            },
+          });
+
+          const ncCorrelative = sequence.currentNumber;
+          const ncFullNumber = `${ncSeries}-${String(ncCorrelative).padStart(8, '0')}`;
+          const reasonCode = dto.reasonCode || '01';
+          const reasonDescription =
+            dto.reasonDescription ||
+            (reasonCode === '01'
+              ? 'ANULACIÓN DE LA OPERACIÓN'
+              : reasonCode === '02'
+                ? 'ANULACIÓN POR ERROR EN EL RUC'
+                : reasonCode === '06'
+                  ? 'DEVOLUCIÓN TOTAL'
+                  : dto.reason);
+
+          const storeConfig = await tx.storeConfig.findFirst();
+
+          const billingRes = await this.billingService.issueCreditNote({
+            saleId: sale.id,
+            receiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
+            creditNoteSeries: ncSeries,
+            creditNoteCorrelative: ncCorrelative,
+            modifiedReceiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
+            modifiedDocTypeCode: sale.receiptType === ReceiptType.FACTURA ? '01' : '03',
+            modifiedSeries: sale.series,
+            modifiedCorrelative: sale.correlativeNumber,
+            modifiedFullNumber:
+              sale.fullReceiptNumber ||
+              `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`,
+            reasonCode,
+            reasonDescription,
+            customReason: dto.reason,
+            totalAmount: Number(sale.totalAmount),
+            taxableBase: Number(sale.taxableBase),
+            igvAmount: Number(sale.igvAmount),
+            customerName:
+              sale.customerName ||
+              (sale.receiptType === ReceiptType.FACTURA ? 'EMPRESA' : 'CLIENTES VARIOS'),
+            customerDocument: sale.customerDocument,
+            customerAddress: sale.customerAddress,
+            companyRuc: storeConfig?.ruc || '10458923011',
+            items: sale.items.map((i) => ({
+              name: i.product.name,
+              quantity: Number(i.quantity),
+              unitPrice: Number(i.unitPrice),
+              subtotal: Number(i.subtotal),
+            })),
+            createdAt: new Date(),
+          });
+
+          const createdCreditNote = await tx.creditNote.create({
+            data: {
+              series: ncSeries,
+              correlativeNumber: ncCorrelative,
+              fullNumber: ncFullNumber,
+              saleId: sale.id,
+              reasonCode,
+              reasonDescription,
+              customReason: dto.reason,
+              taxableBase: sale.taxableBase,
+              igvAmount: sale.igvAmount,
+              totalAmount: sale.totalAmount,
+              hash: billingRes.hash,
+              qrString: billingRes.qrString,
+              emissionStatus: billingRes.emissionStatus as EmissionStatus,
+              externalId: billingRes.externalId,
+              adminId: admin.id,
+              cashShiftId: sale.cashShiftId,
+            },
+          });
+
+          creditNoteResult = {
+            id: createdCreditNote.id,
+            series: createdCreditNote.series,
+            correlativeNumber: createdCreditNote.correlativeNumber,
+            fullNumber: createdCreditNote.fullNumber,
+            reasonCode: createdCreditNote.reasonCode,
+            reasonDescription: createdCreditNote.reasonDescription,
+            customReason: createdCreditNote.customReason,
+            taxableBase: Number(createdCreditNote.taxableBase),
+            igvAmount: Number(createdCreditNote.igvAmount),
+            totalAmount: Number(createdCreditNote.totalAmount),
+            hash: createdCreditNote.hash,
+            qrString: createdCreditNote.qrString,
+            emissionStatus: createdCreditNote.emissionStatus,
+            createdAt: createdCreditNote.createdAt,
+          };
+        }
+
+        // Reingresar stock a Kardex
+        for (const item of sale.items) {
+          const prod = await tx.product.findUnique({ where: { id: item.productId } });
+          if (!prod) continue;
+
+          const currentStockNum = Number(prod.currentStock);
+          const qtyToReturn = Number(item.quantity);
+          const newStock = currentStockNum + qtyToReturn;
+
+          // Devolver stock
+          await tx.product.update({
+            where: { id: prod.id },
+            data: {
+              currentStock: new Prisma.Decimal(newStock),
+            },
+          });
+
+          // Registrar devolución en Kardex
+          const reasonText = creditNoteResult
+            ? `Nota de Crédito ${creditNoteResult.fullNumber} [Anula ${sale.fullReceiptNumber || sale.saleNumber}] - Motivo: ${dto.reason}`
+            : `Anulación de venta #${sale.saleNumber} - Motivo: ${dto.reason}`;
+
+          await tx.kardexMovement.create({
+            data: {
+              productId: prod.id,
+              movementType: MovementType.RETURN_SALE,
+              quantity: new Prisma.Decimal(qtyToReturn),
+              previousStock: prod.currentStock,
+              newStock: new Prisma.Decimal(newStock),
+              unitCost: prod.costPrice,
+              referenceId: sale.id,
+              reason: reasonText,
+              userId: admin.id,
+            },
+          });
+        }
+
+        // Marcar venta como anulada
+        const voided = await tx.sale.update({
+          where: { id: sale.id },
           data: {
-            currentStock: new Prisma.Decimal(newStock),
+            isVoided: true,
+            voidedAt: new Date(),
+            voidedReason: dto.reason,
+            voidedByAdminId: admin.id,
           },
         });
 
-        // Registrar devolución en Kardex
-        await tx.kardexMovement.create({
-          data: {
-            productId: prod.id,
-            movementType: MovementType.RETURN_SALE,
-            quantity: new Prisma.Decimal(qtyToReturn),
-            previousStock: prod.currentStock,
-            newStock: new Prisma.Decimal(newStock),
-            unitCost: prod.costPrice,
-            referenceId: sale.id,
-            reason: `Anulación de venta #${sale.saleNumber} - Motivo: ${dto.reason}`,
-            userId: admin.id,
-          },
-        });
-      }
-
-      // Marcar venta como anulada
-      const voided = await tx.sale.update({
-        where: { id: sale.id },
-        data: {
-          isVoided: true,
-          voidedAt: new Date(),
-          voidedReason: dto.reason,
-          voidedByAdminId: admin.id,
-        },
-      });
-
-      return {
-        message: 'Venta anulada correctamente. Stock devuelto a inventario.',
-        saleId: voided.id,
-        saleNumber: voided.saleNumber,
-        authorizedBy: admin.name,
-      };
-    });
+        return {
+          message: creditNoteResult
+            ? `Nota de Crédito ${creditNoteResult.fullNumber} emitida con éxito. Venta anulada y stock devuelto a inventario.`
+            : 'Venta anulada correctamente. Stock devuelto a inventario.',
+          saleId: voided.id,
+          saleNumber: voided.saleNumber,
+          authorizedBy: admin.name,
+          creditNote: creditNoteResult,
+        };
+      },
+      { timeout: 15000 },
+    );
   }
 
   /**
@@ -454,6 +592,7 @@ export class SalesService {
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: {
+        creditNote: true,
         items: {
           include: {
             product: {
@@ -494,6 +633,24 @@ export class SalesService {
         voidedReason: s.voidedReason,
         user: s.user,
         cashRegister: s.cashShift.cashRegister.name,
+        creditNote: s.creditNote
+          ? {
+              id: s.creditNote.id,
+              series: s.creditNote.series,
+              correlativeNumber: s.creditNote.correlativeNumber,
+              fullNumber: s.creditNote.fullNumber,
+              reasonCode: s.creditNote.reasonCode,
+              reasonDescription: s.creditNote.reasonDescription,
+              customReason: s.creditNote.customReason,
+              taxableBase: Number(s.creditNote.taxableBase),
+              igvAmount: Number(s.creditNote.igvAmount),
+              totalAmount: Number(s.creditNote.totalAmount),
+              hash: s.creditNote.hash,
+              qrString: s.creditNote.qrString,
+              emissionStatus: s.creditNote.emissionStatus,
+              createdAt: s.creditNote.createdAt,
+            }
+          : null,
         items: s.items.map((i) => ({
           id: i.id,
           productName: i.product.name,
@@ -953,7 +1110,7 @@ export class SalesService {
             if (isFiscal) {
               const storeConfig = await tx.storeConfig.findFirst();
               const billingRes = await this.billingService.issueReceipt({
-                receiptType,
+                receiptType: receiptType as 'BOLETA' | 'FACTURA',
                 series,
                 correlativeNumber,
                 totalAmount: totalCalculated,

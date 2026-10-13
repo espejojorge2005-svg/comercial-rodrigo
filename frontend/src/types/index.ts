@@ -15,7 +15,12 @@ export type MovementType =
 
 export type CashMovementType = 'INCOME' | 'EXPENSE';
 
-export type ReceiptType = 'NOTA_VENTA' | 'BOLETA' | 'FACTURA';
+export type ReceiptType =
+  | 'NOTA_VENTA'
+  | 'BOLETA'
+  | 'FACTURA'
+  | 'NOTA_CREDITO_BOLETA'
+  | 'NOTA_CREDITO_FACTURA';
 
 export type EmissionStatus = 'SIMULATED' | 'ACCEPTED' | 'PENDING' | 'REJECTED';
 
@@ -141,6 +146,23 @@ export interface StoreConfig {
   updatedAt?: string;
 }
 
+export interface CreditNote {
+  id: string;
+  series: string;
+  correlativeNumber: number;
+  fullNumber: string;
+  reasonCode: string;
+  reasonDescription: string;
+  customReason?: string | null;
+  taxableBase: number;
+  igvAmount: number;
+  totalAmount: number;
+  hash?: string | null;
+  qrString?: string | null;
+  emissionStatus?: EmissionStatus | null;
+  createdAt: string;
+}
+
 export interface SaleDetail {
   id: string;
   productId: string;
@@ -181,6 +203,7 @@ export interface Sale {
   changeAmount: number;
   isVoided: boolean;
   voidedReason?: string | null;
+  creditNote?: CreditNote | null;
   user?: {
     id: string;
     name: string;

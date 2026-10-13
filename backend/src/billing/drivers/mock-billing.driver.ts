@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
-import { IBillingDriver, IssueReceiptInput, BillingIssueResult } from '../billing.types.js';
+import {
+  IBillingDriver,
+  IssueReceiptInput,
+  IssueCreditNoteInput,
+  BillingIssueResult,
+} from '../billing.types.js';
 
 @Injectable()
 export class MockBillingDriver implements IBillingDriver {
@@ -80,4 +85,76 @@ export class MockBillingDriver implements IBillingDriver {
       },
     };
   }
+
+  async issueCreditNote(input: IssueCreditNoteInput): Promise<BillingIssueResult> {
+    const {
+      creditNoteSeries,
+      creditNoteCorrelative,
+      modifiedFullNumber,
+      reasonCode,
+      reasonDescription,
+      totalAmount,
+      igvAmount,
+      customerDocument,
+      companyRuc = '10458923011',
+      createdAt = new Date(),
+    } = input;
+
+    // Catálogo SUNAT #01: 07 = Nota de Crédito Electrónica
+    const docTypeCode = '07';
+
+    let customerDocType = '-';
+    const cleanDoc = (customerDocument || '').trim();
+    if (cleanDoc.length === 11) {
+      customerDocType = '6';
+    } else if (cleanDoc.length === 8) {
+      customerDocType = '1';
+    }
+
+    const customerDocNum = cleanDoc || '-';
+    const dateFormatted = createdAt.toISOString().split('T')[0];
+    const paddedCorrelative = String(creditNoteCorrelative).padStart(8, '0');
+    const igvFormatted = Number(igvAmount).toFixed(2);
+    const totalFormatted = Number(totalAmount).toFixed(2);
+
+    // 1. Generar Hash Oficial Simulado para Nota de Crédito Electrónica
+    const rawContentToSign = `${companyRuc}|${docTypeCode}|${creditNoteSeries}|${paddedCorrelative}|${totalFormatted}|${dateFormatted}|NC|${Date.now()}`;
+    const hash = crypto
+      .createHash('sha256')
+      .update(rawContentToSign)
+      .digest('base64')
+      .substring(0, 28);
+
+    // 2. Construir cadena oficial de código QR SUNAT para Nota de Crédito (Tipo 07)
+    // RUC | 07 | SERIE | NUMERO | IGV | TOTAL | FECHA | TIPO_DOC_CLIENTE | NUM_DOC_CLIENTE | HASH
+    const qrString = `${companyRuc}|${docTypeCode}|${creditNoteSeries}|${paddedCorrelative}|${igvFormatted}|${totalFormatted}|${dateFormatted}|${customerDocType}|${customerDocNum}|${hash}|`;
+
+    this.logger.log(
+      `[MOCK PSE] Nota de Crédito simulada emitida: ${creditNoteSeries}-${paddedCorrelative} que modifica ${modifiedFullNumber} (Motivo: [${reasonCode}] ${reasonDescription}) (Hash: ${hash})`,
+    );
+
+    return {
+      success: true,
+      hash,
+      qrString,
+      emissionStatus: 'SIMULATED',
+      message: `Nota de Crédito ${creditNoteSeries}-${paddedCorrelative} generada exitosamente en modo simulación fiscal (Modifica ${modifiedFullNumber})`,
+      externalId: `SIM-NC-${Date.now()}-${creditNoteSeries}-${paddedCorrelative}`,
+      rawResponse: {
+        driver: 'MOCK',
+        tipo_comprobante: docTypeCode,
+        serie: creditNoteSeries,
+        numero: creditNoteCorrelative,
+        documento_que_se_modifica: modifiedFullNumber,
+        motivo_codigo: reasonCode,
+        motivo_descripcion: reasonDescription,
+        sunat_status: 'ACEPTADO_SIMULADO',
+        digest_value: hash,
+        enlace_del_pdf: null,
+        enlace_del_xml: null,
+        enlace_del_cdr: null,
+      },
+    };
+  }
 }
+

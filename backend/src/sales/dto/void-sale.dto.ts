@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, Length } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Length } from 'class-validator';
 
 export class VoidSaleDto {
   @IsString({ message: 'El PIN de administrador debe ser una cadena' })
@@ -9,4 +9,13 @@ export class VoidSaleDto {
   @IsString({ message: 'El motivo de anulación es obligatorio' })
   @IsNotEmpty({ message: 'Debe justificar el motivo de la anulación' })
   reason: string;
+
+  @IsOptional()
+  @IsString()
+  reasonCode?: string; // Catálogo 09 SUNAT (ej: "01", "02", "06")
+
+  @IsOptional()
+  @IsString()
+  reasonDescription?: string;
 }
+
