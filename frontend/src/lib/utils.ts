@@ -7,12 +7,22 @@ export function cn(...inputs: ClassValue[]) {
 
 export function formatCurrency(amount: number | string): string {
   const num = typeof amount === 'string' ? parseFloat(amount) : amount;
-  return new Intl.NumberFormat('es-PE', {
+  const val = isNaN(num) ? 0 : num;
+  const isNegative = val < 0;
+  const absVal = Math.abs(val);
+
+  const formattedAbs = new Intl.NumberFormat('es-PE', {
     style: 'currency',
     currency: 'PEN',
     minimumFractionDigits: 2,
-  }).format(isNaN(num) ? 0 : num);
+    maximumFractionDigits: 2,
+  })
+    .format(absVal)
+    .replace(/\s+/g, '\u00A0');
+
+  return isNegative ? `-${formattedAbs}` : formattedAbs;
 }
+
 
 /**
  * Zona horaria oficial de Perú (GMT-5 / America/Lima)
