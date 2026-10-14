@@ -21,11 +21,13 @@ import {
   Calendar,
   Clock,
   ArrowUpDown,
+  Upload,
 } from 'lucide-react';
 import type { Product, Category, UnitType } from '../../types/index.js';
 import { SUNAT_UNITS, getUnitBadge, getUnitShortName } from '../../lib/units.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { exportKardexAndInventoryExcel } from '../../lib/excelExport.js';
+import { ImportExcelModal } from './ImportExcelModal.js';
 
 export const InventoryView: React.FC = () => {
   const { config } = useConfigStore();
@@ -61,6 +63,7 @@ export const InventoryView: React.FC = () => {
 
   // Modales
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
+  const [isImportExcelModalOpen, setIsImportExcelModalOpen] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
 
@@ -221,6 +224,18 @@ export const InventoryView: React.FC = () => {
               Kardex de Movimientos
             </button>
           </div>
+
+          {/* Botón Importar Excel */}
+          {activeTab === 'catalog' && (
+            <button
+              onClick={() => setIsImportExcelModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              title="Cargar productos en masa desde Excel (.xlsx, .csv)"
+            >
+              <Upload className="w-4 h-4 text-emerald-400" />
+              <span>Importar Excel</span>
+            </button>
+          )}
 
           {/* Botón Exportar a Excel */}
           <button
@@ -804,6 +819,18 @@ export const InventoryView: React.FC = () => {
           onSuccess={() => {
             setIsCreateModalOpen(false);
             fetchProducts();
+          }}
+        />
+      )}
+
+      {/* MODAL IMPORTAR EXCEL */}
+      {isImportExcelModalOpen && (
+        <ImportExcelModal
+          isOpen={isImportExcelModalOpen}
+          onClose={() => setIsImportExcelModalOpen(false)}
+          onSuccess={() => {
+            fetchProducts();
+            fetchCategories();
           }}
         />
       )}

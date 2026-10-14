@@ -13,6 +13,7 @@ import { Role } from '@prisma/client';
 import { ProductsService } from './products.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
+import { BulkImportProductsDto } from './dto/bulk-import-product.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/guards/roles.guard.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
@@ -53,6 +54,16 @@ export class ProductsController {
       endDate,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  @Post('bulk-import')
+  async bulkImport(
+    @CurrentUser('id') userId: string,
+    @Body() dto: BulkImportProductsDto,
+  ) {
+    return this.productsService.bulkImportProducts(dto, userId);
   }
 
   @Get(':id')

@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { Role, Prisma, MovementType } from '@prisma/client';
+import { Role, Prisma, MovementType, UnitType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
+import { BulkImportProductsDto } from './dto/bulk-import-product.dto.js';
 
 @Injectable()
 export class ProductsService {
@@ -220,6 +221,225 @@ export class ProductsService {
       }
 
       return product;
+    });
+  }
+
+  /**
+   * Importación Masiva de Productos desde Excel (Solo ADMIN)
+   * - Autogenera código/barcode único si está vacío (ej. CR-000001)
+   * - Autocrea o asocia categorías
+   * - Registra inventario inicial en Kardex
+   * - Soporta actualización de stock/precios si el producto ya existe
+   */
+  async bulkImportProducts(dto: BulkImportProductsDto, userId: string) {
+    if (!dto.products || dto.products.length === 0) {
+      throw new BadRequestException('El archivo no contiene productos para importar');
+    }
+
+    // 1. Obtener categorías existentes y crear mapa
+    const existingCategories = await this.prisma.category.findMany();
+    const categoryMap = new Map<string, string>();
+    for (const c of existingCategories) {
+      categoryMap.set(c.name.trim().toLowerCase(), c.id);
+    }
+
+    let defaultCategoryId = categoryMap.get('general') || categoryMap.get('abarrotes');
+    if (!defaultCategoryId) {
+      if (existingCategories.length > 0) {
+        defaultCategoryId = existingCategories[0].id;
+      } else {
+        const def = await this.prisma.category.create({
+          data: { name: 'General', description: 'Categoría general' },
+        });
+        defaultCategoryId = def.id;
+        categoryMap.set('general', def.id);
+      }
+    }
+
+    // 2. Obtener códigos de barras existentes y calcular siguiente secuencia CR-
+    const existingProducts = await this.prisma.product.findMany({
+      select: { id: true, barcode: true, name: true, currentStock: true, costPrice: true },
+    });
+
+    const usedBarcodes = new Set<string>();
+    const existingBarcodeMap = new Map<string, (typeof existingProducts)[0]>();
+    const existingNameMap = new Map<string, (typeof existingProducts)[0]>();
+
+    let nextBarcodeSeq = 1;
+
+    for (const p of existingProducts) {
+      if (p.barcode) {
+        const cleanB = p.barcode.trim();
+        usedBarcodes.add(cleanB.toLowerCase());
+        existingBarcodeMap.set(cleanB.toLowerCase(), p);
+        const match = cleanB.match(/^CR-(\d+)$/i);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num >= nextBarcodeSeq) nextBarcodeSeq = num + 1;
+        }
+      }
+      existingNameMap.set(p.name.trim().toLowerCase(), p);
+    }
+
+    // 3. Procesar en transacción para consistencia
+    return this.prisma.$transaction(async (tx) => {
+      let createdCount = 0;
+      let updatedCount = 0;
+      const importedProducts: any[] = [];
+
+      for (const item of dto.products) {
+        const trimmedName = item.name ? item.name.trim() : '';
+        if (!trimmedName) continue;
+
+        // Categoría
+        let categoryId = defaultCategoryId;
+        if (item.categoryName && item.categoryName.trim()) {
+          const catKey = item.categoryName.trim().toLowerCase();
+          if (categoryMap.has(catKey)) {
+            categoryId = categoryMap.get(catKey)!;
+          } else {
+            // Crear categoría al vuelo
+            const newCat = await tx.category.create({
+              data: {
+                name: item.categoryName.trim(),
+                description: 'Categoría creada automáticamente desde importación Excel',
+              },
+            });
+            categoryId = newCat.id;
+            categoryMap.set(catKey, newCat.id);
+          }
+        }
+
+        // Código de barras
+        let finalBarcode: string | null = null;
+        if (item.barcode && item.barcode.trim() !== '') {
+          finalBarcode = item.barcode.trim();
+        } else {
+          // Autogenerar código único CR-XXXXXX
+          let candidate = '';
+          do {
+            candidate = `CR-${String(nextBarcodeSeq++).padStart(6, '0')}`;
+          } while (usedBarcodes.has(candidate.toLowerCase()));
+          finalBarcode = candidate;
+        }
+
+        // Tipo de unidad (por defecto NIU)
+        const unitType = item.unitType || UnitType.NIU;
+        const costPrice = new Prisma.Decimal(item.costPrice >= 0 ? item.costPrice : 0);
+        const retailPrice = new Prisma.Decimal(item.retailPrice > 0 ? item.retailPrice : 1);
+        const wholesalePrice =
+          item.wholesalePrice !== undefined && item.wholesalePrice !== null && item.wholesalePrice >= 0
+            ? new Prisma.Decimal(item.wholesalePrice)
+            : null;
+        const wholesaleMinQty =
+          item.wholesaleMinQty !== undefined && item.wholesaleMinQty !== null && item.wholesaleMinQty >= 1
+            ? new Prisma.Decimal(item.wholesaleMinQty)
+            : new Prisma.Decimal(3);
+        const initialStock = new Prisma.Decimal(item.currentStock >= 0 ? item.currentStock : 0);
+        const minStock = new Prisma.Decimal(item.minStock >= 0 ? item.minStock : 5);
+        const expirationDate = item.expirationDate ? new Date(item.expirationDate) : null;
+
+        // Verificar si ya existe por barcode o por nombre
+        const existingByBarcode = finalBarcode ? existingBarcodeMap.get(finalBarcode.toLowerCase()) : null;
+        const existingByName = existingNameMap.get(trimmedName.toLowerCase());
+        const existingTarget = existingByBarcode || (item.barcode ? null : existingByName);
+
+        if (existingTarget) {
+          // Actualizar producto existente
+          const updated = await tx.product.update({
+            where: { id: existingTarget.id },
+            data: {
+              name: trimmedName,
+              costPrice,
+              retailPrice,
+              wholesalePrice,
+              wholesaleMinQty,
+              minStock,
+              unitType,
+              categoryId,
+              isActive: true,
+              ...(expirationDate ? { expirationDate } : {}),
+            },
+          });
+
+          // Si el Excel define stock y difiere del actual, generar ajuste en Kardex
+          const currentStockNum = Number(existingTarget.currentStock);
+          const newStockNum = Number(initialStock);
+          if (newStockNum !== currentStockNum) {
+            await tx.product.update({
+              where: { id: existingTarget.id },
+              data: { currentStock: initialStock },
+            });
+
+            const diff = newStockNum - currentStockNum;
+            await tx.kardexMovement.create({
+              data: {
+                productId: updated.id,
+                movementType: diff > 0 ? MovementType.ADJUSTMENT_IN : MovementType.ADJUSTMENT_OUT,
+                quantity: new Prisma.Decimal(Math.abs(diff)),
+                previousStock: new Prisma.Decimal(currentStockNum),
+                newStock: initialStock,
+                unitCost: costPrice,
+                reason: `Ajuste por importación masiva Excel (${diff > 0 ? '+' : ''}${diff})`,
+                userId,
+              },
+            });
+          }
+
+          updatedCount++;
+          importedProducts.push(updated);
+        } else {
+          // Crear nuevo producto
+          const created = await tx.product.create({
+            data: {
+              barcode: finalBarcode,
+              name: trimmedName,
+              categoryId,
+              unitType,
+              costPrice,
+              retailPrice,
+              wholesalePrice,
+              wholesaleMinQty,
+              currentStock: initialStock,
+              minStock,
+              expirationDate,
+              isActive: true,
+            },
+          });
+
+          // Registrar en Kardex si tiene stock inicial
+          if (Number(initialStock) > 0) {
+            await tx.kardexMovement.create({
+              data: {
+                productId: created.id,
+                movementType: MovementType.PURCHASE,
+                quantity: initialStock,
+                previousStock: new Prisma.Decimal(0),
+                newStock: initialStock,
+                unitCost: costPrice,
+                reason: 'Inventario inicial (Importación masiva Excel)',
+                userId,
+              },
+            });
+          }
+
+          if (finalBarcode) {
+            usedBarcodes.add(finalBarcode.toLowerCase());
+            existingBarcodeMap.set(finalBarcode.toLowerCase(), created);
+          }
+          existingNameMap.set(trimmedName.toLowerCase(), created);
+
+          createdCount++;
+          importedProducts.push(created);
+        }
+      }
+
+      return {
+        message: `Importación completada: ${createdCount} productos nuevos creados, ${updatedCount} productos actualizados.`,
+        createdCount,
+        updatedCount,
+        totalProcessed: createdCount + updatedCount,
+      };
     });
   }
 
