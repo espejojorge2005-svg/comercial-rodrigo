@@ -66,4 +66,78 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       ).rejects.toThrow('Dirección Fiscal de la empresa es estrictamente obligatoria');
     });
   });
+
+  describe('Validación Financiera Estricta del Pago (Cuadre de Caja y Antifraude)', () => {
+    it('debe rechazar venta si (cashPaid + digitalPaid) - changeAmount no coincide con el total', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Arroz 1kg',
+              isActive: true,
+              currentStock: 10,
+              costPrice: 3,
+            }),
+          },
+        };
+        return callback(tx);
+      });
+
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.NOTA_VENTA,
+          paymentMethod: 'CASH',
+          cashPaid: 50, // Faltan 50 soles
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('Inconsistencia financiera en el pago');
+    });
+
+    it('debe rechazar pago MIXTO si el vuelto es mayor al efectivo entregado (intento de cashback fraudulento)', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Arroz 1kg',
+              isActive: true,
+              currentStock: 10,
+              costPrice: 3,
+            }),
+          },
+        };
+        return callback(tx);
+      });
+
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.NOTA_VENTA,
+          paymentMethod: 'MIXED',
+          cashPaid: 10,
+          digitalPaid: 110,
+          changeAmount: 20, // Suma cuadra a 100, pero vuelto 20 > efectivo 10!
+          items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('el vuelto (S/ 20.00) no puede ser mayor al efectivo entregado (S/ 10.00)');
+    });
+  });
 });

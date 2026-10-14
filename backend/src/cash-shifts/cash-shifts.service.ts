@@ -5,6 +5,32 @@ import { OpenShiftDto } from './dto/open-shift.dto.js';
 import { CloseShiftDto } from './dto/close-shift.dto.js';
 import { CashMovementDto } from './dto/cash-movement.dto.js';
 
+/**
+ * Calcula el efectivo neto real que queda en la gaveta física por una venta:
+ * - TRANSFER / CARD: S/ 0.00 (el dinero ingresó a cuenta bancaria o POS digital)
+ * - CASH: cashPaid - changeAmount (igual al total de la venta)
+ * - MIXED: cruza cashPaid - changeAmount con totalAmount - digitalPaid para garantizar
+ *   que si hubo un excedente en el pago digital o se entregó vuelto, solo se considere
+ *   el efectivo neto real que efectivamente queda en caja sin distorsionar el arqueo.
+ */
+export function calculateNetCashFromSale(s: {
+  paymentMethod: string;
+  cashPaid: any;
+  changeAmount: any;
+  digitalPaid?: any;
+  totalAmount: any;
+}): number {
+  if (s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD') {
+    return 0;
+  }
+  if (s.paymentMethod === 'MIXED') {
+    const netCashByPaid = Number(s.cashPaid) - Number(s.changeAmount || 0);
+    const netCashByTotal = Number(s.totalAmount) - Number(s.digitalPaid || 0);
+    return Math.max(0, Number(Math.min(netCashByPaid, netCashByTotal).toFixed(2)));
+  }
+  return Math.max(0, Number((Number(s.cashPaid) - Number(s.changeAmount || 0)).toFixed(2)));
+}
+
 @Injectable()
 export class CashShiftsService {
   constructor(private prisma: PrismaService) {}
@@ -90,14 +116,7 @@ export class CashShiftsService {
     });
 
     const totalSales = sales.reduce((acc, s) => acc + Number(s.totalAmount), 0);
-    const cashSales = sales.reduce(
-      (acc, s) =>
-        acc +
-        (s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD'
-          ? 0
-          : Math.max(0, Number(s.cashPaid) - Number(s.changeAmount || 0))),
-      0,
-    );
+    const cashSales = sales.reduce((acc, s) => acc + calculateNetCashFromSale(s), 0);
     const digitalSales = sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0);
 
     const totalIncomeMovements = shift.cashMovements
@@ -238,14 +257,7 @@ export class CashShiftsService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const cashFromSales = sales.reduce(
-      (acc, s) =>
-        acc +
-        (s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD'
-          ? 0
-          : Math.max(0, Number(s.cashPaid) - Number(s.changeAmount || 0))),
-      0,
-    );
+    const cashFromSales = sales.reduce((acc, s) => acc + calculateNetCashFromSale(s), 0);
     const digitalFromSales = sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0);
     const totalSales = sales.reduce((acc, s) => acc + Number(s.totalAmount), 0);
 
@@ -463,14 +475,7 @@ export class CashShiftsService {
     return shifts.map((s) => {
       const sales = s.sales || [];
       const totalSales = sales.reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
-      const cashFromSales = sales.reduce(
-        (acc, sale) =>
-          acc +
-          (sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
-            ? 0
-            : Math.max(0, Number(sale.cashPaid) - Number(sale.changeAmount || 0))),
-        0,
-      );
+      const cashFromSales = sales.reduce((acc, sale) => acc + calculateNetCashFromSale(sale), 0);
       const digitalFromSales = sales.reduce((acc, sale) => acc + Number(sale.digitalPaid), 0);
 
       const yapePlinSales = sales

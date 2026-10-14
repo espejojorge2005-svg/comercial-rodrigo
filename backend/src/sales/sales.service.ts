@@ -23,6 +23,7 @@ import { BillingService } from '../billing/billing.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
 import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
+import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
 
 @Injectable()
 export class SalesService {
@@ -178,6 +179,53 @@ export class SalesService {
         totalTaxableBase = Number(totalTaxableBase.toFixed(2));
         totalIgv = Number(totalIgv.toFixed(2));
         const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
+
+        // 🛡️ VALIDACIÓN FINANCIERA ESTRICTA (Cuadre de Efectivo, Digital y Vuelto):
+        // Regla obligatoria: (cashPaid + digitalPaid) - changeAmount === totalAmount
+        const cashPaidNum = Number(dto.cashPaid ?? 0);
+        const digitalPaidNum = Number(dto.digitalPaid ?? 0);
+        const changeAmountNum = Number(dto.changeAmount ?? 0);
+        const netPaid = Number(((cashPaidNum + digitalPaidNum) - changeAmountNum).toFixed(2));
+
+        if (Math.abs(netPaid - totalCalculated) > 0.01) {
+          throw new BadRequestException(
+            `Inconsistencia financiera en el pago: El importe pagado neto (S/ ${netPaid.toFixed(2)}) no coincide con el total de la venta (S/ ${totalCalculated.toFixed(2)}). Detalle: Efectivo S/ ${cashPaidNum.toFixed(2)} + Digital S/ ${digitalPaidNum.toFixed(2)} - Vuelto S/ ${changeAmountNum.toFixed(2)}`,
+          );
+        }
+
+        // Reglas de negocio y antifraude por método de pago:
+        if (dto.paymentMethod === 'CASH') {
+          if (digitalPaidNum > 0) {
+            throw new BadRequestException('Para pagos en EFECTIVO puro, el monto digital debe ser S/ 0.00');
+          }
+          if (cashPaidNum < totalCalculated) {
+            throw new BadRequestException(
+              `Efectivo entregado (S/ ${cashPaidNum.toFixed(2)}) es insuficiente para cubrir el total de S/ ${totalCalculated.toFixed(2)}`,
+            );
+          }
+        } else if (dto.paymentMethod === 'TRANSFER' || dto.paymentMethod === 'CARD') {
+          if (cashPaidNum > 0 || changeAmountNum > 0) {
+            throw new BadRequestException(
+              `Para pagos con ${dto.paymentMethod === 'TRANSFER' ? 'TRANSFERENCIA / BILLETERA DIGITAL' : 'TARJETA'}, no se permite registrar efectivo ni vuelto.`,
+            );
+          }
+          if (Math.abs(digitalPaidNum - totalCalculated) > 0.01) {
+            throw new BadRequestException(
+              `El monto digital pagado (S/ ${digitalPaidNum.toFixed(2)}) no coincide con el total de la venta (S/ ${totalCalculated.toFixed(2)})`,
+            );
+          }
+        } else if (dto.paymentMethod === 'MIXED') {
+          if (digitalPaidNum > totalCalculated) {
+            throw new BadRequestException(
+              `En pago MIXTO, el monto digital (S/ ${digitalPaidNum.toFixed(2)}) no puede exceder el total de la venta (S/ ${totalCalculated.toFixed(2)}).`,
+            );
+          }
+          if (changeAmountNum > cashPaidNum) {
+            throw new BadRequestException(
+              `En pago MIXTO, el vuelto (S/ ${changeAmountNum.toFixed(2)}) no puede ser mayor al efectivo entregado (S/ ${cashPaidNum.toFixed(2)}). No se permite entregar vuelto en efectivo sobre cobros digitales.`,
+            );
+          }
+        }
 
         // Validación fiscal para Boletas de Venta: Exigencia de DNI si es >= S/ 700.00
         if (receiptType === ReceiptType.BOLETA && totalCalculated >= 700) {
@@ -1050,10 +1098,7 @@ export class SalesService {
     const salesDetail = sales.map((s) => {
       const saleAmount = Number(s.totalAmount);
       totalSales += saleAmount;
-      const netCashFromSale =
-        s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD'
-          ? 0
-          : Math.max(0, Number(s.cashPaid) - Number(s.changeAmount || 0));
+      const netCashFromSale = calculateNetCashFromSale(s);
       cashPaidTotal += netCashFromSale;
       digitalPaidTotal += Number(s.digitalPaid);
 
@@ -1348,6 +1393,19 @@ export class SalesService {
             totalTaxableBase = Number(totalTaxableBase.toFixed(2));
             totalIgv = Number(totalIgv.toFixed(2));
             const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
+
+            // Validar cuadre financiero estricto también en sincronización offline
+            const offCash = Number(offlineSale.cashPaid ?? 0);
+            const offDigital = Number(offlineSale.digitalPaid ?? 0);
+            const offChange = Number(offlineSale.changeAmount ?? 0);
+            const offNetPaid = Number(((offCash + offDigital) - offChange).toFixed(2));
+
+            if (Math.abs(offNetPaid - totalCalculated) > 0.01) {
+              throw new BadRequestException(
+                `Venta offline [${offlineSale.offlineId}] rechazada por descuadre financiero: Importe neto pagado S/ ${offNetPaid.toFixed(2)} no coincide con total S/ ${totalCalculated.toFixed(2)}`,
+              );
+            }
+
             const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
 
             const receiptType = offlineSale.receiptType || ReceiptType.NOTA_VENTA;
