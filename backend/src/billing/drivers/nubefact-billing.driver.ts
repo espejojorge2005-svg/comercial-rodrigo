@@ -6,6 +6,60 @@ import {
   BillingIssueResult,
 } from '../billing.types.js';
 
+/**
+ * Formatea una fecha a DD-MM-YYYY usando estrictamente la zona horaria de Perú (America/Lima / UTC-5)
+ * evitando que a partir de las 7:00 PM las ventas salgan con fecha del día siguiente.
+ */
+function formatPeruDDMMYYYY(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(date);
+
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const year = parts.find((p) => p.type === 'year')?.value || '2026';
+
+  return `${day}-${month}-${year}`;
+}
+
+/**
+ * Mapea el tipo de unidad interna (Catálogo 03 SUNAT) a la unidad oficial de Nubefact
+ */
+function mapUnitTypeToSunat(unitType?: string): string {
+  if (!unitType) return 'NIU';
+  const u = unitType.trim().toUpperCase();
+  switch (u) {
+    case 'UNIT':
+    case 'NIU':
+      return 'NIU'; // Unidad
+    case 'KG':
+    case 'KGM':
+    case 'KILOGRAMO':
+      return 'KGM'; // Kilogramo
+    case 'LT':
+    case 'LTR':
+    case 'LITRO':
+      return 'LTR'; // Litro
+    case 'MTR':
+    case 'METRO':
+      return 'MTR'; // Metro
+    case 'SA':
+    case 'SACO':
+      return 'SA'; // Saco
+    case 'BX':
+    case 'CAJA':
+      return 'BX'; // Caja
+    case 'PK':
+    case 'PAQUETE':
+      return 'PK'; // Paquete
+    default:
+      return 'NIU';
+  }
+}
+
 @Injectable()
 export class NubefactBillingDriver implements IBillingDriver {
   readonly driverName = 'NUBEFACT';
@@ -50,11 +104,8 @@ export class NubefactBillingDriver implements IBillingDriver {
       clienteTipoDoc = '1';
     }
 
-    // Formatear fecha a DD-MM-YYYY
-    const d = createdAt.getDate().toString().padStart(2, '0');
-    const m = (createdAt.getMonth() + 1).toString().padStart(2, '0');
-    const y = createdAt.getFullYear();
-    const fechaEmision = `${d}-${m}-${y}`;
+    // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
+    const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
     // Estructurar JSON estándar para el API de Nubefact / ApisPerú
     const payload = {
@@ -82,7 +133,7 @@ export class NubefactBillingDriver implements IBillingDriver {
         const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
 
         return {
-          unidad_de_medida: 'NIU',
+          unidad_de_medida: mapUnitTypeToSunat(item.unitType),
           codigo: '',
           descripcion: item.name,
           cantidad: item.quantity,
@@ -177,11 +228,8 @@ export class NubefactBillingDriver implements IBillingDriver {
       clienteTipoDoc = '1';
     }
 
-    // Formatear fecha a DD-MM-YYYY
-    const d = createdAt.getDate().toString().padStart(2, '0');
-    const m = (createdAt.getMonth() + 1).toString().padStart(2, '0');
-    const y = createdAt.getFullYear();
-    const fechaEmision = `${d}-${m}-${y}`;
+    // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
+    const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
     // Nubefact: documento_que_se_modifica_tipo: 1 = Factura, 2 = Boleta
     const docModificaTipo = modifiedDocTypeCode === '01' ? 1 : 2;
@@ -217,7 +265,7 @@ export class NubefactBillingDriver implements IBillingDriver {
         const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
 
         return {
-          unidad_de_medida: 'NIU',
+          unidad_de_medida: mapUnitTypeToSunat(item.unitType),
           codigo: '',
           descripcion: item.name,
           cantidad: item.quantity,

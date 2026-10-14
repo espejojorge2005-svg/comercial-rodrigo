@@ -6,6 +6,7 @@ import {
   BadRequestException,
   NotFoundException,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -25,6 +26,8 @@ import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 
 @Injectable()
 export class SalesService {
+  private readonly logger = new Logger(SalesService.name);
+
   constructor(
     private prisma: PrismaService,
     private billingService: BillingService,
@@ -107,7 +110,7 @@ export class SalesService {
     }
 
     // 2. Ejecutar toda la venta en una transacción ACID atómica
-    return this.prisma.$transaction(
+    const txResult = await this.prisma.$transaction(
       async (tx) => {
         let totalCalculated = 0;
         const detailsToCreate: {
@@ -204,59 +207,28 @@ export class SalesService {
         const correlativeNumber = sequence.currentNumber;
         const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
 
-        // 3. Bifurcación del Flujo de Venta y Motor de Facturación
+        // 3. Bifurcación del Flujo de Venta y Estado Inicial
         let isFiscal = false;
         let taxableBase = 0;
         let igvAmount = 0;
-        let hash: string | null = null;
-        let qrString: string | null = null;
         let emissionStatus: EmissionStatus | null = null;
 
         if (receiptType === ReceiptType.NOTA_VENTA) {
           // VÍA 1: NOTA DE VENTA / TICKET INTERNO (Prioridad Operativa - Despacho Ultrarrápido)
-          // Se omite por completo cualquier llamada a servicios externos o motores de facturación.
           isFiscal = false;
           taxableBase = Number((totalCalculated / 1.18).toFixed(2));
           igvAmount = 0;
-          hash = null;
-          qrString = null;
           emissionStatus = null;
         } else {
           // VÍAS 2 & 3: BOLETA Y FACTURA ELECTRÓNICA (Fiscal)
+          // Se guarda inicialmente en estado PENDING para no retener la transacción de base de datos
           isFiscal = true;
           taxableBase = Number((totalCalculated / 1.18).toFixed(2));
           igvAmount = Number((totalCalculated - taxableBase).toFixed(2));
-
-          const storeConfig = await tx.storeConfig.findFirst();
-          const billingRes = await this.billingService.issueReceipt({
-            receiptType: receiptType as 'BOLETA' | 'FACTURA',
-            series,
-            correlativeNumber,
-            totalAmount: totalCalculated,
-            taxableBase,
-            igvAmount,
-            customerName:
-              dto.customerName ||
-              (receiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : ''),
-            customerDocument: dto.customerDocument,
-            customerAddress: dto.customerAddress,
-            customerEmail: dto.customerEmail?.trim() || null,
-            paymentMethod: dto.paymentMethod,
-            companyRuc: storeConfig?.ruc || '10458923011',
-            items: validatedItems.map((vi) => ({
-              name: vi.product.name,
-              quantity: vi.quantity,
-              unitPrice: vi.unitPrice,
-              subtotal: vi.subtotalItem,
-            })),
-          });
-
-          hash = billingRes.hash;
-          qrString = billingRes.qrString;
-          emissionStatus = billingRes.emissionStatus as EmissionStatus;
+          emissionStatus = EmissionStatus.PENDING;
         }
 
-        // 4. Crear la Venta y sus Detalles de forma atómica
+        // 4. Crear la Venta y sus Detalles de forma atómica en la base de datos local
         const sale = await tx.sale.create({
           data: {
             cashShiftId: shift.id,
@@ -270,8 +242,8 @@ export class SalesService {
             igvAmount: new Prisma.Decimal(igvAmount),
             customerAddress: dto.customerAddress || null,
             customerEmail: dto.customerEmail?.trim() || null,
-            hash,
-            qrString,
+            hash: null,
+            qrString: null,
             emissionStatus,
             customerName:
               dto.customerName ||
@@ -307,16 +279,12 @@ export class SalesService {
           },
         });
 
-        // 5. Descontar stock atómicamente y asentar en Kardex con referencia exacta al comprobante
+        // 5. Descontar stock atómicamente evitando Lost Update por concurrencia
         for (const item of validatedItems) {
-          const currentStockNum = Number(item.product.currentStock);
-          const newStock = Number((currentStockNum - item.quantity).toFixed(3));
-
-          // Descontar existencias físicas
-          await tx.product.update({
+          const updatedProduct = await tx.product.update({
             where: { id: item.product.id },
             data: {
-              currentStock: new Prisma.Decimal(newStock),
+              currentStock: { decrement: new Prisma.Decimal(item.quantity) },
             },
           });
 
@@ -326,8 +294,8 @@ export class SalesService {
               productId: item.product.id,
               movementType: MovementType.SALE,
               quantity: new Prisma.Decimal(item.quantity),
-              previousStock: item.product.currentStock,
-              newStock: new Prisma.Decimal(newStock),
+              previousStock: new Prisma.Decimal(Number(updatedProduct.currentStock) + item.quantity),
+              newStock: updatedProduct.currentStock,
               unitCost: item.product.costPrice,
               referenceId: sale.id,
               reason: `Venta POS [${fullReceiptNumber}] - ${shift.cashRegister.name}`,
@@ -337,30 +305,157 @@ export class SalesService {
         }
 
         return {
-          message: isFiscal
-            ? `Comprobante electrónico (${receiptType}) emitido con éxito: ${fullReceiptNumber}`
-            : `Nota de venta interna registrada con éxito: ${fullReceiptNumber}`,
-          sale: {
-            ...sale,
-            totalAmount: Number(sale.totalAmount),
-            taxableBase: Number(sale.taxableBase),
-            igvAmount: Number(sale.igvAmount),
-            cashPaid: Number(sale.cashPaid),
-            digitalPaid: Number(sale.digitalPaid),
-            changeAmount: Number(sale.changeAmount),
-            items: sale.items.map((i) => ({
-              ...i,
-              quantity: Number(i.quantity),
-              unitPrice: Number(i.unitPrice),
-              subtotal: Number(i.subtotal),
-            })),
-          },
+          sale,
+          isFiscal,
+          receiptType,
+          series,
+          correlativeNumber,
+          fullReceiptNumber,
+          totalCalculated,
+          taxableBase,
+          igvAmount,
+          validatedItems,
         };
       },
       {
-        timeout: 10000, // 10 segundos de timeout para operaciones concurrentes
+        timeout: 10000,
       },
     );
+
+    // =========================================================================
+    // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
+    // =========================================================================
+    let finalSale = txResult.sale;
+
+    if (txResult.isFiscal) {
+      const storeConfig = await this.prisma.storeConfig.findFirst();
+      try {
+        const billingRes = await this.billingService.issueReceipt({
+          receiptType: txResult.receiptType as 'BOLETA' | 'FACTURA',
+          series: txResult.series,
+          correlativeNumber: txResult.correlativeNumber,
+          totalAmount: txResult.totalCalculated,
+          taxableBase: txResult.taxableBase,
+          igvAmount: txResult.igvAmount,
+          customerName:
+            dto.customerName ||
+            (txResult.receiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : ''),
+          customerDocument: dto.customerDocument,
+          customerAddress: dto.customerAddress,
+          customerEmail: dto.customerEmail?.trim() || null,
+          paymentMethod: dto.paymentMethod,
+          companyRuc: storeConfig?.ruc || '10458923011',
+          items: txResult.validatedItems.map((vi: any) => ({
+            name: vi.product.name,
+            quantity: vi.quantity,
+            unitPrice: vi.unitPrice,
+            subtotal: vi.subtotalItem,
+            unitType: vi.product.unitType,
+          })),
+        });
+
+        if (billingRes.success) {
+          const finalEmissionStatus =
+            (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
+          finalSale = await this.prisma.sale.update({
+            where: { id: txResult.sale.id },
+            data: {
+              hash: billingRes.hash,
+              qrString: billingRes.qrString,
+              emissionStatus: finalEmissionStatus,
+            },
+            include: {
+              items: {
+                include: {
+                  product: {
+                    select: { id: true, name: true, barcode: true, unitType: true },
+                  },
+                },
+              },
+              cashShift: {
+                include: { cashRegister: true },
+              },
+              user: {
+                select: { id: true, name: true, username: true },
+              },
+            },
+          });
+        } else {
+          // El PSE reportó rechazo formal
+          finalSale = await this.prisma.sale.update({
+            where: { id: txResult.sale.id },
+            data: {
+              emissionStatus: EmissionStatus.REJECTED,
+            },
+            include: {
+              items: {
+                include: {
+                  product: {
+                    select: { id: true, name: true, barcode: true, unitType: true },
+                  },
+                },
+              },
+              cashShift: {
+                include: { cashRegister: true },
+              },
+              user: {
+                select: { id: true, name: true, username: true },
+              },
+            },
+          });
+          this.logger.error(
+            `[BILLING] Comprobante ${txResult.fullReceiptNumber} rechazado por PSE: ${billingRes.message}`,
+          );
+        }
+      } catch (billingErr: any) {
+        // En caso de caída de conexión o timeout con Nubefact
+        finalSale = await this.prisma.sale.update({
+          where: { id: txResult.sale.id },
+          data: {
+            emissionStatus: EmissionStatus.REJECTED,
+          },
+          include: {
+            items: {
+              include: {
+                product: {
+                  select: { id: true, name: true, barcode: true, unitType: true },
+                },
+              },
+            },
+            cashShift: {
+              include: { cashRegister: true },
+            },
+            user: {
+              select: { id: true, name: true, username: true },
+            },
+          },
+        });
+        this.logger.error(
+          `[BILLING] Excepción de conexión emitiendo comprobante fiscal ${txResult.fullReceiptNumber}: ${billingErr.message}`,
+        );
+      }
+    }
+
+    return {
+      message: txResult.isFiscal
+        ? `Comprobante electrónico (${txResult.receiptType}) procesado: ${txResult.fullReceiptNumber}`
+        : `Nota de venta interna registrada con éxito: ${txResult.fullReceiptNumber}`,
+      sale: {
+        ...finalSale,
+        totalAmount: Number(finalSale.totalAmount),
+        taxableBase: Number(finalSale.taxableBase),
+        igvAmount: Number(finalSale.igvAmount),
+        cashPaid: Number(finalSale.cashPaid),
+        digitalPaid: Number(finalSale.digitalPaid),
+        changeAmount: Number(finalSale.changeAmount),
+        items: finalSale.items.map((i: any) => ({
+          ...i,
+          quantity: Number(i.quantity),
+          unitPrice: Number(i.unitPrice),
+          subtotal: Number(i.subtotal),
+        })),
+      },
+    };
   }
 
   /**
@@ -478,6 +573,7 @@ export class SalesService {
               quantity: Number(i.quantity),
               unitPrice: Number(i.unitPrice),
               subtotal: Number(i.subtotal),
+              unitType: i.product.unitType,
             })),
             createdAt: new Date(),
           });
@@ -521,36 +617,31 @@ export class SalesService {
           };
         }
 
-        // Reingresar stock a Kardex
+        // Reingresar stock a Kardex de forma atómica para evitar Lost Updates
         for (const item of sale.items) {
-          const prod = await tx.product.findUnique({ where: { id: item.productId } });
-          if (!prod) continue;
-
-          const currentStockNum = Number(prod.currentStock);
           const qtyToReturn = Number(item.quantity);
-          const newStock = currentStockNum + qtyToReturn;
 
-          // Devolver stock
-          await tx.product.update({
-            where: { id: prod.id },
+          // Devolver stock atómicamente con Prisma increment
+          const updatedProduct = await tx.product.update({
+            where: { id: item.productId },
             data: {
-              currentStock: new Prisma.Decimal(newStock),
+              currentStock: { increment: new Prisma.Decimal(qtyToReturn) },
             },
           });
 
-          // Registrar devolución en Kardex
+          // Registrar devolución en Kardex con balance exacto
           const reasonText = creditNoteResult
             ? `Nota de Crédito ${creditNoteResult.fullNumber} [Anula ${sale.fullReceiptNumber || sale.saleNumber}] - Motivo: ${dto.reason}`
             : `Anulación de venta #${sale.saleNumber} - Motivo: ${dto.reason}`;
 
           await tx.kardexMovement.create({
             data: {
-              productId: prod.id,
+              productId: item.productId,
               movementType: MovementType.RETURN_SALE,
               quantity: new Prisma.Decimal(qtyToReturn),
-              previousStock: prod.currentStock,
-              newStock: new Prisma.Decimal(newStock),
-              unitCost: prod.costPrice,
+              previousStock: new Prisma.Decimal(Number(updatedProduct.currentStock) - qtyToReturn),
+              newStock: updatedProduct.currentStock,
+              unitCost: updatedProduct.costPrice,
               referenceId: sale.id,
               reason: reasonText,
               userId: admin.id,
@@ -949,7 +1040,11 @@ export class SalesService {
     const salesDetail = sales.map((s) => {
       const saleAmount = Number(s.totalAmount);
       totalSales += saleAmount;
-      cashPaidTotal += Number(s.cashPaid);
+      const netCashFromSale =
+        s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD'
+          ? 0
+          : Math.max(0, Number(s.cashPaid) - Number(s.changeAmount || 0));
+      cashPaidTotal += netCashFromSale;
       digitalPaidTotal += Number(s.digitalPaid);
 
       if (paymentMethods[s.paymentMethod] !== undefined) {
@@ -1025,7 +1120,9 @@ export class SalesService {
         createdAt: s.createdAt,
         customerName: s.customerName,
         paymentMethod: s.paymentMethod,
-        cashPaid: Number(s.cashPaid),
+        cashPaid: netCashFromSale,
+        grossCashPaid: Number(s.cashPaid),
+        changeAmount: Number(s.changeAmount || 0),
         digitalPaid: Number(s.digitalPaid),
         totalAmount: saleAmount,
         totalCost: Number(saleCost.toFixed(2)),
@@ -1337,15 +1434,12 @@ export class SalesService {
               },
             });
 
-            // 4. Actualizar stock y registrar en Kardex con fecha original
+            // 4. Actualizar stock atómicamente y registrar en Kardex con fecha original
             for (const item of validatedItems) {
-              const currentStockNum = Number(item.product.currentStock);
-              const newStock = Number((currentStockNum - item.quantity).toFixed(3));
-
-              await tx.product.update({
+              const updatedProduct = await tx.product.update({
                 where: { id: item.product.id },
                 data: {
-                  currentStock: new Prisma.Decimal(newStock),
+                  currentStock: { decrement: new Prisma.Decimal(item.quantity) },
                 },
               });
 
@@ -1354,8 +1448,8 @@ export class SalesService {
                   productId: item.product.id,
                   movementType: MovementType.SALE,
                   quantity: new Prisma.Decimal(item.quantity),
-                  previousStock: item.product.currentStock,
-                  newStock: new Prisma.Decimal(newStock),
+                  previousStock: new Prisma.Decimal(Number(updatedProduct.currentStock) + item.quantity),
+                  newStock: updatedProduct.currentStock,
                   unitCost: item.product.costPrice,
                   referenceId: sale.id,
                   reason: `Venta POS Offline #${sale.saleNumber} [OFFLINE:${offlineSale.offlineId}] - ${targetShift.cashRegister.name}`,

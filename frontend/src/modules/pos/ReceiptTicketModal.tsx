@@ -521,22 +521,42 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               </div>
             )}
 
-            {saleData.paymentMethod === 'CASH' && (
-              <div className="pt-1 border-t border-dotted border-slate-300 space-y-0.5 text-[10px] text-slate-600">
-                {saleData.cashPaid !== undefined && (
-                  <div className="flex justify-between">
-                    <span>PAGÓ CON:</span>
-                    <span>{formatCurrency(saleData.cashPaid)}</span>
+            {/* Si pagó con efectivo (sea CASH o MIXED), mostrar siempre el monto entregado y el vuelto exacto */}
+            {(() => {
+              const cashReceived =
+                saleData.cashPaid !== undefined
+                  ? Number(saleData.cashPaid)
+                  : saleData.amountReceived !== undefined
+                    ? Number(saleData.amountReceived)
+                    : 0;
+
+              const changeGiven =
+                saleData.changeAmount !== undefined
+                  ? Number(saleData.changeAmount)
+                  : saleData.changeGiven !== undefined
+                    ? Number(saleData.changeGiven)
+                    : 0;
+
+              if (saleData.paymentMethod === 'CASH' || cashReceived > 0) {
+                return (
+                  <div className="pt-1 border-t border-dotted border-slate-300 space-y-0.5 text-[10px] text-slate-600">
+                    {cashReceived > 0 && (
+                      <div className="flex justify-between">
+                        <span>PAGÓ CON (EFECTIVO):</span>
+                        <span className="font-semibold text-slate-900">{formatCurrency(cashReceived)}</span>
+                      </div>
+                    )}
+                    {changeGiven > 0 && (
+                      <div className="flex justify-between font-bold text-slate-900">
+                        <span>VUELTO:</span>
+                        <span>{formatCurrency(changeGiven)}</span>
+                      </div>
+                    )}
                   </div>
-                )}
-                {saleData.changeAmount !== undefined && (
-                  <div className="flex justify-between font-bold text-slate-900">
-                    <span>VUELTO:</span>
-                    <span>{formatCurrency(saleData.changeAmount || 0)}</span>
-                  </div>
-                )}
-              </div>
-            )}
+                );
+              }
+              return null;
+            })()}
           </div>
 
           {/* SECCIÓN FISCAL O CONTROL INTERNO */}

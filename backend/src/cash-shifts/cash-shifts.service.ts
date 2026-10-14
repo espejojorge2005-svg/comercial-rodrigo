@@ -112,12 +112,14 @@ export class CashShiftsService {
       ...shift,
       initialBalance: Number(shift.initialBalance),
       metrics: {
-        totalSales,
-        cashSales,
-        digitalSales,
+        totalSales: Number(totalSales.toFixed(2)),
+        cashSales: Number(cashSales.toFixed(2)),
+        cashFromSales: Number(cashSales.toFixed(2)),
+        cashPaidTotal: Number(cashSales.toFixed(2)),
+        digitalSales: Number(digitalSales.toFixed(2)),
         salesCount: sales.length,
-        totalIncomeMovements,
-        totalExpenseMovements,
+        totalIncomeMovements: Number(totalIncomeMovements.toFixed(2)),
+        totalExpenseMovements: Number(totalExpenseMovements.toFixed(2)),
       },
     };
   }
@@ -358,6 +360,7 @@ export class CashShiftsService {
       initialBalance: Number(shift.initialBalance),
       totalSales,
       cashFromSales,
+      cashPaidTotal: cashFromSales,
       digitalFromSales,
       incomeMovements,
       expenseMovements,
@@ -542,6 +545,7 @@ export class CashShiftsService {
         metrics: {
           totalSales,
           cashFromSales,
+          cashPaidTotal: cashFromSales,
           digitalFromSales,
           yapePlinSales,
           cardSales,

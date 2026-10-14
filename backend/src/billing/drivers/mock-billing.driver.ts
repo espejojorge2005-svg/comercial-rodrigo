@@ -7,6 +7,15 @@ import {
   BillingIssueResult,
 } from '../billing.types.js';
 
+function formatPeruYYYYMMDD(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 @Injectable()
 export class MockBillingDriver implements IBillingDriver {
   readonly driverName = 'MOCK';
@@ -44,7 +53,8 @@ export class MockBillingDriver implements IBillingDriver {
     }
 
     const customerDocNum = cleanDoc || '-';
-    const dateFormatted = createdAt.toISOString().split('T')[0];
+    // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
+    const dateFormatted = formatPeruYYYYMMDD(createdAt);
     const paddedCorrelative = String(correlativeNumber).padStart(8, '0');
     const igvFormatted = Number(igvAmount).toFixed(2);
     const totalFormatted = Number(totalAmount).toFixed(2);
@@ -112,7 +122,8 @@ export class MockBillingDriver implements IBillingDriver {
     }
 
     const customerDocNum = cleanDoc || '-';
-    const dateFormatted = createdAt.toISOString().split('T')[0];
+    // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
+    const dateFormatted = formatPeruYYYYMMDD(createdAt);
     const paddedCorrelative = String(creditNoteCorrelative).padStart(8, '0');
     const igvFormatted = Number(igvAmount).toFixed(2);
     const totalFormatted = Number(totalAmount).toFixed(2);

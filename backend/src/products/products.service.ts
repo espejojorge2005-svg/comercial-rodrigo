@@ -250,28 +250,31 @@ export class ProductsService {
       data.expirationDate = dto.expirationDate ? new Date(dto.expirationDate) : null;
     }
 
-    // Si hay ajuste manual de stock, registrarlo en Kardex
-    if (dto.currentStock !== undefined && dto.currentStock !== Number(product.currentStock)) {
-      data.currentStock = new Prisma.Decimal(dto.currentStock);
-      const diff = dto.currentStock - Number(product.currentStock);
+    // Actualización atómica con Kardex dentro de una transacción Prisma
+    return this.prisma.$transaction(async (tx) => {
+      // Si hay ajuste manual de stock, registrarlo en Kardex
+      if (dto.currentStock !== undefined && dto.currentStock !== Number(product.currentStock)) {
+        data.currentStock = new Prisma.Decimal(dto.currentStock);
+        const diff = dto.currentStock - Number(product.currentStock);
 
-      await this.prisma.kardexMovement.create({
-        data: {
-          productId: product.id,
-          movementType: diff > 0 ? MovementType.ADJUSTMENT_IN : MovementType.ADJUSTMENT_OUT,
-          quantity: new Prisma.Decimal(Math.abs(diff)),
-          previousStock: product.currentStock,
-          newStock: new Prisma.Decimal(dto.currentStock),
-          unitCost: product.costPrice,
-          reason: `Ajuste manual de inventario (${diff > 0 ? '+' : ''}${diff})`,
-          userId,
-        },
+        await tx.kardexMovement.create({
+          data: {
+            productId: product.id,
+            movementType: diff > 0 ? MovementType.ADJUSTMENT_IN : MovementType.ADJUSTMENT_OUT,
+            quantity: new Prisma.Decimal(Math.abs(diff)),
+            previousStock: product.currentStock,
+            newStock: new Prisma.Decimal(dto.currentStock),
+            unitCost: product.costPrice,
+            reason: `Ajuste manual de inventario (${diff > 0 ? '+' : ''}${diff})`,
+            userId,
+          },
+        });
+      }
+
+      return tx.product.update({
+        where: { id },
+        data,
       });
-    }
-
-    return this.prisma.product.update({
-      where: { id },
-      data,
     });
   }
 
