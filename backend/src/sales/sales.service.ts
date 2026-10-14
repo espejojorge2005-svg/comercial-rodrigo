@@ -776,9 +776,16 @@ export class SalesService {
       }
     }
 
-    const findOptions: Prisma.SaleFindManyArgs = {
+    const take = filter?.limit
+      ? filter.limit
+      : !filter?.startDate && !filter?.endDate && !filter?.shiftId
+        ? 100
+        : undefined;
+
+    const sales = await this.prisma.sale.findMany({
       where,
       orderBy: { createdAt: 'desc' },
+      ...(take !== undefined ? { take } : {}),
       include: {
         creditNote: true,
         items: {
@@ -791,15 +798,7 @@ export class SalesService {
         user: { select: { id: true, name: true, username: true } },
         cashShift: { include: { cashRegister: true } },
       },
-    };
-
-    if (filter?.limit) {
-      findOptions.take = filter.limit;
-    } else if (!filter?.startDate && !filter?.endDate && !filter?.shiftId) {
-      findOptions.take = 100;
-    }
-
-    const sales = await this.prisma.sale.findMany(findOptions);
+    });
 
     return sales.map((s) => {
       const base = {

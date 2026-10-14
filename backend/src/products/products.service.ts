@@ -329,22 +329,21 @@ export class ProductsService {
       }
     }
 
-    const findOptions: Prisma.KardexMovementFindManyArgs = {
+    const take = filter?.limit
+      ? filter.limit
+      : !filter?.startDate && !filter?.endDate
+        ? 200
+        : undefined;
+
+    const movements = await this.prisma.kardexMovement.findMany({
       where,
       orderBy: { createdAt: 'desc' },
+      ...(take !== undefined ? { take } : {}),
       include: {
         product: { select: { id: true, name: true, barcode: true, unitType: true } },
         user: { select: { id: true, name: true, username: true } },
       },
-    };
-
-    if (filter?.limit) {
-      findOptions.take = filter.limit;
-    } else if (!filter?.startDate && !filter?.endDate) {
-      findOptions.take = 200;
-    }
-
-    const movements = await this.prisma.kardexMovement.findMany(findOptions);
+    });
 
     return movements.map((m) => ({
       id: m.id,

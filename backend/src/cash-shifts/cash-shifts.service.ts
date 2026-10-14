@@ -460,9 +460,16 @@ export class CashShiftsService {
       }
     }
 
-    const findOptions: Prisma.CashShiftFindManyArgs = {
+    const take = filter?.limit
+      ? filter.limit
+      : !filter?.startDate && !filter?.endDate
+        ? 100
+        : undefined;
+
+    const shifts = await this.prisma.cashShift.findMany({
       where,
       orderBy: { openedAt: 'desc' },
+      ...(take !== undefined ? { take } : {}),
       include: {
         cashRegister: true,
         user: { select: { id: true, name: true, username: true } },
@@ -498,15 +505,7 @@ export class CashShiftsService {
           },
         },
       },
-    };
-
-    if (filter?.limit) {
-      findOptions.take = filter.limit;
-    } else if (!filter?.startDate && !filter?.endDate) {
-      findOptions.take = 100;
-    }
-
-    const shifts = await this.prisma.cashShift.findMany(findOptions);
+    });
 
     return shifts.map((s) => {
       const sales = s.sales || [];
