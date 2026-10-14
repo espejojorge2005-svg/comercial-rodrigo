@@ -113,6 +113,8 @@ export class SalesService {
     const txResult = await this.prisma.$transaction(
       async (tx) => {
         let totalCalculated = 0;
+        let totalTaxableBase = 0;
+        let totalIgv = 0;
         const detailsToCreate: {
           productId: string;
           quantity: Prisma.Decimal;
@@ -148,7 +150,13 @@ export class SalesService {
           }
 
           const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
+          // Cálculo fiscal línea por línea (Catálogo 07 SUNAT / Redondeo a 2 decimales por producto)
+          const itemValorTotal = Number((subtotalItem / 1.18).toFixed(2));
+          const itemIgv = Number((subtotalItem - itemValorTotal).toFixed(2));
+
           totalCalculated += subtotalItem;
+          totalTaxableBase += itemValorTotal;
+          totalIgv += itemIgv;
 
           detailsToCreate.push({
             productId: product.id,
@@ -167,6 +175,8 @@ export class SalesService {
         }
 
         totalCalculated = Number(totalCalculated.toFixed(2));
+        totalTaxableBase = Number(totalTaxableBase.toFixed(2));
+        totalIgv = Number(totalIgv.toFixed(2));
         const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
 
         // Validación fiscal para Boletas de Venta: Exigencia de DNI si es >= S/ 700.00
@@ -216,15 +226,15 @@ export class SalesService {
         if (receiptType === ReceiptType.NOTA_VENTA) {
           // VÍA 1: NOTA DE VENTA / TICKET INTERNO (Prioridad Operativa - Despacho Ultrarrápido)
           isFiscal = false;
-          taxableBase = Number((totalCalculated / 1.18).toFixed(2));
+          taxableBase = totalTaxableBase;
           igvAmount = 0;
           emissionStatus = null;
         } else {
           // VÍAS 2 & 3: BOLETA Y FACTURA ELECTRÓNICA (Fiscal)
           // Se guarda inicialmente en estado PENDING para no retener la transacción de base de datos
           isFiscal = true;
-          taxableBase = Number((totalCalculated / 1.18).toFixed(2));
-          igvAmount = Number((totalCalculated - taxableBase).toFixed(2));
+          taxableBase = totalTaxableBase;
+          igvAmount = totalIgv;
           emissionStatus = EmissionStatus.PENDING;
         }
 
@@ -1284,6 +1294,8 @@ export class SalesService {
         const saleResult = await this.prisma.$transaction(
           async (tx) => {
             let totalCalculated = 0;
+            let totalTaxableBase = 0;
+            let totalIgv = 0;
             const detailsToCreate: {
               productId: string;
               quantity: Prisma.Decimal;
@@ -1309,7 +1321,12 @@ export class SalesService {
               }
 
               const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
+              const itemValorTotal = Number((subtotalItem / 1.18).toFixed(2));
+              const itemIgv = Number((subtotalItem - itemValorTotal).toFixed(2));
+
               totalCalculated += subtotalItem;
+              totalTaxableBase += itemValorTotal;
+              totalIgv += itemIgv;
 
               detailsToCreate.push({
                 productId: product.id,
@@ -1327,13 +1344,16 @@ export class SalesService {
               });
             }
 
-            const totalAmountDecimal = new Prisma.Decimal(Number(totalCalculated.toFixed(2)));
+            totalCalculated = Number(totalCalculated.toFixed(2));
+            totalTaxableBase = Number(totalTaxableBase.toFixed(2));
+            totalIgv = Number(totalIgv.toFixed(2));
+            const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
             const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
 
             const receiptType = offlineSale.receiptType || ReceiptType.NOTA_VENTA;
             const isFiscal = receiptType !== ReceiptType.NOTA_VENTA;
-            const taxableBase = Number((totalCalculated / 1.18).toFixed(2));
-            const igvAmount = isFiscal ? Number((totalCalculated - taxableBase).toFixed(2)) : 0;
+            const taxableBase = totalTaxableBase;
+            const igvAmount = isFiscal ? totalIgv : 0;
 
             const series = this.getSeriesForRegister(
               targetShift.cashRegister.identifier,

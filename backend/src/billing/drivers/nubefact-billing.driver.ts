@@ -107,6 +107,47 @@ export class NubefactBillingDriver implements IBillingDriver {
     // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
     const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
+    // 1. Recorrer y procesar el arreglo de items: calcular montos exactos línea por línea
+    // (Valor venta, IGV y total con redondeo matemático por producto)
+    let calculatedTotalGravada = 0;
+    let calculatedTotalIgv = 0;
+    let calculatedTotal = 0;
+
+    const formattedItems = items.map((item) => {
+      const itemSubtotal = Number((item.subtotal ?? item.quantity * item.unitPrice).toFixed(2));
+      // Base imponible / Valor de venta de la línea gravada (redondeado a 2 decimales)
+      const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
+      // IGV de la línea: diferencia exacta entre el subtotal con IGV y el valor de venta
+      const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
+      // Valor unitario sin IGV a 4 decimales según estándar Nubefact / SUNAT
+      const itemValorUnitario =
+        item.quantity > 0 ? Number((itemValorTotal / item.quantity).toFixed(4)) : 0;
+
+      calculatedTotalGravada += itemValorTotal;
+      calculatedTotalIgv += itemIgv;
+      calculatedTotal += itemSubtotal;
+
+      return {
+        unidad_de_medida: mapUnitTypeToSunat(item.unitType),
+        codigo: '',
+        descripcion: item.name,
+        cantidad: item.quantity,
+        valor_unitario: itemValorUnitario,
+        precio_unitario: Number(item.unitPrice.toFixed(2)),
+        subtotal: itemValorTotal,
+        tipo_de_igv: 1, // Gravado - Operación Onerosa
+        igv: itemIgv,
+        total: itemSubtotal,
+        anticipo_regularizacion: false,
+      };
+    });
+
+    // 2. Cabeceras calculadas estrictamente a partir de la suma línea por línea de los ítems
+    // Esto garantiza consistencia matemática total (evita el rechazo de SUNAT por desfase de S/ 0.01)
+    const finalTotalGravada = Number(calculatedTotalGravada.toFixed(2));
+    const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
+    const finalTotal = Number(calculatedTotal.toFixed(2));
+
     // Estructurar JSON estándar para el API de Nubefact / ApisPerú
     const payload = {
       operacion: 'generar_comprobante',
@@ -122,30 +163,11 @@ export class NubefactBillingDriver implements IBillingDriver {
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
       porcentaje_de_igv: 18.0,
-      total_gravada: Number(taxableBase.toFixed(2)),
-      total_igv: Number(igvAmount.toFixed(2)),
-      total: Number(totalAmount.toFixed(2)),
+      total_gravada: finalTotalGravada,
+      total_igv: finalTotalIgv,
+      total: finalTotal,
       detraccion: false,
-      items: items.map((item) => {
-        const itemSubtotal = Number(item.subtotal.toFixed(2));
-        const itemValorUnitario = Number((itemSubtotal / 1.18 / item.quantity).toFixed(4));
-        const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
-        const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
-
-        return {
-          unidad_de_medida: mapUnitTypeToSunat(item.unitType),
-          codigo: '',
-          descripcion: item.name,
-          cantidad: item.quantity,
-          valor_unitario: itemValorUnitario,
-          precio_unitario: Number(item.unitPrice.toFixed(2)),
-          subtotal: itemValorTotal,
-          tipo_de_igv: 1, // Gravado - Operación Onerosa
-          igv: itemIgv,
-          total: itemSubtotal,
-          anticipo_regularizacion: false,
-        };
-      }),
+      items: formattedItems,
     };
 
     this.logger.log(`Enviando comprobante a Nubefact (${apiUrl}): ${series}-${correlativeNumber}`);
@@ -235,6 +257,41 @@ export class NubefactBillingDriver implements IBillingDriver {
     const docModificaTipo = modifiedDocTypeCode === '01' ? 1 : 2;
     const tipoNotaCreditoNum = parseInt(reasonCode, 10) || 1;
 
+    // 1. Recorrer y procesar el arreglo de items línea por línea para la Nota de Crédito
+    let calculatedTotalGravada = 0;
+    let calculatedTotalIgv = 0;
+    let calculatedTotal = 0;
+
+    const formattedItems = items.map((item: any) => {
+      const itemSubtotal = Number((item.subtotal ?? item.quantity * item.unitPrice).toFixed(2));
+      const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
+      const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
+      const itemValorUnitario =
+        item.quantity > 0 ? Number((itemValorTotal / item.quantity).toFixed(4)) : 0;
+
+      calculatedTotalGravada += itemValorTotal;
+      calculatedTotalIgv += itemIgv;
+      calculatedTotal += itemSubtotal;
+
+      return {
+        unidad_de_medida: mapUnitTypeToSunat(item.unitType),
+        codigo: '',
+        descripcion: item.name,
+        cantidad: item.quantity,
+        valor_unitario: itemValorUnitario,
+        precio_unitario: Number(item.unitPrice.toFixed(2)),
+        subtotal: itemValorTotal,
+        tipo_de_igv: 1,
+        igv: itemIgv,
+        total: itemSubtotal,
+        anticipo_regularizacion: false,
+      };
+    });
+
+    const finalTotalGravada = Number(calculatedTotalGravada.toFixed(2));
+    const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
+    const finalTotal = Number(calculatedTotal.toFixed(2));
+
     const payload = {
       operacion: 'generar_comprobante',
       tipo_de_comprobante: tipoDeComprobante,
@@ -249,35 +306,16 @@ export class NubefactBillingDriver implements IBillingDriver {
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
       porcentaje_de_igv: 18.0,
-      total_gravada: Number(taxableBase.toFixed(2)),
-      total_igv: Number(igvAmount.toFixed(2)),
-      total: Number(totalAmount.toFixed(2)),
+      total_gravada: finalTotalGravada,
+      total_igv: finalTotalIgv,
+      total: finalTotal,
       documento_que_se_modifica_tipo: docModificaTipo,
       documento_que_se_modifica_serie: modifiedSeries,
       documento_que_se_modifica_numero: modifiedCorrelative,
       tipo_de_nota_de_credito: tipoNotaCreditoNum,
       motivo: reasonDescription || 'ANULACION DE LA OPERACION',
       detraccion: false,
-      items: items.map((item: any) => {
-        const itemSubtotal = Number(item.subtotal.toFixed(2));
-        const itemValorUnitario = Number((itemSubtotal / 1.18 / item.quantity).toFixed(4));
-        const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
-        const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
-
-        return {
-          unidad_de_medida: mapUnitTypeToSunat(item.unitType),
-          codigo: '',
-          descripcion: item.name,
-          cantidad: item.quantity,
-          valor_unitario: itemValorUnitario,
-          precio_unitario: Number(item.unitPrice.toFixed(2)),
-          subtotal: itemValorTotal,
-          tipo_de_igv: 1,
-          igv: itemIgv,
-          total: itemSubtotal,
-          anticipo_regularizacion: false,
-        };
-      }),
+      items: formattedItems,
     };
 
     this.logger.log(
