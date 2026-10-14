@@ -521,7 +521,11 @@ export const exportShiftAuditExcel = (
     const salesList = s.sales || [];
     salesList.forEach((sale: any) => {
       const total = Number(sale.totalAmount || 0);
-      const cash = Number(sale.cashPaid || 0);
+      const change = Number(sale.changeAmount || 0);
+      const cash =
+        sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
+          ? 0
+          : Math.max(0, Number(sale.cashPaid || 0) - change);
       const digital = Number(sale.digitalPaid || 0);
       sumSalesTickets += total;
       sumCashPaid += cash;
@@ -544,7 +548,7 @@ export const exportShiftAuditExcel = (
     'Fecha y Hora',
     'Caja y Turno',
     'Método de Pago',
-    'Efectivo Recibido (S/.)',
+    'Efectivo en Caja (S/.)',
     'Digital Recibido (S/.)',
     'Total Cobrado (S/.)',
   ];

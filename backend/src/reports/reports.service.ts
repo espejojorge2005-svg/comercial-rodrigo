@@ -451,10 +451,15 @@ export class ReportsService {
     const salesDetail = sales.map((sale) => {
       const saleAmount = Number(sale.totalAmount);
       const cashPortion = Number(sale.cashPaid);
+      const changePortion = Number(sale.changeAmount || 0);
       const digitalPortion = Number(sale.digitalPaid);
+      const netCashPortion =
+        sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
+          ? 0
+          : Math.max(0, cashPortion - changePortion);
 
       totalGrossRevenue += saleAmount;
-      cashPaidTotal += cashPortion;
+      cashPaidTotal += netCashPortion;
       digitalPaidTotal += digitalPortion;
 
       if (paymentMethods[sale.paymentMethod] !== undefined) {
@@ -515,7 +520,7 @@ export class ReportsService {
         customerName: sale.customerName || 'Cliente Varios',
         customerDocument: sale.customerDocument || '-',
         paymentMethod: sale.paymentMethod,
-        cashPaid: cashPortion,
+        cashPaid: netCashPortion,
         digitalPaid: digitalPortion,
         totalAmount: saleAmount,
         totalCost: saleCost,

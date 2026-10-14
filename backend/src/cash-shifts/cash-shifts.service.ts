@@ -84,12 +84,20 @@ export class CashShiftsService {
         totalAmount: true,
         cashPaid: true,
         digitalPaid: true,
+        changeAmount: true,
         paymentMethod: true,
       },
     });
 
     const totalSales = sales.reduce((acc, s) => acc + Number(s.totalAmount), 0);
-    const cashSales = sales.reduce((acc, s) => acc + Number(s.cashPaid), 0);
+    const cashSales = sales.reduce(
+      (acc, s) =>
+        acc +
+        (s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD'
+          ? 0
+          : Math.max(0, Number(s.cashPaid) - Number(s.changeAmount || 0))),
+      0,
+    );
     const digitalSales = sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0);
 
     const totalIncomeMovements = shift.cashMovements
@@ -205,6 +213,7 @@ export class CashShiftsService {
         saleNumber: true,
         cashPaid: true,
         digitalPaid: true,
+        changeAmount: true,
         totalAmount: true,
         paymentMethod: true,
         createdAt: true,
@@ -227,7 +236,14 @@ export class CashShiftsService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const cashFromSales = sales.reduce((acc, s) => acc + Number(s.cashPaid), 0);
+    const cashFromSales = sales.reduce(
+      (acc, s) =>
+        acc +
+        (s.paymentMethod === 'TRANSFER' || s.paymentMethod === 'CARD'
+          ? 0
+          : Math.max(0, Number(s.cashPaid) - Number(s.changeAmount || 0))),
+      0,
+    );
     const digitalFromSales = sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0);
     const totalSales = sales.reduce((acc, s) => acc + Number(s.totalAmount), 0);
 
@@ -418,6 +434,7 @@ export class CashShiftsService {
             totalAmount: true,
             cashPaid: true,
             digitalPaid: true,
+            changeAmount: true,
             paymentMethod: true,
             createdAt: true,
             items: {
@@ -443,7 +460,14 @@ export class CashShiftsService {
     return shifts.map((s) => {
       const sales = s.sales || [];
       const totalSales = sales.reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
-      const cashFromSales = sales.reduce((acc, sale) => acc + Number(sale.cashPaid), 0);
+      const cashFromSales = sales.reduce(
+        (acc, sale) =>
+          acc +
+          (sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
+            ? 0
+            : Math.max(0, Number(sale.cashPaid) - Number(sale.changeAmount || 0))),
+        0,
+      );
       const digitalFromSales = sales.reduce((acc, sale) => acc + Number(sale.digitalPaid), 0);
 
       const yapePlinSales = sales
