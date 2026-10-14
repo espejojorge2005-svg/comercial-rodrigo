@@ -42,8 +42,17 @@ export class ProductsController {
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN)
   @Get('kardex')
-  async getKardex(@Query('productId') productId?: string) {
-    return this.productsService.getKardex(productId);
+  async getKardex(
+    @Query('productId') productId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.productsService.getKardex(productId, {
+      startDate,
+      endDate,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 
   @Get(':id')

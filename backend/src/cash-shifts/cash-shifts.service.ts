@@ -430,11 +430,39 @@ export class CashShiftsService {
 
   /**
    * Historial de turnos y arqueos (Solo Administrador)
+   * Permite filtrar por rango de fechas (mes completo) sin limitación arbitraria de take: 50
    */
-  async getShiftHistory() {
-    const shifts = await this.prisma.cashShift.findMany({
+  async getShiftHistory(filter?: { startDate?: string; endDate?: string; limit?: number }) {
+    const where: Prisma.CashShiftWhereInput = {};
+
+    if (filter?.startDate || filter?.endDate) {
+      const dateFilter: Prisma.DateTimeFilter = {};
+      if (filter.startDate) {
+        const sStr = filter.startDate.trim();
+        const start = sStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(sStr)
+          ? new Date(sStr)
+          : sStr.includes('T')
+            ? new Date(`${sStr}-05:00`)
+            : new Date(`${sStr}T00:00:00.000-05:00`);
+        if (!isNaN(start.getTime())) dateFilter.gte = start;
+      }
+      if (filter.endDate) {
+        const eStr = filter.endDate.trim();
+        const end = eStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(eStr)
+          ? new Date(eStr)
+          : eStr.includes('T')
+            ? new Date(`${eStr}-05:00`)
+            : new Date(`${eStr}T23:59:59.999-05:00`);
+        if (!isNaN(end.getTime())) dateFilter.lte = end;
+      }
+      if (dateFilter.gte || dateFilter.lte) {
+        where.openedAt = dateFilter;
+      }
+    }
+
+    const findOptions: Prisma.CashShiftFindManyArgs = {
+      where,
       orderBy: { openedAt: 'desc' },
-      take: 50,
       include: {
         cashRegister: true,
         user: { select: { id: true, name: true, username: true } },
@@ -470,7 +498,15 @@ export class CashShiftsService {
           },
         },
       },
-    });
+    };
+
+    if (filter?.limit) {
+      findOptions.take = filter.limit;
+    } else if (!filter?.startDate && !filter?.endDate) {
+      findOptions.take = 100;
+    }
+
+    const shifts = await this.prisma.cashShift.findMany(findOptions);
 
     return shifts.map((s) => {
       const sales = s.sales || [];

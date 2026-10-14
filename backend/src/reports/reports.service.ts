@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ReceiptType, CashMovementType, Prisma } from '@prisma/client';
 import { ReportQueryDto } from './dto/report-query.dto.js';
+import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
 import ExcelJS from 'exceljs';
 
 @Injectable()
@@ -572,13 +573,8 @@ export class ReportsService {
 
     const salesDetail = sales.map((sale) => {
       const saleAmount = Number(sale.totalAmount);
-      const cashPortion = Number(sale.cashPaid);
-      const changePortion = Number(sale.changeAmount || 0);
-      const digitalPortion = Number(sale.digitalPaid);
-      const netCashPortion =
-        sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
-          ? 0
-          : Math.max(0, cashPortion - changePortion);
+      const netCashPortion = calculateNetCashFromSale(sale);
+      const digitalPortion = Number(sale.digitalPaid || 0);
 
       totalGrossRevenue += saleAmount;
       cashPaidTotal += netCashPortion;

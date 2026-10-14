@@ -293,22 +293,58 @@ export class ProductsService {
 
   /**
    * Obtiene historial de movimientos de Kardex (Solo ADMIN)
+   * Soporta filtro por rango de fechas y producto sin truncamiento arbitrario
    */
-  async getKardex(productId?: string) {
+  async getKardex(
+    productId?: string,
+    filter?: { startDate?: string; endDate?: string; limit?: number },
+  ) {
     const where: Prisma.KardexMovementWhereInput = {};
     if (productId && productId !== 'all') {
       where.productId = productId;
     }
 
-    const movements = await this.prisma.kardexMovement.findMany({
+    if (filter?.startDate || filter?.endDate) {
+      const dateFilter: Prisma.DateTimeFilter = {};
+      if (filter.startDate) {
+        const sStr = filter.startDate.trim();
+        const start = sStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(sStr)
+          ? new Date(sStr)
+          : sStr.includes('T')
+            ? new Date(`${sStr}-05:00`)
+            : new Date(`${sStr}T00:00:00.000-05:00`);
+        if (!isNaN(start.getTime())) dateFilter.gte = start;
+      }
+      if (filter.endDate) {
+        const eStr = filter.endDate.trim();
+        const end = eStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(eStr)
+          ? new Date(eStr)
+          : eStr.includes('T')
+            ? new Date(`${eStr}-05:00`)
+            : new Date(`${eStr}T23:59:59.999-05:00`);
+        if (!isNaN(end.getTime())) dateFilter.lte = end;
+      }
+      if (dateFilter.gte || dateFilter.lte) {
+        where.createdAt = dateFilter;
+      }
+    }
+
+    const findOptions: Prisma.KardexMovementFindManyArgs = {
       where,
       orderBy: { createdAt: 'desc' },
-      take: 100,
       include: {
         product: { select: { id: true, name: true, barcode: true, unitType: true } },
         user: { select: { id: true, name: true, username: true } },
       },
-    });
+    };
+
+    if (filter?.limit) {
+      findOptions.take = filter.limit;
+    } else if (!filter?.startDate && !filter?.endDate) {
+      findOptions.take = 200;
+    }
+
+    const movements = await this.prisma.kardexMovement.findMany(findOptions);
 
     return movements.map((m) => ({
       id: m.id,

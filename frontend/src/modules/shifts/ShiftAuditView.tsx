@@ -5,6 +5,7 @@ import {
   formatPeruDate,
   formatPeruTime,
   formatPeruDateTime,
+  getPeruYMD,
 } from '../../lib/utils.js';
 import {
   History,
@@ -25,6 +26,7 @@ import {
   FileText,
   FileSpreadsheet,
   Printer,
+  Calendar,
 } from 'lucide-react';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { exportShiftAuditExcel } from '../../lib/excelExport.js';
@@ -37,18 +39,42 @@ export const ShiftAuditView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedShift, setSelectedShift] = useState<any | null>(null);
   const [ticketShift, setTicketShift] = useState<any | null>(null);
+  const [periodPreset, setPeriodPreset] = useState<'all' | 'today' | 'month' | 'custom'>('all');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
 
   const fetchHistory = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await apiRequest('/cash-shifts/history');
+      const params = new URLSearchParams();
+      const todayYMD = getPeruYMD();
+
+      if (periodPreset === 'today') {
+        params.append('startDate', `${todayYMD}T00:00:00.000-05:00`);
+        params.append('endDate', `${todayYMD}T23:59:59.999-05:00`);
+      } else if (periodPreset === 'month') {
+        const [yearStr, monthStr] = todayYMD.split('-');
+        const year = parseInt(yearStr, 10);
+        const month = parseInt(monthStr, 10);
+        const firstDayYMD = `${yearStr}-${monthStr}-01`;
+        const lastDayNum = new Date(year, month, 0).getDate();
+        const lastDayYMD = `${yearStr}-${monthStr}-${String(lastDayNum).padStart(2, '0')}`;
+        params.append('startDate', `${firstDayYMD}T00:00:00.000-05:00`);
+        params.append('endDate', `${lastDayYMD}T23:59:59.999-05:00`);
+      } else if (periodPreset === 'custom') {
+        if (customStart) params.append('startDate', `${customStart}T00:00:00.000-05:00`);
+        if (customEnd) params.append('endDate', `${customEnd}T23:59:59.999-05:00`);
+      }
+
+      const queryString = params.toString() ? `?${params.toString()}` : '';
+      const data = await apiRequest(`/cash-shifts/history${queryString}`);
       setShifts(data || []);
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [periodPreset, customStart, customEnd]);
 
   useEffect(() => {
     fetchHistory();
@@ -144,15 +170,82 @@ export const ShiftAuditView: React.FC = () => {
 
       {/* Tabla de Turnos */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
-        <div className="mb-4 relative max-w-md">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Filtrar por caja o cajero..."
-            className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
-          />
+        {/* Barra de Filtros y Búsqueda */}
+        <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-xs">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Filtrar por caja o cajero..."
+              className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-medium">
+              <button
+                onClick={() => setPeriodPreset('all')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  periodPreset === 'all'
+                    ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Recientes
+              </button>
+              <button
+                onClick={() => setPeriodPreset('today')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  periodPreset === 'today'
+                    ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Hoy
+              </button>
+              <button
+                onClick={() => setPeriodPreset('month')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  periodPreset === 'month'
+                    ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Este Mes (Todo)
+              </button>
+              <button
+                onClick={() => setPeriodPreset('custom')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  periodPreset === 'custom'
+                    ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Personalizado
+              </button>
+            </div>
+
+            {periodPreset === 'custom' && (
+              <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="bg-transparent text-slate-200 text-xs focus:outline-none"
+                />
+                <span className="text-slate-500">a</span>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="bg-transparent text-slate-200 text-xs focus:outline-none"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[620px] shadow-inner bg-slate-950/40">

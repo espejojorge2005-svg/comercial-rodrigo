@@ -59,10 +59,19 @@ export class SalesController {
     @CurrentUser('role') userRole: Role,
     @Query('shiftId') shiftId?: string,
     @Query('isVoided') isVoided?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('limit') limit?: string,
   ) {
     const isVoidedBool =
       isVoided !== undefined ? isVoided === 'true' : undefined;
-    return this.salesService.getSales(userRole, { shiftId, isVoided: isVoidedBool });
+    return this.salesService.getSales(userRole, {
+      shiftId,
+      isVoided: isVoidedBool,
+      startDate,
+      endDate,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 }
 

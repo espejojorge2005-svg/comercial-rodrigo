@@ -734,17 +734,51 @@ export class SalesService {
 
   /**
    * Historial de ventas con control de visibilidad por rol
+   * Soporta filtro por rango de fechas (mes completo) y turno sin truncamiento arbitrario
    */
-  async getSales(userRole: Role, filter?: { shiftId?: string; isVoided?: boolean }) {
+  async getSales(
+    userRole: Role,
+    filter?: {
+      shiftId?: string;
+      isVoided?: boolean;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+    },
+  ) {
     const where: Prisma.SaleWhereInput = {};
 
     if (filter?.shiftId) where.cashShiftId = filter.shiftId;
     if (filter?.isVoided !== undefined) where.isVoided = filter.isVoided;
 
-    const sales = await this.prisma.sale.findMany({
+    if (filter?.startDate || filter?.endDate) {
+      const dateFilter: Prisma.DateTimeFilter = {};
+      if (filter.startDate) {
+        const sStr = filter.startDate.trim();
+        const start = sStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(sStr)
+          ? new Date(sStr)
+          : sStr.includes('T')
+            ? new Date(`${sStr}-05:00`)
+            : new Date(`${sStr}T00:00:00.000-05:00`);
+        if (!isNaN(start.getTime())) dateFilter.gte = start;
+      }
+      if (filter.endDate) {
+        const eStr = filter.endDate.trim();
+        const end = eStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(eStr)
+          ? new Date(eStr)
+          : eStr.includes('T')
+            ? new Date(`${eStr}-05:00`)
+            : new Date(`${eStr}T23:59:59.999-05:00`);
+        if (!isNaN(end.getTime())) dateFilter.lte = end;
+      }
+      if (dateFilter.gte || dateFilter.lte) {
+        where.createdAt = dateFilter;
+      }
+    }
+
+    const findOptions: Prisma.SaleFindManyArgs = {
       where,
       orderBy: { createdAt: 'desc' },
-      take: 100,
       include: {
         creditNote: true,
         items: {
@@ -757,7 +791,15 @@ export class SalesService {
         user: { select: { id: true, name: true, username: true } },
         cashShift: { include: { cashRegister: true } },
       },
-    });
+    };
+
+    if (filter?.limit) {
+      findOptions.take = filter.limit;
+    } else if (!filter?.startDate && !filter?.endDate && !filter?.shiftId) {
+      findOptions.take = 100;
+    }
+
+    const sales = await this.prisma.sale.findMany(findOptions);
 
     return sales.map((s) => {
       const base = {

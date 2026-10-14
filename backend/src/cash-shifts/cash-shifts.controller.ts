@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CashShiftsService } from './cash-shifts.service.js';
 import { OpenShiftDto } from './dto/open-shift.dto.js';
@@ -53,7 +53,15 @@ export class CashShiftsController {
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN)
   @Get('history')
-  async getHistory() {
-    return this.cashShiftsService.getShiftHistory();
+  async getHistory(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.cashShiftsService.getShiftHistory({
+      startDate,
+      endDate,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 }
