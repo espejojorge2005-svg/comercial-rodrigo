@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   Sparkles,
   RefreshCw,
-  Layers,
   ArrowRight,
   ShieldCheck,
 } from 'lucide-react';
