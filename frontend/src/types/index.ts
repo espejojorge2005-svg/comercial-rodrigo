@@ -228,7 +228,7 @@ export interface TaxBookRecord {
   createdAt: string;
   issueDate: string;
   receiptType: ReceiptType;
-  sunatDocTypeCode: string; // "01" | "03"
+  sunatDocTypeCode: string; // "01" (Factura) | "03" (Boleta) | "07" (Nota de Crédito)
   receiptTypeName: string;
   series: string;
   correlativeNumber: number;
@@ -243,6 +243,9 @@ export interface TaxBookRecord {
   totalAmount: number;
   emissionStatus: string;
   cashRegister: string;
+  isCreditNote?: boolean;
+  modifiedDocument?: string | null;
+  reasonDescription?: string | null;
 }
 
 export interface TaxBookResponse {
@@ -254,6 +257,7 @@ export interface TaxBookResponse {
     totalFiscalSales: number;
     invoiceCount: number;
     receiptCount: number;
+    creditNoteCount: number;
     totalTaxableBase: number;
     totalIgv: number;
     totalAmount: number;

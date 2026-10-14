@@ -213,7 +213,8 @@ export const ProfitReportView: React.FC = () => {
       r.fullReceiptNumber.toLowerCase().includes(q) ||
       r.customerDocument.includes(q) ||
       r.customerName.toLowerCase().includes(q) ||
-      r.series.toLowerCase().includes(q)
+      r.series.toLowerCase().includes(q) ||
+      (r.modifiedDocument && r.modifiedDocument.toLowerCase().includes(q))
     );
   });
 
@@ -825,88 +826,106 @@ export const ProfitReportView: React.FC = () => {
       {reportMode === 'tax' && (
         <div className="space-y-4">
           {/* Tarjetas de Resumen Tributario */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {/* Base Imponible Total */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
               <div>
                 <div className="text-xs text-slate-400 font-semibold mb-1 flex items-center justify-between">
-                  <span>Op. Gravada (Base Imponible)</span>
-                  <FileText className="w-4 h-4 text-blue-400" />
+                  <span>Op. Gravada Neta</span>
+                  <FileText className="w-3.5 h-3.5 text-blue-400" />
                 </div>
-                <div className="text-xl font-black text-white">
+                <div className="text-lg font-black text-white">
                   {formatCurrency(taxData?.summary.totalTaxableBase || 0)}
                 </div>
               </div>
-              <div className="mt-2 text-[11px] text-slate-400">
-                Suma antes del 18% de IGV
+              <div className="mt-1.5 text-[10px] text-slate-400">
+                Suma neta antes del 18%
               </div>
             </div>
 
             {/* Total IGV Facturado */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
               <div>
                 <div className="text-xs text-slate-400 font-semibold mb-1 flex items-center justify-between">
-                  <span>Total IGV (18%)</span>
-                  <Scale className="w-4 h-4 text-indigo-400" />
+                  <span>Total IGV Neto</span>
+                  <Scale className="w-3.5 h-3.5 text-indigo-400" />
                 </div>
-                <div className="text-xl font-black text-indigo-400">
+                <div className="text-lg font-black text-indigo-400">
                   {formatCurrency(taxData?.summary.totalIgv || 0)}
                 </div>
               </div>
-              <div className="mt-2 text-[11px] text-slate-400">
-                Débito fiscal para declaración
+              <div className="mt-1.5 text-[10px] text-slate-400">
+                Débito fiscal a declarar
               </div>
             </div>
 
             {/* Total Facturado Fiscal */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-blue-500/30 flex flex-col justify-between">
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-blue-500/30 flex flex-col justify-between">
               <div>
                 <div className="text-xs text-blue-400 font-bold mb-1 flex items-center justify-between">
-                  <span>Total Comprobantes Fiscales</span>
-                  <Receipt className="w-4 h-4 text-blue-400" />
+                  <span>Total Neto SUNAT</span>
+                  <Receipt className="w-3.5 h-3.5 text-blue-400" />
                 </div>
-                <div className="text-xl font-black text-blue-300">
+                <div className="text-lg font-black text-blue-300">
                   {formatCurrency(taxData?.summary.totalAmount || 0)}
                 </div>
               </div>
-              <div className="mt-2 text-[11px] text-blue-300/80 font-medium">
-                {taxData?.summary.totalFiscalSales || 0} comprobantes SUNAT
+              <div className="mt-1.5 text-[10px] text-blue-300/80 font-medium">
+                {taxData?.summary.totalFiscalSales || 0} registros oficiales
               </div>
             </div>
 
             {/* Boletas Emitidas (03) */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
               <div>
                 <div className="text-xs text-slate-400 font-semibold mb-1 flex items-center justify-between">
-                  <span>Boletas Emitidas (03)</span>
+                  <span>Boletas (03)</span>
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
                     B001 / B002
                   </span>
                 </div>
-                <div className="text-xl font-black text-white">
+                <div className="text-lg font-black text-white">
                   {taxData?.summary.receiptCount || 0}
                 </div>
               </div>
-              <div className="mt-2 text-[11px] text-slate-400">
-                Clientes finales / minoristas
+              <div className="mt-1.5 text-[10px] text-slate-400">
+                Clientes minoristas / DNI
               </div>
             </div>
 
             {/* Facturas Emitidas (01) */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
               <div>
                 <div className="text-xs text-slate-400 font-semibold mb-1 flex items-center justify-between">
-                  <span>Facturas Emitidas (01)</span>
+                  <span>Facturas (01)</span>
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
                     F001 / F002
                   </span>
                 </div>
-                <div className="text-xl font-black text-white">
+                <div className="text-lg font-black text-white">
                   {taxData?.summary.invoiceCount || 0}
                 </div>
               </div>
-              <div className="mt-2 text-[11px] text-slate-400">
-                Empresas con RUC 11 dígitos
+              <div className="mt-1.5 text-[10px] text-slate-400">
+                Empresas con RUC
+              </div>
+            </div>
+
+            {/* Notas de Crédito (07) */}
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-rose-500/30 flex flex-col justify-between">
+              <div>
+                <div className="text-xs text-rose-300 font-bold mb-1 flex items-center justify-between">
+                  <span>Notas Crédito (07)</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800">
+                    BC01 / FC01
+                  </span>
+                </div>
+                <div className="text-lg font-black text-rose-400">
+                  {taxData?.summary.creditNoteCount || 0}
+                </div>
+              </div>
+              <div className="mt-1.5 text-[10px] text-rose-300/80 font-medium">
+                Restan base e IGV
               </div>
             </div>
           </div>
@@ -919,7 +938,7 @@ export const ProfitReportView: React.FC = () => {
                   Registro de Ventas e Ingresos (Detalle para Declaración)
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Visualización previa de las columnas exactas que exporta el archivo Excel.
+                  Visualización previa de las columnas exactas que exporta el archivo Excel oficial RVIE.
                 </p>
               </div>
 
@@ -951,7 +970,7 @@ export const ProfitReportView: React.FC = () => {
                     <th className="py-2.5 px-3 text-right">Base Imponible</th>
                     <th className="py-2.5 px-3 text-right">IGV (18%)</th>
                     <th className="py-2.5 px-3 text-right">Importe Total</th>
-                    <th className="py-2.5 px-3 text-center">Estado</th>
+                    <th className="py-2.5 px-3 text-center">Estado SUNAT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -962,12 +981,14 @@ export const ProfitReportView: React.FC = () => {
                       <td className="py-2.5 px-3 text-center">
                         <span
                           className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            rec.sunatDocTypeCode === '01'
-                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                              : 'bg-blue-950 text-blue-300 border border-blue-800'
+                            rec.sunatDocTypeCode === '07'
+                              ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                              : rec.sunatDocTypeCode === '01'
+                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                : 'bg-blue-950 text-blue-300 border border-blue-800'
                           }`}
                         >
-                          {rec.sunatDocTypeCode} ({rec.sunatDocTypeCode === '01' ? 'FAC' : 'BOL'})
+                          {rec.sunatDocTypeCode} ({rec.sunatDocTypeCode === '07' ? 'N/C' : rec.sunatDocTypeCode === '01' ? 'FAC' : 'BOL'})
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-center font-bold text-white">{rec.series}</td>
@@ -977,19 +998,30 @@ export const ProfitReportView: React.FC = () => {
                       </td>
                       <td className="py-2.5 px-3 text-center text-slate-200">{rec.customerDocument}</td>
                       <td className="py-2.5 px-3 font-sans font-medium text-slate-100 max-w-xs truncate">
-                        {rec.customerName}
+                        <div>{rec.customerName}</div>
+                        {rec.modifiedDocument && (
+                          <div className="text-[10px] text-rose-400 font-mono mt-0.5">
+                            Modifica: {rec.modifiedDocument}
+                          </div>
+                        )}
                       </td>
-                      <td className="py-2.5 px-3 text-right text-slate-300 font-sans">
+                      <td className={`py-2.5 px-3 text-right font-sans ${rec.taxableBase < 0 ? 'text-rose-400 font-bold' : 'text-slate-300'}`}>
                         {formatCurrency(rec.taxableBase)}
                       </td>
-                      <td className="py-2.5 px-3 text-right text-indigo-400 font-sans">
+                      <td className={`py-2.5 px-3 text-right font-sans ${rec.igvAmount < 0 ? 'text-rose-400 font-bold' : 'text-indigo-400'}`}>
                         {formatCurrency(rec.igvAmount)}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-white font-sans">
+                      <td className={`py-2.5 px-3 text-right font-bold font-sans ${rec.totalAmount < 0 ? 'text-rose-400' : 'text-white'}`}>
                         {formatCurrency(rec.totalAmount)}
                       </td>
                       <td className="py-2.5 px-3 text-center font-sans">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            rec.emissionStatus.includes('ANULADO')
+                              ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                              : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                          }`}
+                        >
                           {rec.emissionStatus}
                         </span>
                       </td>

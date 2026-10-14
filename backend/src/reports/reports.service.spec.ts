@@ -11,6 +11,9 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       sale: {
         findMany: vi.fn(),
       },
+      creditNote: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       cashMovement: {
         findMany: vi.fn(),
       },
@@ -19,7 +22,7 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
   });
 
   describe('Libro Tributario (Para el Contador)', () => {
-    it('debe filtrar ÚNICAMENTE Boletas y Facturas, excluyendo Notas de Venta', async () => {
+    it('debe filtrar ÚNICAMENTE Boletas y Facturas, excluyendo Notas de Venta e incluyendo Notas de Crédito restando', async () => {
       mockPrisma.sale.findMany.mockResolvedValue([
         {
           id: 'sale-1',
@@ -36,6 +39,7 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
           customerName: 'JUAN PEREZ',
           customerAddress: null,
           emissionStatus: 'SIMULATED',
+          isVoided: false,
           cashShift: { cashRegister: { name: 'Caja 1' } },
         },
         {
@@ -53,7 +57,33 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
           customerName: 'DISTRIBUIDORA SAC',
           customerAddress: 'Av. Industrial 100',
           emissionStatus: 'SIMULATED',
+          isVoided: false,
           cashShift: { cashRegister: { name: 'Caja 1' } },
+        },
+      ]);
+
+      mockPrisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: 'nc-1',
+          createdAt: new Date('2026-10-12T12:00:00Z'),
+          series: 'BC01',
+          correlativeNumber: 1,
+          fullNumber: 'BC01-00000001',
+          taxableBase: 84.75,
+          igvAmount: 15.25,
+          totalAmount: 100.0,
+          reasonCode: '01',
+          reasonDescription: 'ANULACIÓN DE LA OPERACIÓN',
+          emissionStatus: 'SIMULATED',
+          cashShift: { cashRegister: { name: 'Caja 1' } },
+          sale: {
+            receiptType: ReceiptType.BOLETA,
+            series: 'B001',
+            correlativeNumber: 1,
+            fullReceiptNumber: 'B001-00000001',
+            customerDocument: '71234567',
+            customerName: 'JUAN PEREZ',
+          },
         },
       ]);
 
@@ -66,20 +96,25 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       expect(mockPrisma.sale.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            isVoided: false,
             receiptType: { in: [ReceiptType.BOLETA, ReceiptType.FACTURA] },
           }),
         }),
       );
 
-      expect(result.records).toHaveLength(2);
+      // 2 ventas + 1 Nota de Crédito = 3 registros
+      expect(result.records).toHaveLength(3);
       expect(result.summary.receiptCount).toBe(1);
       expect(result.summary.invoiceCount).toBe(1);
+      expect(result.summary.creditNoteCount).toBe(1);
       expect(result.records[0].sunatDocTypeCode).toBe('03'); // Boleta
       expect(result.records[1].sunatDocTypeCode).toBe('01'); // Factura
-      expect(result.records[0].customerDocType).toBe('1'); // DNI
-      expect(result.records[1].customerDocType).toBe('6'); // RUC
-      expect(result.summary.totalAmount).toBe(300.0);
+      expect(result.records[2].sunatDocTypeCode).toBe('07'); // Nota de Crédito
+      expect(result.records[2].taxableBase).toBe(-84.75); // Resta base
+      expect(result.records[2].totalAmount).toBe(-100.0); // Resta total
+      expect(result.records[2].modifiedDocument).toBe('03 - B001-00000001');
+
+      // Total neto: 100 + 200 - 100 = 200
+      expect(result.summary.totalAmount).toBe(200.0);
     });
 
     it('debe generar el buffer Excel del Libro Tributario con ExcelJS', async () => {

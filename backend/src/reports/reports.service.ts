@@ -52,53 +52,59 @@ export class ReportsService {
   async getTaxBookData(query: ReportQueryDto) {
     const dateFilter = this.buildDateFilter(query.startDate, query.endDate);
 
-    const where: Prisma.SaleWhereInput = {
-      isVoided: false,
+    const salesWhere: Prisma.SaleWhereInput = {
       receiptType: { in: [ReceiptType.BOLETA, ReceiptType.FACTURA] },
     };
 
-    if (dateFilter) where.createdAt = dateFilter;
+    if (dateFilter) salesWhere.createdAt = dateFilter;
     if (query.shiftId) {
-      where.cashShiftId = query.shiftId;
-      delete where.createdAt;
+      salesWhere.cashShiftId = query.shiftId;
+      delete salesWhere.createdAt;
     }
     if (query.cashRegisterId) {
-      where.cashShift = { cashRegisterId: query.cashRegisterId };
+      salesWhere.cashShift = { cashRegisterId: query.cashRegisterId };
     }
 
-    const sales = await this.prisma.sale.findMany({
-      where,
-      orderBy: [{ createdAt: 'asc' }, { saleNumber: 'asc' }],
-      include: {
-        user: { select: { name: true } },
-        cashShift: { include: { cashRegister: true } },
-      },
-    });
+    const cnWhere: Prisma.CreditNoteWhereInput = {};
+    if (dateFilter) cnWhere.createdAt = dateFilter;
+    if (query.shiftId) {
+      cnWhere.cashShiftId = query.shiftId;
+      delete cnWhere.createdAt;
+    }
+    if (query.cashRegisterId) {
+      cnWhere.cashShift = { cashRegisterId: query.cashRegisterId };
+    }
 
-    let totalTaxableBase = 0;
-    let totalIgv = 0;
-    let totalAmount = 0;
-    let invoiceCount = 0;
-    let receiptCount = 0;
+    const [sales, creditNotes] = await Promise.all([
+      this.prisma.sale.findMany({
+        where: salesWhere,
+        orderBy: [{ createdAt: 'asc' }, { saleNumber: 'asc' }],
+        include: {
+          user: { select: { name: true } },
+          cashShift: { include: { cashRegister: true } },
+          creditNote: true,
+        },
+      }),
+      this.prisma.creditNote.findMany({
+        where: cnWhere,
+        orderBy: [{ createdAt: 'asc' }],
+        include: {
+          admin: { select: { name: true } },
+          cashShift: { include: { cashRegister: true } },
+          sale: {
+            include: {
+              user: { select: { name: true } },
+            },
+          },
+        },
+      }),
+    ]);
 
-    const records = sales.map((sale, index) => {
-      const taxable = Number(sale.taxableBase || 0);
-      const igv = Number(sale.igvAmount || 0);
-      const total = Number(sale.totalAmount || 0);
-
-      totalTaxableBase += taxable;
-      totalIgv += igv;
-      totalAmount += total;
-
+    // Mapear ventas (Boletas y Facturas)
+    const salesRecords = sales.map((sale) => {
       const isInvoice = sale.receiptType === ReceiptType.FACTURA;
-      if (isInvoice) invoiceCount++;
-      else receiptCount++;
-
-      // Código de tipo de comprobante SUNAT: 01 = Factura, 03 = Boleta de Venta
       const sunatDocTypeCode = isInvoice ? '01' : '03';
 
-      // Tipo de documento de identidad del cliente:
-      // 6: RUC, 1: DNI, 0: Sin documento / Otros
       let customerDocType = '0';
       const doc = sale.customerDocument?.trim();
       if (doc) {
@@ -107,10 +113,17 @@ export class ReportsService {
         else customerDocType = '0';
       }
 
+      const taxable = Number(sale.taxableBase || 0);
+      const igv = Number(sale.igvAmount || 0);
+      const total = Number(sale.totalAmount || 0);
+
+      const emissionStatus = sale.isVoided
+        ? (sale.creditNote ? 'ANULADO CON NC' : 'ANULADO')
+        : (sale.emissionStatus || 'ACEPTADO');
+
       return {
-        itemNumber: index + 1,
         id: sale.id,
-        createdAt: sale.createdAt.toISOString(),
+        createdAt: sale.createdAt,
         issueDate: sale.createdAt.toLocaleDateString('es-PE', {
           timeZone: 'America/Lima',
           day: '2-digit',
@@ -131,8 +144,91 @@ export class ReportsService {
         taxableBase: Number(taxable.toFixed(2)),
         igvAmount: Number(igv.toFixed(2)),
         totalAmount: Number(total.toFixed(2)),
-        emissionStatus: sale.emissionStatus || 'ACEPTADO',
+        emissionStatus,
         cashRegister: sale.cashShift?.cashRegister?.name || 'Caja 1',
+        isCreditNote: false,
+        modifiedDocument: null,
+        reasonDescription: sale.voidedReason || null,
+      };
+    });
+
+    // Mapear Notas de Crédito (Tipo 07)
+    const cnRecords = creditNotes.map((cn) => {
+      const isInvoiceNc = cn.series.startsWith('FC');
+      const sunatDocTypeCode = '07'; // Catálogo 01 SUNAT: 07 = Nota de Crédito
+
+      let customerDocType = '0';
+      const doc = cn.sale?.customerDocument?.trim();
+      if (doc) {
+        if (doc.length === 11) customerDocType = '6';
+        else if (doc.length === 8) customerDocType = '1';
+        else customerDocType = '0';
+      }
+
+      // En el Registro de Ventas de SUNAT, las Notas de Crédito RESTAN (valores negativos)
+      const taxable = -Math.abs(Number(cn.taxableBase || 0));
+      const igv = -Math.abs(Number(cn.igvAmount || 0));
+      const total = -Math.abs(Number(cn.totalAmount || 0));
+
+      const modifiedDocType = isInvoiceNc ? '01' : '03';
+      const modifiedFullNumber = cn.sale?.fullReceiptNumber || `${cn.sale?.series || 'B001'}-${String(cn.sale?.correlativeNumber || 1).padStart(8, '0')}`;
+
+      return {
+        id: cn.id,
+        createdAt: cn.createdAt,
+        issueDate: cn.createdAt.toLocaleDateString('es-PE', {
+          timeZone: 'America/Lima',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        }),
+        receiptType: isInvoiceNc ? ReceiptType.NOTA_CREDITO_FACTURA : ReceiptType.NOTA_CREDITO_BOLETA,
+        sunatDocTypeCode,
+        receiptTypeName: isInvoiceNc ? 'NOTA DE CRÉDITO FACTURA' : 'NOTA DE CRÉDITO BOLETA',
+        series: cn.series,
+        correlativeNumber: cn.correlativeNumber,
+        formattedCorrelative: String(cn.correlativeNumber).padStart(8, '0'),
+        fullReceiptNumber: cn.fullNumber,
+        customerDocType,
+        customerDocument: cn.sale?.customerDocument || '-',
+        customerName: cn.sale?.customerName || (isInvoiceNc ? 'EMPRESA' : 'CLIENTES VARIOS'),
+        customerAddress: cn.sale?.customerAddress || '-',
+        taxableBase: Number(taxable.toFixed(2)),
+        igvAmount: Number(igv.toFixed(2)),
+        totalAmount: Number(total.toFixed(2)),
+        emissionStatus: cn.emissionStatus || 'ACEPTADO',
+        cashRegister: cn.cashShift?.cashRegister?.name || 'Caja 1',
+        isCreditNote: true,
+        modifiedDocument: `${modifiedDocType} - ${modifiedFullNumber}`,
+        reasonDescription: cn.reasonDescription,
+      };
+    });
+
+    // Unificar y ordenar cronológicamente
+    const combined = [...salesRecords, ...cnRecords].sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+
+    let totalTaxableBase = 0;
+    let totalIgv = 0;
+    let totalAmount = 0;
+    let invoiceCount = 0;
+    let receiptCount = 0;
+    let creditNoteCount = 0;
+
+    const records = combined.map((record, index) => {
+      totalTaxableBase += record.taxableBase;
+      totalIgv += record.igvAmount;
+      totalAmount += record.totalAmount;
+
+      if (record.sunatDocTypeCode === '01') invoiceCount++;
+      else if (record.sunatDocTypeCode === '03') receiptCount++;
+      else if (record.sunatDocTypeCode === '07') creditNoteCount++;
+
+      return {
+        ...record,
+        itemNumber: index + 1,
+        createdAt: record.createdAt.toISOString(),
       };
     });
 
@@ -145,6 +241,7 @@ export class ReportsService {
         totalFiscalSales: records.length,
         invoiceCount,
         receiptCount,
+        creditNoteCount,
         totalTaxableBase: Number(totalTaxableBase.toFixed(2)),
         totalIgv: Number(totalIgv.toFixed(2)),
         totalAmount: Number(totalAmount.toFixed(2)),
@@ -176,10 +273,11 @@ export class ReportsService {
       totalsBg: 'F1F5F9', // Gris pizarra claro
       border: 'CBD5E1', // Borde fino
       zebra: 'F8FAFC',
+      ncBg: 'FEF2F2', // Rojo suave para notas de crédito
     };
 
     // 1. TÍTULO Y ENCABEZADO FISCAL
-    sheet.mergeCells('A1:L1');
+    sheet.mergeCells('A1:M1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = 'COMERCIAL RODRIGO - REGISTRO DE VENTAS E INGRESOS (SUNAT)';
     titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: colors.headerText } };
@@ -188,9 +286,9 @@ export class ReportsService {
     sheet.getRow(1).height = 34;
 
     // Subtítulo con metadatos tributarios
-    sheet.mergeCells('A2:L2');
+    sheet.mergeCells('A2:M2');
     const subTitleCell = sheet.getCell('A2');
-    subTitleCell.value = `DOCUMENTO FISCAL CONTABLE OFICIAL | FILTRO: SOLO BOLETAS Y FACTURAS (EXCLUYE NOTAS DE VENTA INTERNAS) | RUC: 20600000000 | FECHA DE GENERACIÓN: ${new Date().toLocaleDateString('es-PE', { timeZone: 'America/Lima' })}`;
+    subTitleCell.value = `DOCUMENTO FISCAL CONTABLE OFICIAL | BOLETAS (03), FACTURAS (01) Y NOTAS DE CRÉDITO (07) | RUC: 20600000000 | FECHA: ${new Date().toLocaleDateString('es-PE', { timeZone: 'America/Lima' })}`;
     subTitleCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: '1E293B' } };
     subTitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.subHeaderBg } };
     subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -200,23 +298,32 @@ export class ReportsService {
 
     // 2. RESUMEN RÁPIDO EN CABECERA (KPIs para el Contador)
     const kpiRowIndex = 4;
-    sheet.getCell(`B${kpiRowIndex}`).value = 'Total Boletas:';
+    sheet.getCell(`B${kpiRowIndex}`).value = 'Boletas (03):';
     sheet.getCell(`B${kpiRowIndex}`).font = { bold: true };
     sheet.getCell(`C${kpiRowIndex}`).value = data.summary.receiptCount;
 
-    sheet.getCell(`E${kpiRowIndex}`).value = 'Total Facturas:';
-    sheet.getCell(`E${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`F${kpiRowIndex}`).value = data.summary.invoiceCount;
+    sheet.getCell(`D${kpiRowIndex}`).value = 'Facturas (01):';
+    sheet.getCell(`D${kpiRowIndex}`).font = { bold: true };
+    sheet.getCell(`E${kpiRowIndex}`).value = data.summary.invoiceCount;
 
-    sheet.getCell(`H${kpiRowIndex}`).value = 'Op. Gravada:';
+    sheet.getCell(`F${kpiRowIndex}`).value = 'Notas de Crédito (07):';
+    sheet.getCell(`F${kpiRowIndex}`).font = { bold: true };
+    sheet.getCell(`G${kpiRowIndex}`).value = data.summary.creditNoteCount;
+
+    sheet.getCell(`H${kpiRowIndex}`).value = 'Op. Gravada Neta:';
     sheet.getCell(`H${kpiRowIndex}`).font = { bold: true };
     sheet.getCell(`I${kpiRowIndex}`).value = data.summary.totalTaxableBase;
-    sheet.getCell(`I${kpiRowIndex}`).numFmt = '"S/ "#,##0.00';
+    sheet.getCell(`I${kpiRowIndex}`).numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
 
-    sheet.getCell(`J${kpiRowIndex}`).value = 'Total IGV (18%):';
+    sheet.getCell(`J${kpiRowIndex}`).value = 'Total IGV Neto:';
     sheet.getCell(`J${kpiRowIndex}`).font = { bold: true };
     sheet.getCell(`K${kpiRowIndex}`).value = data.summary.totalIgv;
-    sheet.getCell(`K${kpiRowIndex}`).numFmt = '"S/ "#,##0.00';
+    sheet.getCell(`K${kpiRowIndex}`).numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
+
+    sheet.getCell(`L${kpiRowIndex}`).value = 'Total Neto:';
+    sheet.getCell(`L${kpiRowIndex}`).font = { bold: true };
+    sheet.getCell(`M${kpiRowIndex}`).value = data.summary.totalAmount;
+    sheet.getCell(`M${kpiRowIndex}`).numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
 
     sheet.addRow([]); // Espacio
 
@@ -235,6 +342,7 @@ export class ReportsService {
       'IGV 18% (S/)',
       'IMPORTE TOTAL (S/)',
       'ESTADO SUNAT',
+      'DOC. MODIFICADO (NC)',
     ];
 
     const headerRow = sheet.getRow(tableHeaderRowIndex);
@@ -259,7 +367,7 @@ export class ReportsService {
       row.values = [
         record.itemNumber,
         record.issueDate,
-        record.sunatDocTypeCode, // 01 / 03
+        record.sunatDocTypeCode, // 01 / 03 / 07
         record.series,
         record.formattedCorrelative,
         record.customerDocType, // 1 / 6 / 0
@@ -269,10 +377,12 @@ export class ReportsService {
         record.igvAmount,
         record.totalAmount,
         record.emissionStatus,
+        record.modifiedDocument || '-',
       ];
       row.height = 20;
 
       const isZebra = idx % 2 === 1;
+      const isCreditNote = record.sunatDocTypeCode === '07';
 
       row.eachCell((cell, colNumber) => {
         cell.font = { name: 'Calibri', size: 10 };
@@ -283,12 +393,14 @@ export class ReportsService {
           right: { style: 'thin', color: { argb: colors.border } },
         };
 
-        if (isZebra) {
+        if (isCreditNote) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.ncBg } };
+        } else if (isZebra) {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.zebra } };
         }
 
         // Alineaciones y formatos numéricos
-        if ([1, 2, 3, 4, 5, 6, 12].includes(colNumber)) {
+        if ([1, 2, 3, 4, 5, 6, 12, 13].includes(colNumber)) {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         } else if (colNumber === 7) {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -296,7 +408,10 @@ export class ReportsService {
           cell.alignment = { horizontal: 'left', vertical: 'middle' };
         } else if ([9, 10, 11].includes(colNumber)) {
           cell.alignment = { horizontal: 'right', vertical: 'middle' };
-          cell.numFmt = '#,##0.00';
+          cell.numFmt = '#,##0.00;[Red]-#,##0.00';
+          if (isCreditNote) {
+            cell.font = { name: 'Calibri', size: 10, color: { argb: 'DC2626' }, bold: true };
+          }
         }
       });
 
@@ -309,14 +424,14 @@ export class ReportsService {
     totalsRow.getCell(1).value = '';
     sheet.mergeCells(`A${currentRow}:H${currentRow}`);
     const totalsLabel = sheet.getCell(`A${currentRow}`);
-    totalsLabel.value = 'TOTALES GENERALES:';
+    totalsLabel.value = 'TOTALES GENERALES NETOS:';
     totalsLabel.font = { name: 'Calibri', size: 11, bold: true, color: { argb: '0F172A' } };
     totalsLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
     const startDataRow = tableHeaderRowIndex + 1;
     const endDataRow = currentRow - 1;
 
-    // Fórmulas SUM
+    // Fórmulas SUM (en Excel SUM suma algebraicamente los negativos de las NC)
     if (data.records.length > 0) {
       totalsRow.getCell(9).value = { formula: `SUM(I${startDataRow}:I${endDataRow})`, result: data.summary.totalTaxableBase };
       totalsRow.getCell(10).value = { formula: `SUM(J${startDataRow}:J${endDataRow})`, result: data.summary.totalIgv };
@@ -328,8 +443,9 @@ export class ReportsService {
     }
 
     totalsRow.getCell(12).value = '';
+    totalsRow.getCell(13).value = '';
 
-    for (let c = 1; c <= 12; c++) {
+    for (let c = 1; c <= 13; c++) {
       const cell = totalsRow.getCell(c);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.totalsBg } };
       cell.font = { name: 'Calibri', size: 11, bold: true };
@@ -340,7 +456,7 @@ export class ReportsService {
         right: { style: 'thin', color: { argb: colors.border } },
       };
       if ([9, 10, 11].includes(c)) {
-        cell.numFmt = '#,##0.00';
+        cell.numFmt = '#,##0.00;[Red]-#,##0.00';
         cell.alignment = { horizontal: 'right', vertical: 'middle' };
       }
     }
@@ -358,7 +474,8 @@ export class ReportsService {
       { key: 'base', width: 18 },
       { key: 'igv', width: 16 },
       { key: 'total', width: 18 },
-      { key: 'status', width: 16 },
+      { key: 'status', width: 18 },
+      { key: 'modifiedDoc', width: 22 },
     ];
 
     const buffer = await workbook.xlsx.writeBuffer();
