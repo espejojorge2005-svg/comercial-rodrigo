@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useCartStore } from '../../store/useCartStore.js';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
@@ -121,9 +121,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     changeAmount = Math.max(0, Number((cashNum - requiredCash).toFixed(2)));
   }
 
-  // Cálculos fiscales informativos
-  const taxableBase = Number((totalAmount / 1.18).toFixed(2));
-  const igvAmount = Number((totalAmount - taxableBase).toFixed(2));
+  // Cálculos fiscales informativos calculados ítem por ítem para coincidencia al céntimo (Catálogo 07 SUNAT)
+  const { taxableBase, igvAmount } = useMemo(() => {
+    let base = 0;
+    let igv = 0;
+    items.forEach((item) => {
+      const subtotalItem = Number((item.quantity * item.price).toFixed(2));
+      const valTotal = Number((subtotalItem / 1.18).toFixed(2));
+      base += valTotal;
+      igv += Number((subtotalItem - valTotal).toFixed(2));
+    });
+    return {
+      taxableBase: Number(base.toFixed(2)),
+      igvAmount: Number(igv.toFixed(2)),
+    };
+  }, [items]);
 
   // Validaciones según el tipo de comprobante
   const isBoletaOver700 = receiptType === 'BOLETA' && totalAmount >= 700;

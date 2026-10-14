@@ -220,9 +220,24 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     }, 250);
   };
 
-  const fullReceiptNumber = getFullReceiptNumber();
-  const taxableBase = saleData.taxableBase || Number((saleData.totalAmount / 1.18).toFixed(2));
-  const igvAmount = saleData.igvAmount || Number((saleData.totalAmount - taxableBase).toFixed(2));
+  let taxableBase = Number(saleData.taxableBase || 0);
+  let igvAmount = Number(saleData.igvAmount || 0);
+
+  if ((!taxableBase || !igvAmount) && saleData.items && saleData.items.length > 0) {
+    let base = 0;
+    let igv = 0;
+    saleData.items.forEach((item: any) => {
+      const sub = Number(item.subtotal ?? item.quantity * item.unitPrice);
+      const b = Number((sub / 1.18).toFixed(2));
+      base += b;
+      igv += Number((sub - b).toFixed(2));
+    });
+    taxableBase = Number(base.toFixed(2));
+    igvAmount = Number(igv.toFixed(2));
+  } else if (!taxableBase || !igvAmount) {
+    taxableBase = Number((saleData.totalAmount / 1.18).toFixed(2));
+    igvAmount = Number((saleData.totalAmount - taxableBase).toFixed(2));
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
