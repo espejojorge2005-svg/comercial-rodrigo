@@ -220,6 +220,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     }, 250);
   };
 
+  const fullReceiptNumber = getFullReceiptNumber();
   let taxableBase = Number(saleData.taxableBase || 0);
   let igvAmount = Number(saleData.igvAmount || 0);
 
