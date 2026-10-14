@@ -30,6 +30,9 @@ export interface BillingIssueResult {
   emissionStatus: 'SIMULATED' | 'ACCEPTED' | 'PENDING' | 'REJECTED';
   message: string;
   externalId?: string;
+  pdfUrl?: string | null;
+  xmlUrl?: string | null;
+  cdrUrl?: string | null;
   rawResponse?: any;
 }
 

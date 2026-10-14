@@ -1440,7 +1440,7 @@ export class SalesService {
         }
 
         // 3. Crear venta y movimientos de Kardex
-        const saleResult = await this.prisma.$transaction(
+        const txResult = await this.prisma.$transaction(
           async (tx) => {
             let totalCalculated = 0;
             let totalTaxableBase = 0;
@@ -1647,7 +1647,7 @@ export class SalesService {
               customerEmail: offlineSale.customerEmail?.trim() || null,
               paymentMethod: offlineSale.paymentMethod,
               companyRuc: storeConfig?.ruc || '10458923011',
-              items: txResult.validatedItems.map((vi) => ({
+              items: txResult.validatedItems.map((vi: any) => ({
                 name: vi.product.name,
                 quantity: vi.quantity,
                 unitPrice: vi.unitPrice,
@@ -1703,7 +1703,7 @@ export class SalesService {
             cashPaid: Number(finalSale.cashPaid),
             digitalPaid: Number(finalSale.digitalPaid),
             changeAmount: Number(finalSale.changeAmount),
-            items: finalSale.items.map((i) => ({
+            items: finalSale.items.map((i: any) => ({
               ...i,
               quantity: Number(i.quantity),
               unitPrice: Number(i.unitPrice),

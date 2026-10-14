@@ -82,6 +82,9 @@ export class MockBillingDriver implements IBillingDriver {
       emissionStatus: 'SIMULATED',
       message: `Comprobante ${receiptType} ${series}-${paddedCorrelative} generado exitosamente en modo simulación fiscal`,
       externalId: `SIM-${Date.now()}-${series}-${paddedCorrelative}`,
+      pdfUrl: null,
+      xmlUrl: null,
+      cdrUrl: null,
       rawResponse: {
         driver: 'MOCK',
         tipo_comprobante: docTypeCode,
@@ -151,6 +154,9 @@ export class MockBillingDriver implements IBillingDriver {
       emissionStatus: 'SIMULATED',
       message: `Nota de Crédito ${creditNoteSeries}-${paddedCorrelative} generada exitosamente en modo simulación fiscal (Modifica ${modifiedFullNumber})`,
       externalId: `SIM-NC-${Date.now()}-${creditNoteSeries}-${paddedCorrelative}`,
+      pdfUrl: null,
+      xmlUrl: null,
+      cdrUrl: null,
       rawResponse: {
         driver: 'MOCK',
         tipo_comprobante: docTypeCode,

@@ -265,6 +265,9 @@ export class NubefactBillingDriver implements IBillingDriver {
       emissionStatus: 'ACCEPTED',
       message: 'Comprobante aceptado por SUNAT a través de Nubefact',
       externalId: data.enlace || `${series}-${correlativeNumber}`,
+      pdfUrl: data.enlace_del_pdf || null,
+      xmlUrl: data.enlace_del_xml || null,
+      cdrUrl: data.enlace_del_cdr || null,
       rawResponse: data,
     };
   }
@@ -415,6 +418,9 @@ export class NubefactBillingDriver implements IBillingDriver {
       emissionStatus: 'ACCEPTED',
       message: 'Nota de Crédito aceptada por SUNAT a través de Nubefact',
       externalId: data.enlace || `${creditNoteSeries}-${creditNoteCorrelative}`,
+      pdfUrl: data.enlace_del_pdf || null,
+      xmlUrl: data.enlace_del_xml || null,
+      cdrUrl: data.enlace_del_cdr || null,
       rawResponse: data,
     };
   }
