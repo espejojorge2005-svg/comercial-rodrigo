@@ -58,7 +58,10 @@ export class ReportsService {
     };
 
     if (dateFilter) where.createdAt = dateFilter;
-    if (query.shiftId) where.cashShiftId = query.shiftId;
+    if (query.shiftId) {
+      where.cashShiftId = query.shiftId;
+      delete where.createdAt;
+    }
     if (query.cashRegisterId) {
       where.cashShift = { cashRegisterId: query.cashRegisterId };
     }
@@ -387,6 +390,8 @@ export class ReportsService {
     if (query.shiftId) {
       saleWhere.cashShiftId = query.shiftId;
       movementWhere.cashShiftId = query.shiftId;
+      delete saleWhere.createdAt;
+      delete movementWhere.createdAt;
     }
 
     if (query.cashRegisterId) {

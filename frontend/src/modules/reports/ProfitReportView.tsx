@@ -27,6 +27,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   FileText,
+  AlertCircle,
+  Layers,
 } from 'lucide-react';
 
 export const ProfitReportView: React.FC = () => {
@@ -49,6 +51,16 @@ export const ProfitReportView: React.FC = () => {
   const [managementTab, setManagementTab] = useState<'sales' | 'expenses'>('sales');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedSale, setSelectedSale] = useState<any | null>(null);
+
+  // Turnos para filtrado específico
+  const [shiftsList, setShiftsList] = useState<any[]>([]);
+  const [selectedShiftId, setSelectedShiftId] = useState<string>('all');
+
+  useEffect(() => {
+    apiRequest<any[]>('/cash-shifts/history')
+      .then((data) => setShiftsList(data || []))
+      .catch((err) => console.error('Error cargando historial de turnos:', err));
+  }, []);
 
   // Calcula rango ISO con offset -05:00 de Perú
   const getDateRangeParams = useCallback(() => {
@@ -113,8 +125,13 @@ export const ProfitReportView: React.FC = () => {
     try {
       const { startDate, endDate } = getDateRangeParams();
       const params = new URLSearchParams();
-      if (startDate) params.append('startDate', startDate);
-      if (endDate) params.append('endDate', endDate);
+
+      if (selectedShiftId !== 'all') {
+        params.append('shiftId', selectedShiftId);
+      } else {
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
+      }
 
       if (reportMode === 'management') {
         const res = await apiRequest<ManagementReportResponse>(`/reports/management?${params.toString()}`);
@@ -128,7 +145,7 @@ export const ProfitReportView: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [reportMode, getDateRangeParams]);
+  }, [reportMode, getDateRangeParams, selectedShiftId]);
 
   useEffect(() => {
     fetchReport();
@@ -142,8 +159,13 @@ export const ProfitReportView: React.FC = () => {
     try {
       const { startDate, endDate } = getDateRangeParams();
       const params = new URLSearchParams();
-      if (startDate) params.append('startDate', startDate);
-      if (endDate) params.append('endDate', endDate);
+
+      if (selectedShiftId !== 'all') {
+        params.append('shiftId', selectedShiftId);
+      } else {
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
+      }
 
       if (reportMode === 'management') {
         await downloadReportBlob(
@@ -367,11 +389,76 @@ export const ProfitReportView: React.FC = () => {
           </div>
         )}
 
-        <div className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
-          <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-          <span>{currentPeriodLabel}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Selector de Turno de Caja */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-semibold flex items-center gap-1">
+              <Layers className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Turno:</span>
+            </span>
+            <select
+              value={selectedShiftId}
+              onChange={(e) => setSelectedShiftId(e.target.value)}
+              className="bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 outline-none max-w-[260px] cursor-pointer"
+            >
+              <option value="all">Por Fechas (Todos los turnos)</option>
+              {shiftsList.map((s) => {
+                const dateStr = s.closedAt ? formatPeruDate(s.closedAt) : formatPeruDate(s.openedAt);
+                const statusStr = s.status === 'OPEN' ? '🟢 ABIERTO' : 'CERRADO';
+                const cashier = s.user?.name || 'Cajero';
+                const box = s.cashRegister?.name || 'Caja';
+                return (
+                  <option key={s.id} value={s.id}>
+                    {box} ({cashier}) - {statusStr} ({dateStr})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          <div className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
+            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{selectedShiftId !== 'all' ? 'Turno Específico Seleccionado' : currentPeriodLabel}</span>
+          </div>
         </div>
       </div>
+
+      {/* Alerta Inteligente cuando no hay ventas en 'Hoy' */}
+      {selectedShiftId === 'all' && periodPreset === 'today' && ((reportMode === 'management' && managementData?.summary.totalGrossRevenue === 0) || (reportMode === 'tax' && taxData?.summary.totalAmount === 0)) && (
+        <div className="mb-6 p-4 rounded-2xl bg-amber-950/20 border border-amber-500/30 flex items-start gap-3.5 shadow-lg">
+          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1.5">
+            <h4 className="text-xs font-bold text-amber-300">
+              No hay ventas registradas con fecha de emisión de hoy ({formatPeruDate(new Date())})
+            </h4>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Las ventas se contabilizan en el día exacto en que se emitieron los tickets. Si cerraste un turno hoy de madrugada, las ventas corresponden a las fechas en que operó la caja física. Puedes visualizarlas y auditarlas inmediatamente seleccionando:
+            </p>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                onClick={() => setPeriodPreset('week')}
+                className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold border border-amber-500/40 transition-all cursor-pointer"
+              >
+                📅 Ver Últimos 7 Días
+              </button>
+              <button
+                onClick={() => setPeriodPreset('month')}
+                className="px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-bold border border-emerald-500/40 transition-all cursor-pointer"
+              >
+                📊 Ver Este Mes
+              </button>
+              {shiftsList.length > 0 && (
+                <button
+                  onClick={() => setSelectedShiftId(shiftsList[0].id)}
+                  className="px-3 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs font-bold border border-indigo-500/40 transition-all cursor-pointer"
+                >
+                  🔍 Ver Último Turno Cerrado (Caja 1)
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =================================================================== */}
       {/* VISTA A: REPORTE OPERATIVO Y GERENCIAL (PARA LA DUEÑA)              */}
