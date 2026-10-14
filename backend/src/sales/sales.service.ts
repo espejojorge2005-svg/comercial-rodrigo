@@ -554,12 +554,19 @@ export class SalesService {
     const isFiscal =
       sale.receiptType === ReceiptType.BOLETA || sale.receiptType === ReceiptType.FACTURA;
 
-    // 2. Reingresar stock a Kardex, emitir Nota de Crédito si aplica y anular venta atómicamente
-    return this.prisma.$transaction(
+    // =========================================================================
+    // ETAPA 1: TRANSACCIÓN DB LOCAL (Atómica y Rápida: Reingreso de stock y anulación)
+    // =========================================================================
+    const txResult = await this.prisma.$transaction(
       async (tx) => {
-        let creditNoteResult: any = null;
+        let createdCreditNote: any = null;
+        let ncSeries = '';
+        let ncCorrelative = 0;
+        let ncFullNumber = '';
+        let reasonCode = '01';
+        let reasonDescription = 'ANULACIÓN DE LA OPERACIÓN';
 
-        // Si es Boleta o Factura, generar Nota de Crédito Electrónica según normativa SUNAT
+        // Si es Boleta o Factura, reservar correlativo y registrar Nota de Crédito en DB
         if (isFiscal) {
           const ncReceiptType =
             sale.receiptType === ReceiptType.BOLETA
@@ -568,7 +575,7 @@ export class SalesService {
 
           const registerIdentifier = sale.cashShift.cashRegister.identifier;
           const registerName = sale.cashShift.cashRegister.name;
-          const ncSeries = this.getSeriesForRegister(
+          ncSeries = this.getSeriesForRegister(
             registerIdentifier,
             registerName,
             ncReceiptType,
@@ -587,10 +594,10 @@ export class SalesService {
             },
           });
 
-          const ncCorrelative = sequence.currentNumber;
-          const ncFullNumber = `${ncSeries}-${String(ncCorrelative).padStart(8, '0')}`;
-          const reasonCode = dto.reasonCode || '01';
-          const reasonDescription =
+          ncCorrelative = sequence.currentNumber;
+          ncFullNumber = `${ncSeries}-${String(ncCorrelative).padStart(8, '0')}`;
+          reasonCode = dto.reasonCode || '01';
+          reasonDescription =
             dto.reasonDescription ||
             (reasonCode === '01'
               ? 'ANULACIÓN DE LA OPERACIÓN'
@@ -600,43 +607,7 @@ export class SalesService {
                   ? 'DEVOLUCIÓN TOTAL'
                   : dto.reason);
 
-          const storeConfig = await tx.storeConfig.findFirst();
-
-          const billingRes = await this.billingService.issueCreditNote({
-            saleId: sale.id,
-            receiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
-            creditNoteSeries: ncSeries,
-            creditNoteCorrelative: ncCorrelative,
-            modifiedReceiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
-            modifiedDocTypeCode: sale.receiptType === ReceiptType.FACTURA ? '01' : '03',
-            modifiedSeries: sale.series,
-            modifiedCorrelative: sale.correlativeNumber,
-            modifiedFullNumber:
-              sale.fullReceiptNumber ||
-              `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`,
-            reasonCode,
-            reasonDescription,
-            customReason: dto.reason,
-            totalAmount: Number(sale.totalAmount),
-            taxableBase: Number(sale.taxableBase),
-            igvAmount: Number(sale.igvAmount),
-            customerName:
-              sale.customerName ||
-              (sale.receiptType === ReceiptType.FACTURA ? 'EMPRESA' : 'CLIENTES VARIOS'),
-            customerDocument: sale.customerDocument,
-            customerAddress: sale.customerAddress,
-            companyRuc: storeConfig?.ruc || '10458923011',
-            items: sale.items.map((i) => ({
-              name: i.product.name,
-              quantity: Number(i.quantity),
-              unitPrice: Number(i.unitPrice),
-              subtotal: Number(i.subtotal),
-              unitType: i.product.unitType,
-            })),
-            createdAt: new Date(),
-          });
-
-          const createdCreditNote = await tx.creditNote.create({
+          createdCreditNote = await tx.creditNote.create({
             data: {
               series: ncSeries,
               correlativeNumber: ncCorrelative,
@@ -648,31 +619,13 @@ export class SalesService {
               taxableBase: sale.taxableBase,
               igvAmount: sale.igvAmount,
               totalAmount: sale.totalAmount,
-              hash: billingRes.hash,
-              qrString: billingRes.qrString,
-              emissionStatus: billingRes.emissionStatus as EmissionStatus,
-              externalId: billingRes.externalId,
+              hash: null,
+              qrString: null,
+              emissionStatus: EmissionStatus.PENDING,
               adminId: admin.id,
               cashShiftId: sale.cashShiftId,
             },
           });
-
-          creditNoteResult = {
-            id: createdCreditNote.id,
-            series: createdCreditNote.series,
-            correlativeNumber: createdCreditNote.correlativeNumber,
-            fullNumber: createdCreditNote.fullNumber,
-            reasonCode: createdCreditNote.reasonCode,
-            reasonDescription: createdCreditNote.reasonDescription,
-            customReason: createdCreditNote.customReason,
-            taxableBase: Number(createdCreditNote.taxableBase),
-            igvAmount: Number(createdCreditNote.igvAmount),
-            totalAmount: Number(createdCreditNote.totalAmount),
-            hash: createdCreditNote.hash,
-            qrString: createdCreditNote.qrString,
-            emissionStatus: createdCreditNote.emissionStatus,
-            createdAt: createdCreditNote.createdAt,
-          };
         }
 
         // Reingresar stock a Kardex de forma atómica para evitar Lost Updates
@@ -688,8 +641,8 @@ export class SalesService {
           });
 
           // Registrar devolución en Kardex con balance exacto
-          const reasonText = creditNoteResult
-            ? `Nota de Crédito ${creditNoteResult.fullNumber} [Anula ${sale.fullReceiptNumber || sale.saleNumber}] - Motivo: ${dto.reason}`
+          const reasonText = ncFullNumber
+            ? `Nota de Crédito ${ncFullNumber} [Anula ${sale.fullReceiptNumber || sale.saleNumber}] - Motivo: ${dto.reason}`
             : `Anulación de venta #${sale.saleNumber} - Motivo: ${dto.reason}`;
 
           await tx.kardexMovement.create({
@@ -719,17 +672,127 @@ export class SalesService {
         });
 
         return {
-          message: creditNoteResult
-            ? `Nota de Crédito ${creditNoteResult.fullNumber} emitida con éxito. Venta anulada y stock devuelto a inventario.`
-            : 'Venta anulada correctamente. Stock devuelto a inventario.',
-          saleId: voided.id,
-          saleNumber: voided.saleNumber,
-          authorizedBy: admin.name,
-          creditNote: creditNoteResult,
+          voided,
+          createdCreditNote,
+          isFiscal,
+          ncSeries,
+          ncCorrelative,
+          ncFullNumber,
+          reasonCode,
+          reasonDescription,
         };
       },
-      { timeout: 15000 },
+      { timeout: 10000 },
     );
+
+    // =========================================================================
+    // ETAPA 2: INTEGRACIÓN CON NUBEFACT / SUNAT (FUERA DE LA TRANSACCIÓN DB)
+    // =========================================================================
+    let creditNoteResult: any = null;
+
+    if (txResult.isFiscal && txResult.createdCreditNote) {
+      const storeConfig = await this.prisma.storeConfig.findFirst();
+      try {
+        const billingRes = await this.billingService.issueCreditNote({
+          saleId: sale.id,
+          receiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
+          creditNoteSeries: txResult.ncSeries,
+          creditNoteCorrelative: txResult.ncCorrelative,
+          modifiedReceiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
+          modifiedDocTypeCode: sale.receiptType === ReceiptType.FACTURA ? '01' : '03',
+          modifiedSeries: sale.series,
+          modifiedCorrelative: sale.correlativeNumber,
+          modifiedFullNumber:
+            sale.fullReceiptNumber ||
+            `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`,
+          reasonCode: txResult.reasonCode,
+          reasonDescription: txResult.reasonDescription,
+          customReason: dto.reason,
+          totalAmount: Number(sale.totalAmount),
+          taxableBase: Number(sale.taxableBase),
+          igvAmount: Number(sale.igvAmount),
+          customerName:
+            sale.customerName ||
+            (sale.receiptType === ReceiptType.FACTURA ? 'EMPRESA' : 'CLIENTES VARIOS'),
+          customerDocument: sale.customerDocument,
+          customerAddress: sale.customerAddress,
+          customerEmail: sale.customerEmail?.trim() || null,
+          companyRuc: storeConfig?.ruc || '10458923011',
+          items: sale.items.map((i) => ({
+            name: i.product.name,
+            quantity: Number(i.quantity),
+            unitPrice: Number(i.unitPrice),
+            subtotal: Number(i.subtotal),
+            unitType: i.product.unitType,
+          })),
+          createdAt: new Date(),
+        });
+
+        if (billingRes.success) {
+          const finalEmissionStatus =
+            (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
+
+          const updatedNc = await this.prisma.creditNote.update({
+            where: { id: txResult.createdCreditNote.id },
+            data: {
+              hash: billingRes.hash,
+              qrString: billingRes.qrString,
+              emissionStatus: finalEmissionStatus,
+              externalId: billingRes.externalId,
+              pdfUrl: billingRes.pdfUrl,
+              xmlUrl: billingRes.xmlUrl,
+              cdrUrl: billingRes.cdrUrl,
+            },
+          });
+
+          creditNoteResult = {
+            id: updatedNc.id,
+            series: updatedNc.series,
+            correlativeNumber: updatedNc.correlativeNumber,
+            fullNumber: updatedNc.fullNumber,
+            reasonCode: updatedNc.reasonCode,
+            reasonDescription: updatedNc.reasonDescription,
+            customReason: updatedNc.customReason,
+            taxableBase: Number(updatedNc.taxableBase),
+            igvAmount: Number(updatedNc.igvAmount),
+            totalAmount: Number(updatedNc.totalAmount),
+            hash: updatedNc.hash,
+            qrString: updatedNc.qrString,
+            emissionStatus: updatedNc.emissionStatus,
+            createdAt: updatedNc.createdAt,
+          };
+        } else {
+          creditNoteResult = {
+            ...txResult.createdCreditNote,
+            taxableBase: Number(txResult.createdCreditNote.taxableBase),
+            igvAmount: Number(txResult.createdCreditNote.igvAmount),
+            totalAmount: Number(txResult.createdCreditNote.totalAmount),
+            emissionStatus: EmissionStatus.PENDING,
+          };
+        }
+      } catch (billingErr: any) {
+        this.logger.error(
+          `[voidSale] Error al contactar PSE/SUNAT para Nota de Crédito ${txResult.ncFullNumber}: ${billingErr.message}. La anulación local y stock se preservan.`,
+        );
+        creditNoteResult = {
+          ...txResult.createdCreditNote,
+          taxableBase: Number(txResult.createdCreditNote.taxableBase),
+          igvAmount: Number(txResult.createdCreditNote.igvAmount),
+          totalAmount: Number(txResult.createdCreditNote.totalAmount),
+          emissionStatus: EmissionStatus.PENDING,
+        };
+      }
+    }
+
+    return {
+      message: creditNoteResult
+        ? `Nota de Crédito ${creditNoteResult.fullNumber} emitida con éxito. Venta anulada y stock devuelto a inventario.`
+        : 'Venta anulada correctamente. Stock devuelto a inventario.',
+      saleId: txResult.voided.id,
+      saleNumber: txResult.voided.saleNumber,
+      authorizedBy: admin.name,
+      creditNote: creditNoteResult,
+    };
   }
 
   /**
@@ -1476,39 +1539,7 @@ export class SalesService {
             const correlativeNumber = sequence.currentNumber;
             const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
 
-            let hash: string | null = null;
-            let qrString: string | null = null;
-            let emissionStatus: EmissionStatus | null = null;
-
-            if (isFiscal) {
-              const storeConfig = await tx.storeConfig.findFirst();
-              const billingRes = await this.billingService.issueReceipt({
-                receiptType: receiptType as 'BOLETA' | 'FACTURA',
-                series,
-                correlativeNumber,
-                totalAmount: totalCalculated,
-                taxableBase,
-                igvAmount,
-                customerName: offlineSale.customerName || 'CLIENTES VARIOS',
-                customerDocument: offlineSale.customerDocument,
-                customerAddress: offlineSale.customerAddress,
-                customerEmail: offlineSale.customerEmail,
-                paymentMethod: offlineSale.paymentMethod,
-                companyRuc: storeConfig?.ruc || '10458923011',
-                items: validatedItems.map((vi) => ({
-                  name: vi.product.name,
-                  quantity: vi.quantity,
-                  unitPrice: vi.unitPrice,
-                  subtotal: vi.subtotalItem,
-                  unitType: vi.product.unitType,
-                })),
-                createdAt: saleDate,
-              });
-              hash = billingRes.hash;
-              qrString = billingRes.qrString;
-              emissionStatus = billingRes.emissionStatus as EmissionStatus;
-            }
-
+            // 1. Guardar la venta en base de datos local de forma inmediata (con emisión PENDING si es fiscal)
             const sale = await tx.sale.create({
               data: {
                 cashShiftId: targetShift.id,
@@ -1521,10 +1552,10 @@ export class SalesService {
                 taxableBase: new Prisma.Decimal(taxableBase),
                 igvAmount: new Prisma.Decimal(igvAmount),
                 customerAddress: offlineSale.customerAddress || null,
-                customerEmail: offlineSale.customerEmail || null,
-                hash,
-                qrString,
-                emissionStatus,
+                customerEmail: offlineSale.customerEmail?.trim() || null,
+                hash: null,
+                qrString: null,
+                emissionStatus: isFiscal ? EmissionStatus.PENDING : null,
                 customerName: offlineSale.customerName || 'Cliente Varios',
                 customerDocument: offlineSale.customerDocument || null,
                 paymentMethod: offlineSale.paymentMethod,
@@ -1554,7 +1585,7 @@ export class SalesService {
               },
             });
 
-            // 4. Actualizar stock atómicamente y registrar en Kardex con fecha original
+            // 2. Actualizar stock atómicamente y registrar en Kardex con fecha original
             for (const item of validatedItems) {
               const updatedProduct = await tx.product.update({
                 where: { id: item.product.id },
@@ -1579,23 +1610,100 @@ export class SalesService {
               });
             }
 
-            return sale;
+            return {
+              sale,
+              isFiscal,
+              receiptType,
+              series,
+              correlativeNumber,
+              totalCalculated,
+              taxableBase,
+              igvAmount,
+              validatedItems,
+              saleDate,
+            };
           },
-          { timeout: 15000 },
+          { timeout: 10000 },
         );
+
+        // =========================================================================
+        // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
+        // =========================================================================
+        let finalSale = txResult.sale;
+
+        if (txResult.isFiscal) {
+          const storeConfig = await this.prisma.storeConfig.findFirst();
+          try {
+            const billingRes = await this.billingService.issueReceipt({
+              receiptType: txResult.receiptType as 'BOLETA' | 'FACTURA',
+              series: txResult.series,
+              correlativeNumber: txResult.correlativeNumber,
+              totalAmount: txResult.totalCalculated,
+              taxableBase: txResult.taxableBase,
+              igvAmount: txResult.igvAmount,
+              customerName: offlineSale.customerName || 'CLIENTES VARIOS',
+              customerDocument: offlineSale.customerDocument,
+              customerAddress: offlineSale.customerAddress,
+              customerEmail: offlineSale.customerEmail?.trim() || null,
+              paymentMethod: offlineSale.paymentMethod,
+              companyRuc: storeConfig?.ruc || '10458923011',
+              items: txResult.validatedItems.map((vi) => ({
+                name: vi.product.name,
+                quantity: vi.quantity,
+                unitPrice: vi.unitPrice,
+                subtotal: vi.subtotalItem,
+                unitType: vi.product.unitType,
+              })),
+              createdAt: txResult.saleDate,
+            });
+
+            if (billingRes.success) {
+              const finalEmissionStatus =
+                (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
+
+              finalSale = await this.prisma.sale.update({
+                where: { id: txResult.sale.id },
+                data: {
+                  hash: billingRes.hash,
+                  qrString: billingRes.qrString,
+                  emissionStatus: finalEmissionStatus,
+                },
+                include: {
+                  items: {
+                    include: {
+                      product: {
+                        select: { id: true, name: true, barcode: true, unitType: true },
+                      },
+                    },
+                  },
+                  cashShift: {
+                    include: { cashRegister: true },
+                  },
+                  user: {
+                    select: { id: true, name: true, username: true },
+                  },
+                },
+              });
+            }
+          } catch (billingErr: any) {
+            this.logger.error(
+              `[syncOfflineSales] Error de facturación para venta offline [${offlineSale.offlineId}]: ${billingErr.message}. La venta se preserva localmente con estado PENDING.`,
+            );
+          }
+        }
 
         results.push({
           offlineId: offlineSale.offlineId,
           success: true,
           sale: {
-            ...saleResult,
-            totalAmount: Number(saleResult.totalAmount),
-            taxableBase: Number(saleResult.taxableBase),
-            igvAmount: Number(saleResult.igvAmount),
-            cashPaid: Number(saleResult.cashPaid),
-            digitalPaid: Number(saleResult.digitalPaid),
-            changeAmount: Number(saleResult.changeAmount),
-            items: saleResult.items.map((i) => ({
+            ...finalSale,
+            totalAmount: Number(finalSale.totalAmount),
+            taxableBase: Number(finalSale.taxableBase),
+            igvAmount: Number(finalSale.igvAmount),
+            cashPaid: Number(finalSale.cashPaid),
+            digitalPaid: Number(finalSale.digitalPaid),
+            changeAmount: Number(finalSale.changeAmount),
+            items: finalSale.items.map((i) => ({
               ...i,
               quantity: Number(i.quantity),
               unitPrice: Number(i.unitPrice),
