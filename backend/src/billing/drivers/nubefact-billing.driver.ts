@@ -26,38 +26,100 @@ function formatPeruDDMMYYYY(date: Date = new Date()): string {
 }
 
 /**
- * Mapea el tipo de unidad interna (Catálogo 03 SUNAT) a la unidad oficial de Nubefact
+ * Mapeo Oficial Catálogo 03 SUNAT - Códigos de Unidades de Medida
+ * Siempre garantiza retornar un código válido de SUNAT.
+ * Si la unidad es desconocida, errónea o vacía, retorna por defecto 'NIU' (Unidades)
+ * para evitar que SUNAT marque la factura o boleta con estado OBSERVADO.
  */
-function mapUnitTypeToSunat(unitType?: string): string {
+export const SUNAT_UNIT_MAP: Record<string, string> = {
+  // Unidades / Piezas
+  NIU: 'NIU',
+  UNIT: 'NIU',
+  UNI: 'NIU',
+  UNIDAD: 'NIU',
+  UNIDADES: 'NIU',
+  UND: 'NIU',
+  PZA: 'NIU',
+  PIEZA: 'NIU',
+  PIEZAS: 'NIU',
+
+  // Peso (Kilogramos, Gramos)
+  KGM: 'KGM',
+  KG: 'KGM',
+  KGS: 'KGM',
+  KILO: 'KGM',
+  KILOGRAMO: 'KGM',
+  KILOGRAMOS: 'KGM',
+  GRM: 'GRM',
+  GR: 'GRM',
+  GRAMO: 'GRM',
+  GRAMOS: 'GRM',
+
+  // Volumen / Líquidos (Litros, Mililitros, Galones)
+  LTR: 'LTR',
+  LT: 'LTR',
+  LTS: 'LTR',
+  LITRO: 'LTR',
+  LITROS: 'LTR',
+  L: 'LTR',
+  MLT: 'MLT',
+  ML: 'MLT',
+  MILILITRO: 'MLT',
+  MILILITROS: 'MLT',
+  GLI: 'GLI',
+  GLL: 'GLI',
+  GALON: 'GLI',
+  GALONES: 'GLI',
+
+  // Empaques y Presentaciones (Sacos, Cajas, Paquetes, Bolsas, Latas, Botellas, Baldes)
+  SA: 'SA',
+  SACO: 'SA',
+  SACOS: 'SA',
+  COSTAL: 'SA',
+  COSTALES: 'SA',
+  BX: 'BX',
+  BOX: 'BX',
+  CAJA: 'BX',
+  CAJAS: 'BX',
+  CJ: 'BX',
+  PK: 'PK',
+  PACK: 'PK',
+  PAQ: 'PK',
+  PQT: 'PK',
+  PAQUETE: 'PK',
+  PAQUETES: 'PK',
+  BLS: 'BLS',
+  BOLSA: 'BLS',
+  BOLSAS: 'BLS',
+  BO: 'BO',
+  BOTELLA: 'BO',
+  BOTELLAS: 'BO',
+  CA: 'CA',
+  LATA: 'CA',
+  LATAS: 'CA',
+  BJ: 'BJ',
+  BALDE: 'BJ',
+  BALDES: 'BJ',
+
+  // Conteo (Docenas, Pares, Metros)
+  DZN: 'DZN',
+  DOC: 'DZN',
+  DOCENA: 'DZN',
+  DOCENAS: 'DZN',
+  PR: 'PR',
+  PAR: 'PR',
+  PARES: 'PR',
+  MTR: 'MTR',
+  MT: 'MTR',
+  M: 'MTR',
+  METRO: 'MTR',
+  METROS: 'MTR',
+};
+
+export function mapUnitTypeToSunat(unitType?: string | null): string {
   if (!unitType) return 'NIU';
-  const u = unitType.trim().toUpperCase();
-  switch (u) {
-    case 'UNIT':
-    case 'NIU':
-      return 'NIU'; // Unidad
-    case 'KG':
-    case 'KGM':
-    case 'KILOGRAMO':
-      return 'KGM'; // Kilogramo
-    case 'LT':
-    case 'LTR':
-    case 'LITRO':
-      return 'LTR'; // Litro
-    case 'MTR':
-    case 'METRO':
-      return 'MTR'; // Metro
-    case 'SA':
-    case 'SACO':
-      return 'SA'; // Saco
-    case 'BX':
-    case 'CAJA':
-      return 'BX'; // Caja
-    case 'PK':
-    case 'PAQUETE':
-      return 'PK'; // Paquete
-    default:
-      return 'NIU';
-  }
+  const clean = unitType.trim().toUpperCase();
+  return SUNAT_UNIT_MAP[clean] || 'NIU';
 }
 
 @Injectable()

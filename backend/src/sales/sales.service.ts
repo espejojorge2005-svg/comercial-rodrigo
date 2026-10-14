@@ -1459,6 +1459,7 @@ export class SalesService {
                   quantity: vi.quantity,
                   unitPrice: vi.unitPrice,
                   subtotal: vi.subtotalItem,
+                  unitType: vi.product.unitType,
                 })),
                 createdAt: saleDate,
               });

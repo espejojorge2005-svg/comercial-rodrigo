@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MockBillingDriver } from './drivers/mock-billing.driver.js';
-import { NubefactBillingDriver } from './drivers/nubefact-billing.driver.js';
+import { NubefactBillingDriver, mapUnitTypeToSunat } from './drivers/nubefact-billing.driver.js';
 import { BillingService } from './billing.service.js';
 
 describe('Billing Engine & Drivers (Triple Vía Fiscal)', () => {
@@ -124,6 +124,44 @@ describe('Billing Engine & Drivers (Triple Vía Fiscal)', () => {
         delete process.env.NUBEFACT_URL;
         delete process.env.NUBEFACT_TOKEN;
       }
+    });
+  });
+
+  describe('mapUnitTypeToSunat (Catálogo 03 SUNAT y Fallback a NIU)', () => {
+    it('debe mapear correctamente unidades estándar y aliases comunes a códigos oficiales SUNAT', () => {
+      expect(mapUnitTypeToSunat('UNIT')).toBe('NIU');
+      expect(mapUnitTypeToSunat('NIU')).toBe('NIU');
+      expect(mapUnitTypeToSunat('UNIDAD')).toBe('NIU');
+      expect(mapUnitTypeToSunat('UND')).toBe('NIU');
+
+      expect(mapUnitTypeToSunat('KG')).toBe('KGM');
+      expect(mapUnitTypeToSunat('KGM')).toBe('KGM');
+      expect(mapUnitTypeToSunat('KILOGRAMO')).toBe('KGM');
+
+      expect(mapUnitTypeToSunat('LT')).toBe('LTR');
+      expect(mapUnitTypeToSunat('LTR')).toBe('LTR');
+      expect(mapUnitTypeToSunat('LITRO')).toBe('LTR');
+
+      expect(mapUnitTypeToSunat('SA')).toBe('SA');
+      expect(mapUnitTypeToSunat('SACO')).toBe('SA');
+
+      expect(mapUnitTypeToSunat('BX')).toBe('BX');
+      expect(mapUnitTypeToSunat('CAJA')).toBe('BX');
+
+      expect(mapUnitTypeToSunat('PK')).toBe('PK');
+      expect(mapUnitTypeToSunat('PAQUETE')).toBe('PK');
+
+      expect(mapUnitTypeToSunat('DZN')).toBe('DZN');
+      expect(mapUnitTypeToSunat('DOCENA')).toBe('DZN');
+    });
+
+    it('debe recurrir estrictamente a NIU ante valores nulos, vacíos o unidades no homologadas para evitar observaciones de SUNAT', () => {
+      expect(mapUnitTypeToSunat(null)).toBe('NIU');
+      expect(mapUnitTypeToSunat(undefined)).toBe('NIU');
+      expect(mapUnitTypeToSunat('')).toBe('NIU');
+      expect(mapUnitTypeToSunat('   ')).toBe('NIU');
+      expect(mapUnitTypeToSunat('CODIGO_INEXISTENTE')).toBe('NIU');
+      expect(mapUnitTypeToSunat('INVALIDO_123')).toBe('NIU');
     });
   });
 
