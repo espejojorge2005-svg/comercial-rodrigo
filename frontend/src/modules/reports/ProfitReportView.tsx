@@ -16,13 +16,11 @@ import {
   Search,
   Wallet,
   Calendar,
-  CheckCircle2,
   Eye,
   X,
   Banknote,
   Briefcase,
   Scale,
-  ShieldCheck,
   Building2,
   ArrowUpRight,
   ArrowDownRight,
@@ -221,132 +219,90 @@ export const ProfitReportView: React.FC = () => {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
-      {/* 1. Encabezado Principal y Segmentación Doble */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+      {/* 1. Encabezado Principal y Segmentación Integrada */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 mb-5">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-              <Building2 className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+              <Building2 className="w-4.5 h-4.5" />
             </div>
             <div>
-              <h1 className="text-2xl font-black text-white tracking-tight">
-                Módulo Contable y Reportes Administrativos
+              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                Reportes y Contabilidad
               </h1>
               <p className="text-xs text-slate-400 font-medium">
-                Doble segmentación formal: Información gerencial interna vs. Libro oficial SUNAT
+                {reportMode === 'management'
+                  ? 'Vista Gerencial: 100% de ventas (Notas + Boletas + Facturas), costos y arqueo de caja física'
+                  : 'Vista Tributaria: Libro oficial SUNAT / RVIE para contabilidad (Boletas y Facturas)'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Acciones Superiores: Descarga Excel y Actualizar */}
-        <div className="flex items-center gap-2.5">
+        {/* Selector Segmentado de Modo + Acciones */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Segmented Control Pill */}
+          <div className="bg-slate-900 p-1 rounded-xl border border-slate-800 flex items-center gap-1 shadow-inner">
+            <button
+              onClick={() => setReportMode('management')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                reportMode === 'management'
+                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent'
+              }`}
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              <span>Gerencial (100%)</span>
+            </button>
+
+            <button
+              onClick={() => setReportMode('tax')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                reportMode === 'tax'
+                  ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30 shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent'
+              }`}
+            >
+              <Scale className="w-3.5 h-3.5" />
+              <span>Libro SUNAT</span>
+            </button>
+          </div>
+
+          {/* Descarga Excel */}
           <button
             onClick={handleExportExcel}
             disabled={isDownloading || isLoading}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-lg disabled:opacity-50 ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50 ${
               reportMode === 'management'
                 ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40'
                 : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-950/40'
             }`}
-            title="Descargar libro generado con ExcelJS con formato oficial y fórmulas"
+            title="Descargar libro en Excel con formato y fórmulas oficiales"
           >
-            <FileSpreadsheet className={`w-4 h-4 ${isDownloading ? 'animate-bounce' : ''}`} />
-            <span>
-              {isDownloading
-                ? 'Generando Excel...'
-                : reportMode === 'management'
-                  ? 'Descargar Excel Gerencial (ExcelJS)'
-                  : 'Descargar Libro SUNAT (ExcelJS)'}
-            </span>
+            <FileSpreadsheet className={`w-3.5 h-3.5 ${isDownloading ? 'animate-bounce' : ''}`} />
+            <span>{isDownloading ? 'Generando...' : 'Descargar Excel'}</span>
           </button>
 
+          {/* Actualizar */}
           <button
             onClick={fetchReport}
             disabled={isLoading}
-            className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-semibold flex items-center gap-2 border border-slate-800 transition-all cursor-pointer shadow-sm"
+            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-semibold border border-slate-800 transition-all cursor-pointer shadow-sm"
             title="Actualizar datos"
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-indigo-400' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-indigo-400' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* 2. Selector de Segmentación (Tabs de Alto Nivel) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-        {/* Pestaña: Reporte Operativo y Gerencial (Para la Dueña) */}
-        <button
-          onClick={() => setReportMode('management')}
-          className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden ${
-            reportMode === 'management'
-              ? 'bg-slate-900 border-emerald-500/50 shadow-xl shadow-emerald-950/20 ring-1 ring-emerald-500/30'
-              : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 text-slate-400'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div
-                className={`w-7 h-7 rounded-xl flex items-center justify-center ${
-                  reportMode === 'management' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'
-                }`}
-              >
-                <Briefcase className="w-4 h-4" />
-              </div>
-              <span className={`text-sm font-extrabold ${reportMode === 'management' ? 'text-white' : 'text-slate-300'}`}>
-                Reporte Operativo y Gerencial (Para la Dueña)
-              </span>
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/40 text-emerald-300">
-              100% Ingresos
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Consolida el <strong>100% de ventas (Notas + Boletas + Facturas)</strong>, costo de mercadería (COGS),
-            gastos de caja chica y cuadre total del dinero en gaveta física.
-          </p>
-        </button>
-
-        {/* Pestaña: Libro Tributario (Para el Contador) */}
-        <button
-          onClick={() => setReportMode('tax')}
-          className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden ${
-            reportMode === 'tax'
-              ? 'bg-slate-900 border-blue-500/50 shadow-xl shadow-blue-950/20 ring-1 ring-blue-500/30'
-              : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 text-slate-400'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div
-                className={`w-7 h-7 rounded-xl flex items-center justify-center ${
-                  reportMode === 'tax' ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-400'
-                }`}
-              >
-                <Scale className="w-4 h-4" />
-              </div>
-              <span className={`text-sm font-extrabold ${reportMode === 'tax' ? 'text-white' : 'text-slate-300'}`}>
-                Libro / Reporte Tributario (Para el Contador)
-              </span>
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-950 border border-blue-500/40 text-blue-300">
-              Solo SUNAT
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Formato oficial RVIE/SUNAT (01/03, Serie, Correlativo, DNI/RUC, Base, IGV).{' '}
-            <strong className="text-rose-400">Excluye 100% las Notas de Venta</strong> para evitar contingencias fiscales.
-          </p>
-        </button>
-      </div>
-
-      {/* 3. Selector de Rango de Fechas */}
-      <div className="mb-6 p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-1.5">
+      {/* 2. Barra de Filtros y Rango de Fechas */}
+      <div className="mb-4 p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 border border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-1">
           {(['today', 'yesterday', 'week', 'month', 'custom'] as const).map((preset) => {
             const labels: Record<string, string> = {
               today: 'Hoy',
               yesterday: 'Ayer',
-              week: 'Últimos 7 Días',
+              week: '7 Días',
               month: 'Este Mes',
               custom: 'Personalizado',
             };
@@ -354,10 +310,10 @@ export const ProfitReportView: React.FC = () => {
               <button
                 key={preset}
                 onClick={() => setPeriodPreset(preset)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   periodPreset === preset
                     ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
                 }`}
               >
                 {labels[preset]}
@@ -368,94 +324,86 @@ export const ProfitReportView: React.FC = () => {
 
         {periodPreset === 'custom' && (
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+            <div className="flex items-center gap-1 text-xs text-slate-300">
               <span className="text-slate-500">Desde:</span>
               <input
                 type="date"
                 value={customStart}
                 onChange={(e) => setCustomStart(e.target.value)}
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white outline-none focus:border-indigo-500"
+                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
               />
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+            <div className="flex items-center gap-1 text-xs text-slate-300">
               <span className="text-slate-500">Hasta:</span>
               <input
                 type="date"
                 value={customEnd}
                 onChange={(e) => setCustomEnd(e.target.value)}
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white outline-none focus:border-indigo-500"
+                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
               />
             </div>
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Selector de Turno de Caja */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 font-semibold flex items-center gap-1">
-              <Layers className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Turno:</span>
-            </span>
+          <div className="flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-indigo-400" />
             <select
               value={selectedShiftId}
               onChange={(e) => setSelectedShiftId(e.target.value)}
-              className="bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 outline-none max-w-[260px] cursor-pointer"
+              className="bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 outline-none max-w-[210px] truncate cursor-pointer"
             >
-              <option value="all">Por Fechas (Todos los turnos)</option>
-              {shiftsList.map((s) => {
+              <option value="all">Todos los turnos</option>
+              {shiftsList.slice(0, 15).map((s) => {
                 const dateStr = s.closedAt ? formatPeruDate(s.closedAt) : formatPeruDate(s.openedAt);
-                const statusStr = s.status === 'OPEN' ? '🟢 ABIERTO' : 'CERRADO';
-                const cashier = s.user?.name || 'Cajero';
+                const isOpen = s.status === 'OPEN';
+                const cashier = (s.user?.name || 'Cajero').replace(/\s*\(.*?\)\s*/g, '').trim();
                 const box = s.cashRegister?.name || 'Caja';
                 return (
                   <option key={s.id} value={s.id}>
-                    {box} ({cashier}) - {statusStr} ({dateStr})
+                    {isOpen ? '🟢 ' : ''}{box} · {cashier} {isOpen ? '(Abierto)' : `(${dateStr})`}
                   </option>
                 );
               })}
             </select>
           </div>
 
-          <div className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
+          <div className="text-xs text-slate-400 flex items-center gap-1 font-medium bg-slate-950/60 px-2.5 py-1 rounded-lg border border-slate-800/60">
             <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-            <span>{selectedShiftId !== 'all' ? 'Turno Específico Seleccionado' : currentPeriodLabel}</span>
+            <span>{selectedShiftId !== 'all' ? 'Turno filtrado' : currentPeriodLabel}</span>
           </div>
         </div>
       </div>
 
-      {/* Alerta Inteligente cuando no hay ventas en 'Hoy' */}
+      {/* Notificación Compacta cuando no hay ventas en 'Hoy' */}
       {selectedShiftId === 'all' && periodPreset === 'today' && ((reportMode === 'management' && managementData?.summary.totalGrossRevenue === 0) || (reportMode === 'tax' && taxData?.summary.totalAmount === 0)) && (
-        <div className="mb-6 p-4 rounded-2xl bg-amber-950/20 border border-amber-500/30 flex items-start gap-3.5 shadow-lg">
-          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-amber-300">
-              No hay ventas registradas con fecha de emisión de hoy ({formatPeruDate(new Date())})
-            </h4>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Las ventas se contabilizan en el día exacto en que se emitieron los tickets. Si cerraste un turno hoy de madrugada, las ventas corresponden a las fechas en que operó la caja física. Puedes visualizarlas y auditarlas inmediatamente seleccionando:
-            </p>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
+        <div className="mb-4 px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="flex items-center gap-2 text-amber-300 font-medium">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>Sin ventas emitidas hoy ({formatPeruDate(new Date())}). Si operaste de madrugada, las ventas corresponden a su día de emisión:</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => setPeriodPreset('week')}
+              className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-bold text-[11px] transition-all cursor-pointer"
+            >
+              Ver 7 Días
+            </button>
+            <button
+              onClick={() => setPeriodPreset('month')}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 font-bold text-[11px] transition-all cursor-pointer"
+            >
+              Ver Este Mes
+            </button>
+            {shiftsList.length > 0 && (
               <button
-                onClick={() => setPeriodPreset('week')}
-                className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold border border-amber-500/40 transition-all cursor-pointer"
+                onClick={() => setSelectedShiftId(shiftsList[0].id)}
+                className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 font-bold text-[11px] transition-all cursor-pointer"
               >
-                📅 Ver Últimos 7 Días
+                Último Turno
               </button>
-              <button
-                onClick={() => setPeriodPreset('month')}
-                className="px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-bold border border-emerald-500/40 transition-all cursor-pointer"
-              >
-                📊 Ver Este Mes
-              </button>
-              {shiftsList.length > 0 && (
-                <button
-                  onClick={() => setSelectedShiftId(shiftsList[0].id)}
-                  className="px-3 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs font-bold border border-indigo-500/40 transition-all cursor-pointer"
-                >
-                  🔍 Ver Último Turno Cerrado (Caja 1)
-                </button>
-              )}
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -464,14 +412,7 @@ export const ProfitReportView: React.FC = () => {
       {/* VISTA A: REPORTE OPERATIVO Y GERENCIAL (PARA LA DUEÑA)              */}
       {/* =================================================================== */}
       {reportMode === 'management' && (
-        <div className="space-y-6">
-          {/* Banner explicativo gerencial */}
-          <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 flex items-center gap-3 text-xs text-emerald-300">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span>
-              <strong>Consolidación del 100% de la Tienda:</strong> Este reporte incluye Notas de Venta internas, Boletas y Facturas. Muestra la rentabilidad real de mercadería y el arqueo exacto de gaveta física.
-            </span>
-          </div>
+        <div className="space-y-4">
 
           {/* Tarjetas KPIs Principales */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
@@ -882,23 +823,7 @@ export const ProfitReportView: React.FC = () => {
       {/* VISTA B: LIBRO TRIBUTARIO (PARA EL CONTADOR)                        */}
       {/* =================================================================== */}
       {reportMode === 'tax' && (
-        <div className="space-y-6">
-          {/* Banner de cumplimiento legal y alerta contable */}
-          <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-500/30 flex items-start gap-3.5 text-xs text-blue-200">
-            <ShieldCheck className="w-5 h-5 shrink-0 text-blue-400 mt-0.5" />
-            <div>
-              <h4 className="font-bold text-white text-sm mb-0.5">
-                Libro de Ventas e Ingresos Oficial (Formato SUNAT / RVIE)
-              </h4>
-              <p className="text-slate-300 leading-relaxed">
-                Este reporte genera las columnas estrictamente exigidas por la contabilidad peruana (Fecha, Tipo 01/03, Serie, Correlativo, Tipo Doc 1/6/0, Razón Social, Base Imponible, IGV y Total).
-              </p>
-              <p className="text-amber-300 font-semibold mt-1">
-                ⚠️ Blindaje fiscal garantizado: Las Notas de Venta internas están 100% excluidas de este reporte para no generar contingencias tributarias ante SUNAT.
-              </p>
-            </div>
-          </div>
-
+        <div className="space-y-4">
           {/* Tarjetas de Resumen Tributario */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             {/* Base Imponible Total */}
