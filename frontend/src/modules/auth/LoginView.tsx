@@ -1,16 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../../store/useAuthStore.js';
-import { ShieldCheck, User as UserIcon, Lock, ArrowRight, AlertCircle, KeyRound, Headphones } from 'lucide-react';
+import { ShieldCheck, User as UserIcon, Lock, ArrowRight, AlertCircle, KeyRound, Headphones, RefreshCw, Server } from 'lucide-react';
+import { checkBackendHealth } from '../../api/client.js';
 
 export const LoginView: React.FC = () => {
   const { login, isLoading, error } = useAuthStore();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'sleeping'>('checking');
+
+  const verifyServer = async () => {
+    setServerStatus('checking');
+    const health = await checkBackendHealth();
+    setServerStatus(health.ok ? 'online' : 'sleeping');
+  };
+
+  useEffect(() => {
+    verifyServer();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username || !password) return;
-    await login(username, password);
+    const ok = await login(username, password);
+    if (!ok) {
+      verifyServer();
+    }
   };
 
   const handleQuickLogin = (u: string, p: string) => {
@@ -36,6 +51,27 @@ export const LoginView: React.FC = () => {
           <p className="text-xs sm:text-sm text-slate-400 mt-1 font-medium">
             Sistema de Ventas POS & Control de Inventario
           </p>
+
+          {/* Indicador de estado del Backend */}
+          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-slate-900 border border-slate-800">
+            <Server className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-slate-400">Backend API:</span>
+            {serverStatus === 'checking' && (
+              <span className="text-amber-400 flex items-center gap-1">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Verificando...
+              </span>
+            )}
+            {serverStatus === 'online' && (
+              <span className="text-emerald-400 flex items-center gap-1 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> En línea
+              </span>
+            )}
+            {serverStatus === 'sleeping' && (
+              <span className="text-amber-400 flex items-center gap-1" title="Si está en Render, puede tardar hasta 40s en despertar">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span> Despertando instancia...
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Tarjeta de Login */}
@@ -53,9 +89,19 @@ export const LoginView: React.FC = () => {
           </p>
 
           {error && (
-            <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2.5">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-              <span>{error}</span>
+            <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex flex-col gap-2">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                <span className="leading-relaxed">{error}</span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => handleSubmit(e)}
+                className="self-end inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Reintentar conexión
+              </button>
             </div>
           )}
 

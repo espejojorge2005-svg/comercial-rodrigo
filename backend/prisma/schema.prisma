@@ -101,6 +101,7 @@ model ReceiptSequence {
   updatedAt      DateTime     @updatedAt
 
   @@unique([cashRegisterId, receiptType])
+  @@index([cashRegisterId])
 }
 
 model CashShift {
@@ -122,6 +123,9 @@ model CashShift {
   cashMovements   CashMovement[]
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+
+  @@index([cashRegisterId])
+  @@index([userId])
 }
 
 model CashMovement {
@@ -132,6 +136,8 @@ model CashMovement {
   amount      Decimal          @db.Decimal(12, 2)
   reason      String
   createdAt   DateTime         @default(now())
+
+  @@index([cashShiftId])
 }
 
 model Category {
@@ -161,6 +167,8 @@ model Product {
   kardexMovements KardexMovement[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+
+  @@index([categoryId])
 }
 
 model Sale {
@@ -197,6 +205,10 @@ model Sale {
   creditNote        CreditNote?
   items             SaleDetail[]
   createdAt         DateTime        @default(now())
+
+  @@index([cashShiftId])
+  @@index([userId])
+  @@index([voidedByAdminId])
 }
 
 model SaleDetail {
@@ -209,6 +221,9 @@ model SaleDetail {
   unitPrice         Decimal  @db.Decimal(12, 2)
   subtotal          Decimal  @db.Decimal(12, 2)
   costPriceSnapshot Decimal  @db.Decimal(12, 2) // Guardado al momento de venta para reporte de utilidad exacta
+
+  @@index([saleId])
+  @@index([productId])
 }
 
 model KardexMovement {
@@ -225,6 +240,9 @@ model KardexMovement {
   userId        String
   user          User         @relation(fields: [userId], references: [id])
   createdAt     DateTime     @default(now())
+
+  @@index([productId])
+  @@index([userId])
 }
 
 model StoreConfig {
@@ -263,5 +281,8 @@ model CreditNote {
   cashShiftId       String
   cashShift         CashShift       @relation(fields: [cashShiftId], references: [id])
   createdAt         DateTime        @default(now())
+
+  @@index([cashShiftId])
+  @@index([adminId])
 }
 

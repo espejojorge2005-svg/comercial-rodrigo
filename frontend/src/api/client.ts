@@ -51,8 +51,34 @@ export async function apiRequest<T = any>(
 
     return (await response.json()) as T;
   } catch (error: any) {
+    if (
+      error instanceof TypeError &&
+      (error.message.includes('fetch') || error.message.includes('NetworkError') || error.message.includes('Failed'))
+    ) {
+      const friendlyError = new Error(
+        'No se pudo conectar con el servidor backend. Si está en Render (plan gratuito), el servidor puede estar despertando tras inactividad (~30-50s). Por favor, reintenta en unos instantes.'
+      );
+      console.error(`API Error on [${options.method || 'GET'}] ${endpoint}:`, error);
+      throw friendlyError;
+    }
     console.error(`API Error on [${options.method || 'GET'}] ${endpoint}:`, error);
     throw error;
+  }
+}
+
+export async function checkBackendHealth(): Promise<{ ok: boolean; message?: string }> {
+  const url = `${API_BASE_URL.replace(/\/$/, '')}/health`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      return { ok: true, message: 'En línea' };
+    }
+    return { ok: false, message: `Respuesta ${res.status}` };
+  } catch {
+    return { ok: false, message: 'Desconectado o despertando' };
   }
 }
 
