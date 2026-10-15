@@ -520,6 +520,16 @@ export const ProfitReportView: React.FC = () => {
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-800 text-slate-300">
                   <span className="flex items-center gap-1.5">
+                    <Banknote className="w-3.5 h-3.5 text-indigo-400" />
+                    (+) Fondo Inicial de Caja (Apertura)
+                  </span>
+                  <span className="font-bold text-indigo-400">
+                    +{formatCurrency(managementData?.summary.totalInitialBalances || 0)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800 text-slate-300">
+                  <span className="flex items-center gap-1.5">
                     <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
                     (+) Efectivo Real Cobrado por Ventas
                   </span>

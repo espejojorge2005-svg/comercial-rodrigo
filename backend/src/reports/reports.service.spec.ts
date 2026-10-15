@@ -17,6 +17,9 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       cashMovement: {
         findMany: vi.fn(),
       },
+      cashShift: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     };
     reportsService = new ReportsService(mockPrisma);
   });
@@ -228,6 +231,13 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
         },
       ]);
 
+      mockPrisma.cashShift.findMany.mockResolvedValue([
+        {
+          id: 'shift-1',
+          initialBalance: 50.0,
+        },
+      ]);
+
       const result = await reportsService.getManagementReportData({});
 
       // 1. Ingresos Totales (100% de ventas) = 50 + 100 = 150
@@ -246,8 +256,9 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       expect(result.summary.netProfit).toBe(35.0);
 
       // 6. Cuadre total de dinero en gaveta física:
-      // Efectivo en ventas (150) + Entradas (20) - Salidas (15) = 155
-      expect(result.summary.theoreticalDrawerCash).toBe(155.0);
+      // Fondo inicial (50) + Efectivo en ventas (150) + Entradas (20) - Salidas (15) = 205
+      expect(result.summary.totalInitialBalances).toBe(50.0);
+      expect(result.summary.theoreticalDrawerCash).toBe(205.0);
     });
 
     it('debe generar el buffer Excel Gerencial de 3 hojas con ExcelJS', async () => {

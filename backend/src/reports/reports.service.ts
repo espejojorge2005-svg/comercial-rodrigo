@@ -499,25 +499,30 @@ export class ReportsService {
     };
 
     const movementWhere: Prisma.CashMovementWhereInput = {};
+    const shiftWhere: Prisma.CashShiftWhereInput = {};
 
     if (dateFilter) {
       saleWhere.createdAt = dateFilter;
       movementWhere.createdAt = dateFilter;
+      shiftWhere.openedAt = dateFilter;
     }
 
     if (query.shiftId) {
       saleWhere.cashShiftId = query.shiftId;
       movementWhere.cashShiftId = query.shiftId;
+      shiftWhere.id = query.shiftId;
       delete saleWhere.createdAt;
       delete movementWhere.createdAt;
+      delete shiftWhere.openedAt;
     }
 
     if (query.cashRegisterId) {
       saleWhere.cashShift = { cashRegisterId: query.cashRegisterId };
       movementWhere.cashShift = { cashRegisterId: query.cashRegisterId };
+      shiftWhere.cashRegisterId = query.cashRegisterId;
     }
 
-    const [sales, cashMovements] = await Promise.all([
+    const [sales, cashMovements, shifts] = await Promise.all([
       this.prisma.sale.findMany({
         where: saleWhere,
         orderBy: [{ createdAt: 'asc' }, { saleNumber: 'asc' }],
@@ -544,6 +549,10 @@ export class ReportsService {
             },
           },
         },
+      }),
+      this.prisma.cashShift.findMany({
+        where: shiftWhere,
+        select: { id: true, initialBalance: true },
       }),
     ]);
 
@@ -682,13 +691,20 @@ export class ReportsService {
     totalExpenses = Number(totalExpenses.toFixed(2));
     totalIncomes = Number(totalIncomes.toFixed(2));
 
+    // Suma de fondos de caja iniciales (sencillo de apertura) de los turnos del periodo
+    const totalInitialBalances = Number(
+      shifts.reduce((acc, s) => acc + Number(s.initialBalance), 0).toFixed(2),
+    );
+
     // Ganancia Neta Real (Utilidad Bruta - Gastos Operativos de Caja Chica)
     const netProfit = Number((grossProfit - totalExpenses).toFixed(2));
     const netMarginPct = totalGrossRevenue > 0 ? Number(((netProfit / totalGrossRevenue) * 100).toFixed(2)) : 0;
 
     // Cuadre total de dinero físico en gaveta:
-    // Efectivo en ventas + Ingresos varios en caja chica - Salidas de dinero de caja chica
-    const theoreticalDrawerCash = Number((cashPaidTotal + totalIncomes - totalExpenses).toFixed(2));
+    // Saldo Inicial de apertura + Efectivo en ventas + Ingresos varios en caja chica - Salidas de dinero de caja chica
+    const theoreticalDrawerCash = Number(
+      (totalInitialBalances + cashPaidTotal + totalIncomes - totalExpenses).toFixed(2),
+    );
 
     return {
       period: {
@@ -702,6 +718,7 @@ export class ReportsService {
         grossMarginPct, // Margen Bruto %
         totalExpenses, // Salidas de caja chica
         totalIncomes, // Ingresos varios caja chica
+        totalInitialBalances, // Fondo inicial de caja total (sencillo de apertura)
         netProfit, // Ganancia Neta Real
         netMarginPct, // Margen Neto %
         salesCount: sales.length,
@@ -834,6 +851,7 @@ export class ReportsService {
     sheet1.getRow(cuadreRowStart).height = 24;
 
     const cuadreRows = [
+      ['(+) Fondo Inicial de Caja (Apertura)', data.summary.totalInitialBalances || 0],
       ['(+) Efectivo Real Cobrado por Ventas', data.summary.cashPaidTotal],
       ['(+) Entradas adicionales a Caja Chica', data.summary.totalIncomes],
       ['(-) Salidas / Gastos de Caja Chica', -data.summary.totalExpenses],
@@ -841,20 +859,21 @@ export class ReportsService {
     ];
 
     cuadreRows.forEach((item, i) => {
+      const isTotal = i === cuadreRows.length - 1;
       const r = cuadreRowStart + 1 + i;
       sheet1.mergeCells(`A${r}:C${r}`);
       const lCell = sheet1.getCell(`A${r}`);
       lCell.value = item[0];
-      lCell.font = { bold: i === 3, size: i === 3 ? 11 : 10 };
+      lCell.font = { bold: isTotal, size: isTotal ? 11 : 10 };
       lCell.alignment = { vertical: 'middle' };
 
       const vCell = sheet1.getCell(`D${r}`);
       vCell.value = item[1];
-      vCell.font = { bold: i === 3, size: i === 3 ? 11 : 10, color: { argb: i === 3 ? '047857' : '000000' } };
+      vCell.font = { bold: isTotal, size: isTotal ? 11 : 10, color: { argb: isTotal ? '047857' : '000000' } };
       vCell.numFmt = '"S/ "#,##0.00';
       vCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
-      if (i === 3) {
+      if (isTotal) {
         lCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D1FAE5' } };
         vCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D1FAE5' } };
       }
@@ -862,7 +881,7 @@ export class ReportsService {
     });
 
     // SECCIÓN B: DESGLOSE POR TIPO DE COMPROBANTE
-    const compRowStart = 14;
+    const compRowStart = cuadreRowStart + cuadreRows.length + 2;
     sheet1.mergeCells(`A${compRowStart}:G${compRowStart}`);
     const compHeader = sheet1.getCell(`A${compRowStart}`);
     compHeader.value = 'DESGLOSE DE VENTAS POR TIPO DE COMPROBANTE';

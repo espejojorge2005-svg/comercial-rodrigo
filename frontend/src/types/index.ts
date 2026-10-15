@@ -283,6 +283,7 @@ export interface ManagementReportSummary {
   totalUnitsSold: number;
   cashPaidTotal: number;
   digitalPaidTotal: number;
+  totalInitialBalances?: number;
   theoreticalDrawerCash: number;
   paymentMethods: Record<string, number>;
   receiptTypeSummary: {
