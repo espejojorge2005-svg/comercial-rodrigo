@@ -10,6 +10,7 @@ import { SalesModule } from './sales/sales.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { ReportsModule } from './reports/reports.module.js';
+import { UsersModule } from './users/users.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { ReportsModule } from './reports/reports.module.js';
     }),
     PrismaModule,
     AuthModule,
+    UsersModule,
     CashShiftsModule,
     ProductsModule,
     SalesModule,

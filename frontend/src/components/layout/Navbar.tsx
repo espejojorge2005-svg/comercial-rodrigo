@@ -4,6 +4,7 @@ import { useShiftStore } from '../../store/useShiftStore.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { CloseShiftModal } from '../../modules/shifts/CloseShiftModal.js';
 import { StoreSettingsModal } from '../../modules/settings/StoreSettingsModal.js';
+import { AdminProfileModal } from '../../modules/users/AdminProfileModal.js';
 import { ConnectionStatusBadge } from './OfflineStatusBanner.js';
 import {
   ShoppingCart,
@@ -14,6 +15,7 @@ import {
   LogOut,
   Lock,
   User as UserIcon,
+  Users,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -27,6 +29,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
   const { config } = useConfigStore();
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isAdminProfileModalOpen, setIsAdminProfileModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'ADMIN';
 
@@ -139,6 +142,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
                 </button>
 
                 <button
+                  onClick={() => onTabChange('users')}
+                  className={`px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    currentTab === 'users'
+                      ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  }`}
+                  title="Gestión de Personal, Cajeros y Cuentas"
+                >
+                  <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400" />
+                  <span className="hidden xl:inline">Personal & Cajeros</span>
+                  <span className="xl:hidden">Personal</span>
+                </button>
+
+                <button
                   onClick={() => setIsSettingsModalOpen(true)}
                   className="px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 text-slate-400 hover:text-white hover:bg-slate-800/60"
                   title="Configurar RUC, Dirección y Membrete de Tickets"
@@ -166,7 +183,13 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
             )}
 
             {/* Perfil en pantallas grandes (xl+) */}
-            <div className="hidden xl:flex items-center gap-2 pl-2 border-l border-slate-800 shrink-0">
+            <div
+              onClick={() => isAdmin && setIsAdminProfileModalOpen(true)}
+              className={`hidden xl:flex items-center gap-2 pl-2 border-l border-slate-800 shrink-0 ${
+                isAdmin ? 'cursor-pointer hover:bg-slate-800/60 p-1.5 rounded-xl transition-all' : ''
+              }`}
+              title={isAdmin ? 'Configurar mi cuenta, contraseña y PIN' : user?.name}
+            >
               <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-slate-300">
                 <UserIcon className="w-4 h-4" />
               </div>
@@ -185,8 +208,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
 
             {/* Perfil compacto en pantallas medianas (md a xl) */}
             <div
-              className="hidden md:flex xl:hidden items-center pl-1.5 border-l border-slate-800 shrink-0"
-              title={`${user?.name || 'Usuario'} (${user?.role || 'ROL'})`}
+              onClick={() => isAdmin && setIsAdminProfileModalOpen(true)}
+              className={`hidden md:flex xl:hidden items-center pl-1.5 border-l border-slate-800 shrink-0 ${
+                isAdmin ? 'cursor-pointer hover:bg-slate-800/60 p-1 rounded-xl transition-all' : ''
+              }`}
+              title={isAdmin ? 'Configurar mi cuenta, contraseña y PIN' : `${user?.name || 'Usuario'} (${user?.role || 'ROL'})`}
             >
               <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-slate-300 border border-slate-700/60">
                 <UserIcon className="w-4 h-4" />
@@ -216,6 +242,14 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
       />
+
+      {/* Modal de Perfil de Administrador */}
+      {isAdmin && (
+        <AdminProfileModal
+          isOpen={isAdminProfileModalOpen}
+          onClose={() => setIsAdminProfileModalOpen(false)}
+        />
+      )}
     </>
   );
 };

@@ -1,10 +1,11 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { VerifyPinDto } from './dto/verify-pin.dto.js';
+import { UpdateProfileDto } from './dto/update-profile.dto.js';
 
 @Injectable()
 export class AuthService {
@@ -98,5 +99,68 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    const data: any = {};
+
+    if (dto.name && dto.name.trim()) {
+      data.name = dto.name.trim();
+    }
+
+    if (dto.username && dto.username.trim()) {
+      const cleanUsername = dto.username.trim().toLowerCase();
+      if (cleanUsername !== user.username) {
+        const existing = await this.prisma.user.findUnique({
+          where: { username: cleanUsername },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `El nombre de usuario "${dto.username}" ya está en uso.`,
+          );
+        }
+        data.username = cleanUsername;
+      }
+    }
+
+    // Si quiere cambiar contraseña:
+    if (dto.newPassword) {
+      if (!dto.currentPassword) {
+        throw new BadRequestException(
+          'Debes ingresar tu contraseña actual para establecer una nueva.',
+        );
+      }
+      const isMatch = await bcrypt.compare(dto.currentPassword, user.password);
+      if (!isMatch) {
+        throw new BadRequestException('La contraseña actual es incorrecta.');
+      }
+      data.password = await bcrypt.hash(dto.newPassword, 10);
+    }
+
+    // Si es ADMIN y quiere actualizar PIN:
+    if (user.role === Role.ADMIN && dto.pin !== undefined) {
+      data.pin = dto.pin ? dto.pin.trim() : null;
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return updatedUser;
   }
 }

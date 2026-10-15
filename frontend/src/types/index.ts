@@ -29,7 +29,12 @@ export interface User {
   name: string;
   username: string;
   role: Role;
+  pin?: string | null;
   isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  shiftsCount?: number;
+  salesCount?: number;
 }
 
 export interface CashRegister {
