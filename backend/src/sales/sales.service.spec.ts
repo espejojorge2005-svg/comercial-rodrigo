@@ -127,7 +127,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
         return callback(tx);
       });
 
-      await expect(
+        await expect(
         salesService.createSale('user-1', {
           cashShiftId: 'shift-1',
           receiptType: ReceiptType.NOTA_VENTA,
@@ -138,6 +138,58 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
           items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
         }),
       ).rejects.toThrow('el vuelto (S/ 20.00) no puede ser mayor al efectivo entregado (S/ 10.00)');
+    });
+
+    it('debe permitir venta con tolerancia de redondeo de hasta S/ 0.10 (ej. cuenta de S/ 14.99 con pago neto de S/ 15.00)', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Arroz 1kg',
+              isActive: true,
+              currentStock: 10,
+              costPrice: 3,
+            }),
+            update: vi.fn().mockResolvedValue({ currentStock: 9 }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 1 }),
+          },
+          sale: {
+            create: vi.fn().mockResolvedValue({
+              id: 'sale-1',
+              totalAmount: 14.99,
+              cashPaid: 20,
+              changeAmount: 5, // Neto = 15.00, diferencia = 0.01 (dentro de tolerancia de 0.10)
+              items: [],
+            }),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+        };
+        return callback(tx);
+      });
+
+      const res = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.NOTA_VENTA,
+        paymentMethod: 'CASH',
+        cashPaid: 20,
+        digitalPaid: 0,
+        changeAmount: 5,
+        items: [{ productId: 'p1', quantity: 1, unitPrice: 14.99, isWholesaleApplied: false }],
+      });
+
+      expect(res).toBeDefined();
     });
   });
 });

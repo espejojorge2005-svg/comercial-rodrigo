@@ -180,14 +180,14 @@ export class SalesService {
         totalIgv = Number(totalIgv.toFixed(2));
         const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
 
-        // 🛡️ VALIDACIÓN FINANCIERA ESTRICTA (Cuadre de Efectivo, Digital y Vuelto):
-        // Regla obligatoria: (cashPaid + digitalPaid) - changeAmount === totalAmount
+        // 🛡️ VALIDACIÓN FINANCIERA (Cuadre de Efectivo, Digital y Vuelto con tolerancia por redondeo BCRP):
+        // En Perú no circulan monedas de 1 ni 5 céntimos (la menor es S/ 0.10). Se asume tolerancia de hasta S/ 0.10.
         const cashPaidNum = Number(dto.cashPaid ?? 0);
         const digitalPaidNum = Number(dto.digitalPaid ?? 0);
         const changeAmountNum = Number(dto.changeAmount ?? 0);
         const netPaid = Number(((cashPaidNum + digitalPaidNum) - changeAmountNum).toFixed(2));
 
-        if (Math.abs(netPaid - totalCalculated) > 0.01) {
+        if (Math.abs(netPaid - totalCalculated) > 0.10) {
           throw new BadRequestException(
             `Inconsistencia financiera en el pago: El importe pagado neto (S/ ${netPaid.toFixed(2)}) no coincide con el total de la venta (S/ ${totalCalculated.toFixed(2)}). Detalle: Efectivo S/ ${cashPaidNum.toFixed(2)} + Digital S/ ${digitalPaidNum.toFixed(2)} - Vuelto S/ ${changeAmountNum.toFixed(2)}`,
           );
@@ -198,7 +198,8 @@ export class SalesService {
           if (digitalPaidNum > 0) {
             throw new BadRequestException('Para pagos en EFECTIVO puro, el monto digital debe ser S/ 0.00');
           }
-          if (cashPaidNum < totalCalculated) {
+          // Permitir redondeo legal a favor del cliente de hasta S/ 0.10 (ej. cuenta de S/ 10.03 pagada con S/ 10.00)
+          if (totalCalculated - cashPaidNum > 0.10) {
             throw new BadRequestException(
               `Efectivo entregado (S/ ${cashPaidNum.toFixed(2)}) es insuficiente para cubrir el total de S/ ${totalCalculated.toFixed(2)}`,
             );
@@ -1498,15 +1499,15 @@ export class SalesService {
             totalIgv = Number(totalIgv.toFixed(2));
             const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
 
-            // Validar cuadre financiero estricto también en sincronización offline
+            // Validar cuadre financiero con tolerancia de redondeo BCRP (S/ 0.10) también en sincronización offline
             const offCash = Number(offlineSale.cashPaid ?? 0);
             const offDigital = Number(offlineSale.digitalPaid ?? 0);
             const offChange = Number(offlineSale.changeAmount ?? 0);
             const offNetPaid = Number(((offCash + offDigital) - offChange).toFixed(2));
 
-            if (Math.abs(offNetPaid - totalCalculated) > 0.01) {
+            if (Math.abs(offNetPaid - totalCalculated) > 0.10) {
               throw new BadRequestException(
-                `Venta offline [${offlineSale.offlineId}] rechazada por descuadre financiero: Importe neto pagado S/ ${offNetPaid.toFixed(2)} no coincide con total S/ ${totalCalculated.toFixed(2)}`,
+                `Venta offline [${offlineSale.offlineId}] rechazada por descuadre financiero: Importe neto pagado S/ ${offNetPaid.toFixed(2)} difiere del total S/ ${totalCalculated.toFixed(2)} por más de S/ 0.10`,
               );
             }
 
