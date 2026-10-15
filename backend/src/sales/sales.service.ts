@@ -1610,6 +1610,27 @@ export class SalesService {
               });
             }
 
+            // 3. Si el turno ya fue cerrado previamente, reconciliar retroactivamente el arqueo físico
+            if (targetShift.status === ShiftStatus.CLOSED) {
+              // Calculamos el efectivo neto aquí mismo para no depender de funciones externas
+              const netCash =
+                sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
+                  ? 0
+                  : Math.max(0, Number(sale.cashPaid) - Number(sale.changeAmount || 0));
+
+              if (netCash > 0) {
+                await tx.cashShift.update({
+                  where: { id: targetShift.id },
+                  data: {
+                    expectedBalance: { increment: new Prisma.Decimal(netCash) },
+                    ...(targetShift.difference !== null
+                      ? { difference: { decrement: new Prisma.Decimal(netCash) } }
+                      : {}),
+                  },
+                });
+              }
+            }
+
             return {
               sale,
               isFiscal,
