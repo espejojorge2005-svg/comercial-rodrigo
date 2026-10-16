@@ -863,12 +863,14 @@ export class SalesService {
     const trimmedName = customerName ? customerName.trim() : '';
 
     if (targetReceiptType === ReceiptType.FACTURA) {
-      if (!trimmedDoc || trimmedDoc.length !== 11 || (!trimmedDoc.startsWith('10') && !trimmedDoc.startsWith('20'))) {
+      const validRucPrefixes = ['10', '20', '15', '17'];
+      const hasValidPrefix = validRucPrefixes.some((prefix) => trimmedDoc.startsWith(prefix));
+      if (!/^\d{11}$/.test(trimmedDoc) || !hasValidPrefix) {
         throw new BadRequestException(
-          'Para emitir una Factura Electrónica se requiere un RUC válido de 11 dígitos (iniciado con 10 o 20).',
+          'Para emitir una Factura Electrónica se requiere un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
         );
       }
-      if (!trimmedName) {
+      if (!trimmedName || trimmedName === 'Cliente Varios') {
         throw new BadRequestException(
           'Para Factura Electrónica es obligatorio ingresar la Razón Social de la empresa.',
         );
