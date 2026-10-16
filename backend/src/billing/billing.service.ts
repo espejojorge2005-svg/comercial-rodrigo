@@ -18,8 +18,9 @@ export class BillingService {
     private readonly mockDriver: MockBillingDriver,
     private readonly nubefactDriver: NubefactBillingDriver,
   ) {
+    const hasNubefactCredentials = Boolean(process.env.NUBEFACT_URL && process.env.NUBEFACT_TOKEN);
     const configuredDriver = (
-      process.env.BILLING_DRIVER || 'MOCK'
+      process.env.BILLING_DRIVER || (hasNubefactCredentials ? 'NUBEFACT' : 'MOCK')
     ).toUpperCase() as BillingDriverType;
 
     if (configuredDriver === 'NUBEFACT' && process.env.NUBEFACT_URL) {
