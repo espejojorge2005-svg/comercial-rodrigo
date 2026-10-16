@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useCartStore } from '../../store/useCartStore.js';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
@@ -57,8 +57,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [cashPaid, setCashPaid] = useState<string>(String(totalAmount));
   const [digitalPaid, setDigitalPaid] = useState<string>('0');
-  const [custName, setCustName] = useState<string>(customerName);
-  const [custDoc, setCustDoc] = useState<string>(customerDocument);
+  const [custName, setCustName] = useState<string>(customerName || 'Cliente Varios');
+  const [custDoc, setCustDoc] = useState<string>(customerDocument || '');
   const [custAddress, setCustAddress] = useState<string>('');
   const [custEmail, setCustEmail] = useState<string>('');
   const [isSearchingDoc, setIsSearchingDoc] = useState<boolean>(false);
@@ -66,9 +66,42 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Cálculos fiscales calculados SIEMPRE en nivel superior (Cumpliendo reglas estrictas de React Hooks)
+  const { taxableBase, igvAmount } = useMemo(() => {
+    let base = 0;
+    let igv = 0;
+    (items || []).forEach((item) => {
+      const subtotalItem = Number(item.subtotal ?? (item.quantity * item.unitPrice).toFixed(2));
+      const valTotal = Number((subtotalItem / 1.18).toFixed(2));
+      base += valTotal;
+      igv += Number((subtotalItem - valTotal).toFixed(2));
+    });
+    return {
+      taxableBase: Number(base.toFixed(2)),
+      igvAmount: Number(igv.toFixed(2)),
+    };
+  }, [items]);
+
+  // Sincronizar estado al abrir el modal de forma segura con useEffect (NUNCA durante el render)
+  useEffect(() => {
+    if (isOpen) {
+      setCashPaid(String(totalAmount));
+      setDigitalPaid('0');
+      setError(null);
+      setLookupBadge(null);
+      setIsLoading(false);
+      setReceiptType('NOTA_VENTA');
+      setPaymentMethod('CASH');
+      setCustName(customerName || 'Cliente Varios');
+      setCustDoc(customerDocument || '');
+      setCustAddress('');
+      setCustEmail('');
+    }
+  }, [isOpen, totalAmount, customerName, customerDocument]);
+
   // Función para consultar RUC o DNI en SUNAT / RENIEC automáticamente
   const handleLookupDocument = async (overrideDoc?: string) => {
-    const docToSearch = (overrideDoc !== undefined ? overrideDoc : custDoc).trim();
+    const docToSearch = (overrideDoc !== undefined ? overrideDoc : (custDoc || '')).trim();
     if (docToSearch.length !== 8 && docToSearch.length !== 11) return;
 
     setIsSearchingDoc(true);
@@ -95,18 +128,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   };
 
-  // Sincronizar efectivo al abrir el modal
-  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
-  if (isOpen !== prevIsOpen) {
-    setPrevIsOpen(isOpen);
-    if (isOpen) {
-      setCashPaid(String(totalAmount));
-      setDigitalPaid('0');
-      setError(null);
-      setLookupBadge(null);
-    }
-  }
-
+  // Early return solo DESPUÉS de declarar todos los hooks
   if (!isOpen) return null;
 
   const cashNum = parseFloat(cashPaid) || 0;
@@ -121,31 +143,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     changeAmount = Math.max(0, Number((cashNum - requiredCash).toFixed(2)));
   }
 
-  // Cálculos fiscales informativos calculados ítem por ítem para coincidencia al céntimo (Catálogo 07 SUNAT)
-  const { taxableBase, igvAmount } = useMemo(() => {
-    let base = 0;
-    let igv = 0;
-    items.forEach((item) => {
-      const subtotalItem = Number(item.subtotal ?? (item.quantity * item.unitPrice).toFixed(2));
-      const valTotal = Number((subtotalItem / 1.18).toFixed(2));
-      base += valTotal;
-      igv += Number((subtotalItem - valTotal).toFixed(2));
-    });
-    return {
-      taxableBase: Number(base.toFixed(2)),
-      igvAmount: Number(igv.toFixed(2)),
-    };
-  }, [items]);
+  // Validaciones seguras contra nulos/indefinidos
+  const safeDoc = custDoc || '';
+  const safeName = custName || '';
+  const safeAddress = custAddress || '';
 
-  // Validaciones según el tipo de comprobante
   const isBoletaOver700 = receiptType === 'BOLETA' && totalAmount >= 700;
-  const dniDigitsOnly = custDoc.replace(/\D/g, '');
-  const rucDigitsOnly = custDoc.replace(/\D/g, '');
+  const dniDigitsOnly = safeDoc.replace(/\D/g, '');
+  const rucDigitsOnly = safeDoc.replace(/\D/g, '');
 
   const isDniValidForBoleta = !isBoletaOver700 || dniDigitsOnly.length === 8;
   const isNameValidForBoleta =
     !isBoletaOver700 ||
-    (custName.trim().length >= 3 && custName.trim().toLowerCase() !== 'cliente varios');
+    (safeName.trim().length >= 3 && safeName.trim().toLowerCase() !== 'cliente varios');
 
   const validRucPrefixes = ['10', '20', '15', '17'];
   const isRucValidForFactura =
@@ -155,10 +165,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const isNameValidForFactura =
     receiptType !== 'FACTURA' ||
-    (custName.trim().length >= 2 && custName.trim().toLowerCase() !== 'cliente varios');
+    (safeName.trim().length >= 2 && safeName.trim().toLowerCase() !== 'cliente varios');
 
   const isAddressValidForFactura =
-    receiptType !== 'FACTURA' || custAddress.trim().length >= 3;
+    receiptType !== 'FACTURA' || safeAddress.trim().length >= 3;
 
   // Determinar si el formulario es válido para procesar cobro
   let isFormValid = true;

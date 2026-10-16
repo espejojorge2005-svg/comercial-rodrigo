@@ -3,7 +3,6 @@ import { apiRequest } from '../../api/client.js';
 import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import {
   X,
-  FileText,
   Building2,
   Receipt,
   User,
@@ -17,7 +16,7 @@ import {
   ShieldCheck,
   Info,
 } from 'lucide-react';
-import type { Sale, ReceiptType } from '../../types/index.js';
+import type { Sale } from '../../types/index.js';
 
 interface ConvertReceiptModalProps {
   isOpen: boolean;
