@@ -438,6 +438,12 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                 <span className="font-bold">{saleData.customerDocument}</span>
               </div>
             )}
+            {saleData.voidedReason?.startsWith('CANJE_TICKET:') && (
+              <div className="flex justify-between font-bold text-amber-900 bg-amber-50 px-1 py-0.5 rounded border border-amber-200 mt-1">
+                <span>CANJE DE TICKET:</span>
+                <span className="font-mono font-black">{saleData.voidedReason.replace('CANJE_TICKET:', '')}</span>
+              </div>
+            )}
             {saleData.customerAddress && (
               <div className="flex justify-between text-[10px]">
                 <span>DIRECCIÓN:</span>

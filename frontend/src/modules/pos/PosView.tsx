@@ -16,6 +16,7 @@ import {
   History,
   ArrowLeft,
   AlertTriangle,
+  ArrowRightLeft,
 } from 'lucide-react';
 import type { Product, Category } from '../../types/index.js';
 import { getUnitBadge } from '../../lib/units.js';
@@ -176,6 +177,15 @@ export const PosView: React.FC = () => {
           >
             <History className="w-3.5 h-3.5 text-slate-400" />
             <span>Ventas del Turno</span>
+          </button>
+
+          <button
+            onClick={() => setIsRecentSalesOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            title="Canjear tickets de venta por Boleta o Factura electrónica oficial"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
+            <span>Canjear Ticket</span>
           </button>
 
           <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-right">

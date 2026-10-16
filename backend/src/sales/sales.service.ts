@@ -22,6 +22,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
+import { ConvertSaleReceiptDto } from './dto/convert-receipt.dto.js';
 import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
 
@@ -797,6 +798,294 @@ export class SalesService {
   }
 
   /**
+   * Canje de Nota de Venta (Ticket Interno) a Comprobante Electrónico (Boleta o Factura)
+   * Válido ante SUNAT sin duplicar salidas de stock ni ingresos de caja.
+   */
+  async convertSaleReceipt(
+    saleId: string,
+    currentUserId: string,
+    dto: ConvertSaleReceiptDto,
+  ) {
+    const { targetReceiptType, customerDocument, customerName, customerAddress, customerEmail } = dto;
+
+    if (
+      targetReceiptType !== ReceiptType.BOLETA &&
+      targetReceiptType !== ReceiptType.FACTURA
+    ) {
+      throw new BadRequestException(
+        'El comprobante destino solo puede ser BOLETA o FACTURA.',
+      );
+    }
+
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: { id: true, name: true, barcode: true, unitType: true },
+            },
+          },
+        },
+        cashShift: {
+          include: { cashRegister: true },
+        },
+        user: {
+          select: { id: true, name: true, username: true },
+        },
+      },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Venta no encontrada para canjear comprobante.');
+    }
+
+    if (sale.isVoided) {
+      throw new BadRequestException('No se puede canjear una venta que se encuentra anulada.');
+    }
+
+    if (sale.receiptType !== ReceiptType.NOTA_VENTA) {
+      throw new BadRequestException(
+        `Solo las Notas de Venta (Tickets internos) pueden ser canjeadas. Esta venta ya fue emitida como ${sale.receiptType}.`,
+      );
+    }
+
+    if (sale.voidedReason && sale.voidedReason.startsWith('CANJE_TICKET:')) {
+      throw new BadRequestException(
+        'Este ticket ya fue canjeado previamente a comprobante electrónico.',
+      );
+    }
+
+    const totalCalculated = Number(sale.totalAmount);
+
+    // 1. Validaciones tributarias según SUNAT
+    const trimmedDoc = customerDocument ? customerDocument.trim() : '';
+    const trimmedName = customerName ? customerName.trim() : '';
+
+    if (targetReceiptType === ReceiptType.FACTURA) {
+      if (!trimmedDoc || trimmedDoc.length !== 11 || (!trimmedDoc.startsWith('10') && !trimmedDoc.startsWith('20'))) {
+        throw new BadRequestException(
+          'Para emitir una Factura Electrónica se requiere un RUC válido de 11 dígitos (iniciado con 10 o 20).',
+        );
+      }
+      if (!trimmedName) {
+        throw new BadRequestException(
+          'Para Factura Electrónica es obligatorio ingresar la Razón Social de la empresa.',
+        );
+      }
+    } else if (targetReceiptType === ReceiptType.BOLETA) {
+      if (totalCalculated >= 700) {
+        if (!trimmedDoc || (trimmedDoc.length !== 8 && trimmedDoc.length !== 11)) {
+          throw new BadRequestException(
+            'Para Boletas con monto mayor o igual a S/ 700.00, es obligatorio consignar el DNI o RUC del cliente según normativa SUNAT.',
+          );
+        }
+        if (!trimmedName) {
+          throw new BadRequestException(
+            'Para Boletas con monto mayor o igual a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
+          );
+        }
+      }
+    }
+
+    // 2. Determinar la Caja Registradora para la Serie
+    // Buscamos si el usuario actual tiene un turno abierto; si no, usamos la caja de la venta original
+    const activeShift = await this.prisma.cashShift.findFirst({
+      where: { userId: currentUserId, status: ShiftStatus.OPEN },
+      include: { cashRegister: true },
+    });
+
+    const cashRegister = activeShift ? activeShift.cashRegister : sale.cashShift.cashRegister;
+    const cashRegisterId = cashRegister.id;
+    const series = this.getSeriesForRegister(
+      cashRegister.identifier,
+      cashRegister.name,
+      targetReceiptType,
+    );
+
+    // 3. Cálculo de base imponible e IGV
+    const taxableBase = Math.round((totalCalculated / 1.18) * 100) / 100;
+    const igvAmount = Math.round((totalCalculated - taxableBase) * 100) / 100;
+    const originalTicketNumber =
+      sale.fullReceiptNumber || `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`;
+
+    // 4. Transacción atómica: incremento seguro de correlativo y actualización de la venta
+    const txResult = await this.prisma.$transaction(
+      async (tx) => {
+        const sequence = await tx.receiptSequence.upsert({
+          where: { series },
+          create: {
+            cashRegisterId,
+            receiptType: targetReceiptType,
+            series,
+            currentNumber: 1,
+          },
+          update: {
+            currentNumber: { increment: 1 },
+          },
+        });
+
+        const correlativeNumber = sequence.currentNumber;
+        const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
+
+        const updatedSale = await tx.sale.update({
+          where: { id: sale.id },
+          data: {
+            receiptType: targetReceiptType,
+            series,
+            correlativeNumber,
+            fullReceiptNumber,
+            isFiscal: true,
+            taxableBase: new Prisma.Decimal(taxableBase),
+            igvAmount: new Prisma.Decimal(igvAmount),
+            customerDocument: trimmedDoc || null,
+            customerName:
+              trimmedName ||
+              (targetReceiptType === ReceiptType.BOLETA ? 'Clientes Varios' : 'EMPRESA'),
+            customerAddress: customerAddress?.trim() || null,
+            customerEmail: customerEmail?.trim() || null,
+            emissionStatus: EmissionStatus.PENDING,
+            // Registramos trazabilidad del ticket canjeado
+            voidedReason: `CANJE_TICKET:${originalTicketNumber}`,
+          },
+          include: {
+            items: {
+              include: {
+                product: {
+                  select: { id: true, name: true, barcode: true, unitType: true },
+                },
+              },
+            },
+            cashShift: {
+              include: { cashRegister: true },
+            },
+            user: {
+              select: { id: true, name: true, username: true },
+            },
+          },
+        });
+
+        return {
+          updatedSale,
+          series,
+          correlativeNumber,
+          fullReceiptNumber,
+        };
+      },
+      { timeout: 10000 },
+    );
+
+    // 5. Emisión Electrónica con el Motor PSE / Mock SUNAT (fuera de la transacción DB)
+    let finalSale = txResult.updatedSale;
+    const storeConfig = await this.prisma.storeConfig.findFirst();
+
+    try {
+      const billingRes = await this.billingService.issueReceipt({
+        receiptType: targetReceiptType as 'BOLETA' | 'FACTURA',
+        series: txResult.series,
+        correlativeNumber: txResult.correlativeNumber,
+        totalAmount: totalCalculated,
+        taxableBase,
+        igvAmount,
+        customerName:
+          trimmedName ||
+          (targetReceiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : 'EMPRESA'),
+        customerDocument: trimmedDoc || undefined,
+        customerAddress: customerAddress?.trim() || undefined,
+        customerEmail: customerEmail?.trim() || undefined,
+        paymentMethod: sale.paymentMethod,
+        companyRuc: storeConfig?.ruc || '10458923011',
+        items: sale.items.map((item) => ({
+          name: item.product.name,
+          quantity: Number(item.quantity),
+          unitPrice: Number(item.unitPrice),
+          subtotal: Number(item.subtotal),
+          unitType: item.product.unitType,
+        })),
+      });
+
+      if (billingRes.success) {
+        const finalStatus =
+          (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
+        finalSale = await this.prisma.sale.update({
+          where: { id: sale.id },
+          data: {
+            hash: billingRes.hash,
+            qrString: billingRes.qrString,
+            emissionStatus: finalStatus,
+          },
+          include: {
+            items: {
+              include: {
+                product: {
+                  select: { id: true, name: true, barcode: true, unitType: true },
+                },
+              },
+            },
+            cashShift: {
+              include: { cashRegister: true },
+            },
+            user: {
+              select: { id: true, name: true, username: true },
+            },
+          },
+        });
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[convertSaleReceipt] Error emitiendo con PSE/SUNAT para canje ${txResult.fullReceiptNumber}: ${err.message}`,
+      );
+    }
+
+    return {
+      message: `Ticket ${originalTicketNumber} canjeado exitosamente por ${targetReceiptType === ReceiptType.BOLETA ? 'Boleta Electrónica' : 'Factura Electrónica'} ${finalSale.fullReceiptNumber}`,
+      originalTicketNumber,
+      sale: finalSale,
+    };
+  }
+
+  /**
+   * Buscar ticket de venta por número de comprobante completo o correlativo
+   * para facilitar el canje de comprobantes de turnos pasados.
+   */
+  async findTicketByNumber(ticketNumber: string) {
+    const cleanNum = ticketNumber.trim().toUpperCase();
+
+    const sale = await this.prisma.sale.findFirst({
+      where: {
+        OR: [
+          { fullReceiptNumber: cleanNum },
+          { fullReceiptNumber: { contains: cleanNum, mode: 'insensitive' } },
+        ],
+      },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: { id: true, name: true, barcode: true, unitType: true },
+            },
+          },
+        },
+        cashShift: {
+          include: { cashRegister: true },
+        },
+        user: {
+          select: { id: true, name: true, username: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!sale) {
+      throw new NotFoundException(
+        `No se encontró ningún ticket de venta con el número "${ticketNumber}".`,
+      );
+    }
+
+    return sale;
+  }
+
+  /**
    * Historial de ventas con control de visibilidad por rol
    * Soporta filtro por rango de fechas (mes completo) y turno sin truncamiento arbitrario
    */
@@ -808,12 +1097,22 @@ export class SalesService {
       startDate?: string;
       endDate?: string;
       limit?: number;
+      search?: string;
     },
   ) {
     const where: Prisma.SaleWhereInput = {};
 
     if (filter?.shiftId) where.cashShiftId = filter.shiftId;
     if (filter?.isVoided !== undefined) where.isVoided = filter.isVoided;
+
+    if (filter?.search) {
+      const term = filter.search.trim();
+      where.OR = [
+        { fullReceiptNumber: { contains: term, mode: 'insensitive' } },
+        { customerName: { contains: term, mode: 'insensitive' } },
+        { customerDocument: { contains: term, mode: 'insensitive' } },
+      ];
+    }
 
     if (filter?.startDate || filter?.endDate) {
       const dateFilter: Prisma.DateTimeFilter = {};

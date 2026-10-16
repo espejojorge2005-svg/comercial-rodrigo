@@ -14,8 +14,11 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  ArrowRightLeft,
+  Loader2,
 } from 'lucide-react';
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
+import { ConvertReceiptModal } from './ConvertReceiptModal.js';
 
 interface RecentSalesModalProps {
   isOpen: boolean;
@@ -46,6 +49,11 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
   const [isVoiding, setIsVoiding] = useState<boolean>(false);
   const [voidError, setVoidError] = useState<string | null>(null);
   const [voidSuccess, setVoidSuccess] = useState<string | null>(null);
+
+  // Estado para canjear Nota de Venta a Boleta / Factura
+  const [saleToConvert, setSaleToConvert] = useState<any | null>(null);
+  const [isSearchingExternalTicket, setIsSearchingExternalTicket] = useState<boolean>(false);
+  const [searchTicketError, setSearchTicketError] = useState<string | null>(null);
 
   const fetchSales = useCallback(async () => {
     if (!activeShift) return;
@@ -169,16 +177,91 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             </button>
           </div>
 
-          {/* Buscador */}
-          <div className="my-4 relative">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar por # de comprobante o cliente..."
-              className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none transition-all"
-            />
+          {/* Buscador y Búsqueda Global de Tickets */}
+          <div className="my-4 space-y-2">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setSearchTicketError(null);
+                  }}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && searchTerm.trim()) {
+                      e.preventDefault();
+                      if (filteredSales.length === 0) {
+                        setIsSearchingExternalTicket(true);
+                        setSearchTicketError(null);
+                        try {
+                          const found = await apiRequest(`/sales/ticket/${encodeURIComponent(searchTerm.trim())}`);
+                          if (found) {
+                            if (found.receiptType !== 'NOTA_VENTA') {
+                              setSearchTicketError(`El comprobante ${found.fullReceiptNumber} ya fue emitido como ${found.receiptType}. Solo se pueden canjear Notas de Venta.`);
+                            } else if (found.isVoided) {
+                              setSearchTicketError(`El ticket ${found.fullReceiptNumber} está anulado.`);
+                            } else {
+                              setSaleToConvert(found);
+                            }
+                          }
+                        } catch (err: any) {
+                          setSearchTicketError(err.message || 'No se encontró el ticket en el sistema.');
+                        } finally {
+                          setIsSearchingExternalTicket(false);
+                        }
+                      }
+                    }
+                  }}
+                  placeholder="Buscar por # comprobante (ej: NV01-00000001) o cliente..."
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none transition-all"
+                />
+              </div>
+
+              {searchTerm.trim().length >= 3 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsSearchingExternalTicket(true);
+                    setSearchTicketError(null);
+                    try {
+                      const found = await apiRequest(`/sales/ticket/${encodeURIComponent(searchTerm.trim())}`);
+                      if (found) {
+                        if (found.receiptType !== 'NOTA_VENTA') {
+                          setSearchTicketError(`El comprobante ${found.fullReceiptNumber} ya es ${found.receiptType}.`);
+                        } else if (found.isVoided) {
+                          setSearchTicketError(`El ticket ${found.fullReceiptNumber} está anulado.`);
+                        } else {
+                          setSaleToConvert(found);
+                        }
+                      }
+                    } catch (err: any) {
+                      setSearchTicketError(err.message || 'No se encontró ningún ticket con ese número.');
+                    } finally {
+                      setIsSearchingExternalTicket(false);
+                    }
+                  }}
+                  disabled={isSearchingExternalTicket}
+                  className="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                  title="Buscar ticket en turnos anteriores para canjear"
+                >
+                  {isSearchingExternalTicket ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
+                  )}
+                  <span className="hidden sm:inline">Buscar Ticket Histórico</span>
+                </button>
+              )}
+            </div>
+
+            {searchTicketError && (
+              <p className="text-[11px] text-rose-400 font-semibold px-1 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{searchTicketError}</span>
+              </p>
+            )}
           </div>
 
           {/* Listado de Ventas */}
@@ -246,15 +329,22 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                 )}
                               </div>
                             ) : (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold border border-emerald-500/20">
-                                {sale.paymentMethod === 'CASH'
-                                  ? 'Efectivo'
-                                  : sale.paymentMethod === 'TRANSFER'
-                                    ? 'Yape/Plin'
-                                    : sale.paymentMethod === 'CARD'
-                                      ? 'Tarjeta'
-                                      : 'Pago Mixto'}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold border border-emerald-500/20">
+                                  {sale.paymentMethod === 'CASH'
+                                    ? 'Efectivo'
+                                    : sale.paymentMethod === 'TRANSFER'
+                                      ? 'Yape/Plin'
+                                      : sale.paymentMethod === 'CARD'
+                                        ? 'Tarjeta'
+                                        : 'Pago Mixto'}
+                                </span>
+                                {sale.voidedReason?.startsWith('CANJE_TICKET:') && (
+                                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-bold border border-amber-500/30 flex items-center gap-1">
+                                    <ArrowRightLeft className="w-3 h-3 text-amber-400" /> Canje de {sale.voidedReason.replace('CANJE_TICKET:', '')}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">
@@ -291,6 +381,18 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                             >
                               <FileText className="w-3.5 h-3.5 text-rose-400" />
                               <span className="hidden sm:inline">Ticket NC</span>
+                            </button>
+                          )}
+
+                          {/* Botón Canjear Nota de Venta a Boleta o Factura */}
+                          {!sale.isVoided && sale.receiptType === 'NOTA_VENTA' && (
+                            <button
+                              onClick={() => setSaleToConvert(sale)}
+                              className="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 transition-all cursor-pointer flex items-center gap-1.5 text-[11px] font-bold shadow-sm"
+                              title="Canjear este ticket por Boleta o Factura Electrónica SUNAT"
+                            >
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
+                              <span className="hidden sm:inline">Canjear</span>
                             </button>
                           )}
 
@@ -552,6 +654,22 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             })()}
           </div>
         </div>
+      )}
+
+      {/* MODAL DE CANJE DE TICKET A BOLETA / FACTURA */}
+      {saleToConvert && (
+        <ConvertReceiptModal
+          isOpen={!!saleToConvert}
+          onClose={() => setSaleToConvert(null)}
+          sale={saleToConvert}
+          onSuccess={(updatedSale) => {
+            fetchSales();
+            setSelectedSaleForPrint(updatedSale);
+            setPrintAsCreditNote(false);
+            setSaleToConvert(null);
+            if (onSaleVoided) onSaleVoided();
+          }}
+        />
       )}
 
       {/* MODAL DE VISTA E IMPRESIÓN DE TICKET */}

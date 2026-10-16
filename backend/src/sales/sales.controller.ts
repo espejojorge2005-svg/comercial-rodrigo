@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { SalesService } from './sales.service.js';
 import { CreateSaleDto } from './dto/create-sale.dto.js';
 import { VoidSaleDto } from './dto/void-sale.dto.js';
+import { ConvertSaleReceiptDto } from './dto/convert-receipt.dto.js';
 import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
@@ -36,6 +37,20 @@ export class SalesController {
     return this.salesService.voidSale(id, dto);
   }
 
+  @Post(':id/convert-receipt')
+  async convertReceipt(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ConvertSaleReceiptDto,
+  ) {
+    return this.salesService.convertSaleReceipt(id, userId, dto);
+  }
+
+  @Get('ticket/:ticketNumber')
+  async findTicket(@Param('ticketNumber') ticketNumber: string) {
+    return this.salesService.findTicketByNumber(ticketNumber);
+  }
+
   @Get('lookup-document/:doc')
   async lookupDocument(@Param('doc') doc: string) {
     return this.salesService.lookupDocument(doc);
@@ -62,6 +77,7 @@ export class SalesController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('limit') limit?: string,
+    @Query('search') search?: string,
   ) {
     const isVoidedBool =
       isVoided !== undefined ? isVoided === 'true' : undefined;
@@ -71,6 +87,7 @@ export class SalesController {
       startDate,
       endDate,
       limit: limit ? parseInt(limit, 10) : undefined,
+      search,
     });
   }
 }

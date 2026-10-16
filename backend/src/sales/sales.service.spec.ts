@@ -192,4 +192,134 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       expect(res).toBeDefined();
     });
   });
+
+  describe('Canje de Ticket / Nota de Venta a Comprobante Electrónico', () => {
+    it('debe rechazar el canje si la venta ya es de tipo BOLETA o FACTURA', async () => {
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-already-fiscal',
+          receiptType: ReceiptType.BOLETA,
+          isVoided: false,
+          totalAmount: 50,
+        }),
+      };
+
+      await expect(
+        salesService.convertSaleReceipt('sale-already-fiscal', 'user-1', {
+          targetReceiptType: ReceiptType.FACTURA,
+          customerDocument: '20601234567',
+          customerName: 'EMPRESA SAC',
+        }),
+      ).rejects.toThrow('Solo las Notas de Venta (Tickets internos) pueden ser canjeadas');
+    });
+
+    it('debe rechazar el canje si la venta está anulada', async () => {
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-voided',
+          receiptType: ReceiptType.NOTA_VENTA,
+          isVoided: true,
+          totalAmount: 50,
+        }),
+      };
+
+      await expect(
+        salesService.convertSaleReceipt('sale-voided', 'user-1', {
+          targetReceiptType: ReceiptType.BOLETA,
+        }),
+      ).rejects.toThrow('No se puede canjear una venta que se encuentra anulada');
+    });
+
+    it('debe rechazar Factura si el RUC no tiene 11 dígitos o no inicia con 10 o 20', async () => {
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-nv',
+          receiptType: ReceiptType.NOTA_VENTA,
+          isVoided: false,
+          totalAmount: 100,
+        }),
+      };
+
+      await expect(
+        salesService.convertSaleReceipt('sale-nv', 'user-1', {
+          targetReceiptType: ReceiptType.FACTURA,
+          customerDocument: '71234567', // DNI en vez de RUC
+          customerName: 'EMPRESA SAC',
+        }),
+      ).rejects.toThrow('RUC válido de 11 dígitos');
+    });
+
+    it('debe canjear exitosamente Nota de Venta a Boleta Electrónica sin duplicar stock ni caja', async () => {
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-nv-1',
+          saleNumber: 45,
+          receiptType: ReceiptType.NOTA_VENTA,
+          series: 'NV01',
+          correlativeNumber: 45,
+          fullReceiptNumber: 'NV01-00000045',
+          isVoided: false,
+          totalAmount: 118,
+          paymentMethod: 'CASH',
+          items: [{ product: { name: 'Aceite Primor', unitType: 'NIU' }, quantity: 1, unitPrice: 118, subtotal: 118 }],
+          cashShift: { cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' } },
+          user: { id: 'user-1', name: 'Cajero' },
+        }),
+      };
+      mockPrisma.cashShift = {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 12 }),
+          },
+          sale: {
+            update: vi.fn().mockResolvedValue({
+              id: 'sale-nv-1',
+              receiptType: ReceiptType.BOLETA,
+              series: 'B001',
+              correlativeNumber: 12,
+              fullReceiptNumber: 'B001-00000012',
+              isFiscal: true,
+              taxableBase: 100,
+              igvAmount: 18,
+              totalAmount: 118,
+              voidedReason: 'CANJE_TICKET:NV01-00000045',
+            }),
+          },
+        };
+        return callback(tx);
+      });
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: true,
+        hash: 'hash123',
+        qrString: 'qr123',
+        emissionStatus: 'ACCEPTED',
+      });
+      mockPrisma.sale.update = vi.fn().mockResolvedValue({
+        id: 'sale-nv-1',
+        fullReceiptNumber: 'B001-00000012',
+        receiptType: ReceiptType.BOLETA,
+        emissionStatus: 'ACCEPTED',
+      });
+
+      const result = await salesService.convertSaleReceipt('sale-nv-1', 'user-1', {
+        targetReceiptType: ReceiptType.BOLETA,
+        customerDocument: '71234567',
+        customerName: 'Juan Perez',
+      });
+
+      expect(result.originalTicketNumber).toBe('NV01-00000045');
+      expect(result.sale.fullReceiptNumber).toBe('B001-00000012');
+      expect(mockBilling.issueReceipt).toHaveBeenCalled();
+    });
+  });
 });
+
