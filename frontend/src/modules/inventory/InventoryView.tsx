@@ -22,8 +22,12 @@ import {
   Clock,
   ArrowUpDown,
   Upload,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
-import type { Product, Category, UnitType } from '../../types/index.js';
+import type { Product, Category, UnitType, PaginationMeta } from '../../types/index.js';
 import { SUNAT_UNITS, getUnitBadge, getUnitShortName } from '../../lib/units.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { exportKardexAndInventoryExcel } from '../../lib/excelExport.js';
@@ -44,6 +48,11 @@ export const InventoryView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // Estados de Paginación de Inventario
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
+  const [paginationMeta, setPaginationMeta] = useState<PaginationMeta | null>(null);
+
   // Exportar a Excel en vivo (Stock Valorizado + Kardex + Alertas)
   const handleExportExcel = async () => {
     setIsExportingExcel(true);
@@ -53,7 +62,12 @@ export const InventoryView: React.FC = () => {
         currentKardex = (await apiRequest('/products/kardex')) || [];
         setKardexList(currentKardex);
       }
-      exportKardexAndInventoryExcel(products, currentKardex, config.name);
+      let allProducts = products;
+      if (paginationMeta && paginationMeta.total > products.length) {
+        const full = await apiRequest<any>('/products');
+        allProducts = Array.isArray(full) ? full : (full?.data || products);
+      }
+      exportKardexAndInventoryExcel(allProducts, currentKardex, config.name);
     } catch (err) {
       console.error(err);
     } finally {
@@ -77,11 +91,11 @@ export const InventoryView: React.FC = () => {
     }
   }, []);
 
-  // Cargar Productos
+  // Cargar Productos con paginación
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      let url = '/products?';
+      let url = `/products?page=${currentPage}&limit=${itemsPerPage}&`;
       if (selectedCategory !== 'all') url += `category=${encodeURIComponent(selectedCategory)}&`;
       if (searchTerm.trim()) url += `search=${encodeURIComponent(searchTerm.trim())}&`;
       if (expirationFilter !== 'all') url += `expirationStatus=${encodeURIComponent(expirationFilter)}&`;
@@ -92,13 +106,27 @@ export const InventoryView: React.FC = () => {
           url += `sortBy=${encodeURIComponent(sortBy)}&`;
         }
       }
-      const data = await apiRequest(url);
-      setProducts(data || []);
+      const res = await apiRequest<any>(url);
+      if (res && res.data && res.meta) {
+        setProducts(res.data);
+        setPaginationMeta(res.meta);
+      } else if (Array.isArray(res)) {
+        setProducts(res);
+        setPaginationMeta(null);
+      } else {
+        setProducts([]);
+        setPaginationMeta(null);
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoading(false);
     }
+  }, [selectedCategory, searchTerm, expirationFilter, sortBy, currentPage, itemsPerPage]);
+
+  // Resetear a página 1 cuando cambian los filtros principales
+  useEffect(() => {
+    setCurrentPage(1);
   }, [selectedCategory, searchTerm, expirationFilter, sortBy]);
 
   // Cargar Kardex con soporte de filtrado por producto y recarga en tiempo real
@@ -134,7 +162,7 @@ export const InventoryView: React.FC = () => {
   }, [activeTab, fetchProducts, fetchKardex, kardexProductFilter]);
 
   // Métricas de Almacén y Vencimiento
-  const totalProducts = products.length;
+  const totalProducts = paginationMeta ? paginationMeta.total : products.length;
   const lowStockCount = products.filter((p) => p.currentStock <= p.minStock).length;
   const expiredCount = products.filter((p) => {
     const info = getProductExpirationInfo(p.expirationDate);
@@ -629,6 +657,86 @@ export const InventoryView: React.FC = () => {
               )}
             </table>
           </div>
+
+          {/* Control de Paginación */}
+          {paginationMeta && (
+            <div className="p-4 bg-slate-950/70 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <span>Mostrando</span>
+                <span className="font-bold text-white">
+                  {paginationMeta.total === 0 ? 0 : (paginationMeta.page - 1) * paginationMeta.limit + 1}
+                </span>
+                <span>-</span>
+                <span className="font-bold text-white">
+                  {Math.min(paginationMeta.page * paginationMeta.limit, paginationMeta.total)}
+                </span>
+                <span>de</span>
+                <span className="font-bold text-emerald-400 font-mono">
+                  {paginationMeta.total}
+                </span>
+                <span>productos</span>
+
+                <span className="text-slate-600 mx-2 hidden sm:inline">|</span>
+
+                <span className="text-slate-400">Por página:</span>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white text-xs cursor-pointer focus:outline-none focus:border-blue-500"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+
+              {paginationMeta.totalPages > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={paginationMeta.page === 1}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 hover:text-white border border-slate-700/80 transition-all cursor-pointer"
+                    title="Primera página"
+                  >
+                    <ChevronsLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={!paginationMeta.hasPrevPage}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 hover:text-white border border-slate-700/80 transition-all flex items-center gap-1 text-xs font-semibold cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Anterior</span>
+                  </button>
+
+                  <div className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700/80 text-xs text-slate-300 font-mono">
+                    Página <span className="font-bold text-white">{paginationMeta.page}</span> de{' '}
+                    <span className="font-bold text-white">{paginationMeta.totalPages}</span>
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage((prev) => Math.min(paginationMeta.totalPages, prev + 1))}
+                    disabled={!paginationMeta.hasNextPage}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 hover:text-white border border-slate-700/80 transition-all flex items-center gap-1 text-xs font-semibold cursor-pointer"
+                  >
+                    <span className="hidden sm:inline">Siguiente</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(paginationMeta.totalPages)}
+                    disabled={paginationMeta.page === paginationMeta.totalPages}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 hover:text-white border border-slate-700/80 transition-all cursor-pointer"
+                    title="Última página"
+                  >
+                    <ChevronsRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

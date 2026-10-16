@@ -104,7 +104,7 @@ export const PosView: React.FC = () => {
         query += `search=${encodeURIComponent(searchTerm.trim())}&`;
       }
       const data = await apiRequest(query);
-      const prodList = data || [];
+      const prodList = Array.isArray(data) ? data : (data?.data || []);
       setProducts(prodList);
       // Guardar productos en caché local de IndexedDB para disponibilidad offline
       offlineStorage.saveProducts(prodList);

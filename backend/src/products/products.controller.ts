@@ -31,8 +31,17 @@ export class ProductsController {
     @Query('category') categoryId?: string,
     @Query('expirationStatus') expirationStatus?: string,
     @Query('sortBy') sortBy?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.productsService.getProducts(userRole, search, categoryId, expirationStatus, sortBy);
+    return this.productsService.getProducts(userRole, {
+      search,
+      categoryId,
+      expirationStatus,
+      sortBy,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 
   @Get('categories')

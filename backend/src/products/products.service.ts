@@ -14,17 +14,51 @@ export class ProductsService {
    */
   async getProducts(
     userRole: Role,
-    search?: string,
+    searchOrOptions?:
+      | string
+      | {
+          search?: string;
+          categoryId?: string;
+          expirationStatus?: string;
+          sortBy?: string;
+          page?: number;
+          limit?: number;
+        },
     categoryId?: string,
     expirationStatus?: string,
     sortBy?: string,
+    page?: number,
+    limit?: number,
   ) {
+    let search: string | undefined;
+    let catId: string | undefined;
+    let expStatus: string | undefined;
+    let sort: string | undefined;
+    let pageNum: number | undefined;
+    let limitNum: number | undefined;
+
+    if (typeof searchOrOptions === 'object' && searchOrOptions !== null) {
+      search = searchOrOptions.search;
+      catId = searchOrOptions.categoryId;
+      expStatus = searchOrOptions.expirationStatus;
+      sort = searchOrOptions.sortBy;
+      pageNum = searchOrOptions.page;
+      limitNum = searchOrOptions.limit;
+    } else {
+      search = searchOrOptions;
+      catId = categoryId;
+      expStatus = expirationStatus;
+      sort = sortBy;
+      pageNum = page;
+      limitNum = limit;
+    }
+
     const where: Prisma.ProductWhereInput = {
       isActive: true,
     };
 
-    if (categoryId && categoryId !== 'all') {
-      where.categoryId = categoryId;
+    if (catId && catId !== 'all') {
+      where.categoryId = catId;
     }
 
     if (search && search.trim() !== '') {
@@ -40,48 +74,59 @@ export class ProductsService {
     const in15Days = new Date(todayStart.getTime() + 15 * 24 * 60 * 60 * 1000);
     const in30Days = new Date(todayStart.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    if (expirationStatus === 'expired') {
+    if (expStatus === 'expired') {
       where.expirationDate = { lt: todayStart };
-    } else if (expirationStatus === 'expiring_soon_15') {
+    } else if (expStatus === 'expiring_soon_15') {
       where.expirationDate = { gte: todayStart, lte: in15Days };
-    } else if (expirationStatus === 'expiring_soon' || expirationStatus === 'expiring_soon_30') {
+    } else if (expStatus === 'expiring_soon' || expStatus === 'expiring_soon_30') {
       where.expirationDate = { gte: todayStart, lte: in30Days };
-    } else if (expirationStatus === 'with_expiration') {
+    } else if (expStatus === 'with_expiration') {
       where.expirationDate = { not: null };
-    } else if (expirationStatus === 'without_expiration') {
+    } else if (expStatus === 'without_expiration') {
       where.expirationDate = null;
     }
 
     let orderBy: Prisma.ProductOrderByWithRelationInput | Prisma.ProductOrderByWithRelationInput[] = { name: 'asc' };
-    if (sortBy === 'expiration_asc') {
+    if (sort === 'expiration_asc') {
       orderBy = [
         { expirationDate: { sort: 'asc', nulls: 'last' } },
         { name: 'asc' },
       ];
-    } else if (sortBy === 'expiration_desc') {
+    } else if (sort === 'expiration_desc') {
       orderBy = [
         { expirationDate: { sort: 'desc', nulls: 'last' } },
         { name: 'asc' },
       ];
-    } else if (sortBy === 'stock_asc') {
+    } else if (sort === 'stock_asc') {
       orderBy = { currentStock: 'asc' };
-    } else if (sortBy === 'stock_desc') {
+    } else if (sort === 'stock_desc') {
       orderBy = { currentStock: 'desc' };
-    } else if (sortBy === 'name_asc') {
+    } else if (sort === 'name_asc') {
       orderBy = { name: 'asc' };
     }
 
-    const products = await this.prisma.product.findMany({
-      where,
-      include: {
-        category: { select: { id: true, name: true } },
-      },
-      orderBy,
-    });
+    const isPaginated = pageNum !== undefined && pageNum !== null;
+    const pageNumber = Math.max(1, Number(pageNum) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(limitNum) || 25));
+    const skip = isPaginated ? (pageNumber - 1) * pageSize : undefined;
+    const take = isPaginated ? pageSize : undefined;
+
+    const [total, products] = await Promise.all([
+      isPaginated ? this.prisma.product.count({ where }) : Promise.resolve(0),
+      this.prisma.product.findMany({
+        where,
+        include: {
+          category: { select: { id: true, name: true } },
+        },
+        orderBy,
+        ...(skip !== undefined ? { skip } : {}),
+        ...(take !== undefined ? { take } : {}),
+      }),
+    ]);
 
     // 🛡️ REGLA DE SEGURIDAD ESTRICTA:
     // Si el usuario es CAJERO, eliminamos totalmente el campo `costPrice`
-    return products.map((p) => {
+    const mapped = products.map((p) => {
       const baseProduct = {
         id: p.id,
         barcode: p.barcode,
@@ -115,6 +160,22 @@ export class ProductsService {
       // Para CAJEROS: sin costo de adquisición ni márgenes
       return baseProduct;
     });
+
+    if (isPaginated) {
+      return {
+        data: mapped,
+        meta: {
+          total,
+          page: pageNumber,
+          limit: pageSize,
+          totalPages: Math.ceil(total / pageSize) || 1,
+          hasNextPage: pageNumber * pageSize < total,
+          hasPrevPage: pageNumber > 1,
+        },
+      };
+    }
+
+    return mapped;
   }
 
   /**
