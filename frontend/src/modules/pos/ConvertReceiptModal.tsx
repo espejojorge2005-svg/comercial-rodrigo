@@ -84,7 +84,7 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
             setTargetType('FACTURA');
           }
         } else {
-          setLookupBadge('✓ RENIEC: Nombre verificado');
+          setLookupBadge(data.source === 'RENIEC_LIVE' ? '✓ RENIEC: Nombre verificado' : '✓ DNI');
           if (targetType !== 'BOLETA') {
             setTargetType('BOLETA');
           }

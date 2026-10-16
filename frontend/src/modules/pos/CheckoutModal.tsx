@@ -118,7 +118,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         if (data.documentType === 'RUC') {
           setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}`);
         } else {
-          setLookupBadge(`✓ RENIEC: Nombre encontrado`);
+          setLookupBadge(data.source === 'RENIEC_LIVE' ? `✓ RENIEC: Nombre oficial verificado` : `✓ DNI`);
         }
       }
     } catch (err: any) {

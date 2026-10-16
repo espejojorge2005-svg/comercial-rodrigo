@@ -1251,6 +1251,8 @@ export class SalesService {
       throw new BadRequestException('El documento debe ser un DNI de 8 dígitos o un RUC de 11 dígitos');
     }
 
+    const token = (process.env.DECOLECTA_TOKEN || process.env.APIS_TOKEN || '').trim();
+
     if (clean.length === 11) {
       // 1. Validar prefijos válidos de RUC peruano
       const validPrefixes = ['10', '20', '15', '17'];
@@ -1259,34 +1261,36 @@ export class SalesService {
         throw new BadRequestException('El RUC debe comenzar con 10, 20, 15 o 17');
       }
 
-      // 2. Intentar consulta a servicio público SUNAT
+      // 2. Intentar consulta en vivo a Decolecta / SUNAT
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3500);
+        const timeout = setTimeout(() => controller.abort(), 4500);
 
-        const res = await fetch(`https://api.apis.net.pe/v1/ruc?numero=${clean}`, {
+        const res = await fetch(`https://api.decolecta.com/v1/sunat/ruc?numero=${clean}`, {
           signal: controller.signal,
-          headers: { Accept: 'application/json' },
+          headers: {
+            Accept: 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
         });
         clearTimeout(timeout);
 
         if (res.ok) {
           const data: any = await res.json();
-          if (data && (data.nombre || data.razonSocial)) {
-            const fullAddress = [
-              data.direccion,
-              data.distrito,
-              data.provincia,
-              data.departamento,
-            ]
-              .filter(Boolean)
-              .join(' - ');
+          const rucName = (data.razon_social || data.razonSocial || data.nombre || '').trim();
+          if (data && rucName) {
+            let fullAddress = (data.direccion || '').trim();
+            if (data.distrito && !fullAddress.includes(data.distrito)) {
+              fullAddress = [fullAddress, data.distrito, data.provincia, data.departamento]
+                .filter(Boolean)
+                .join(' - ');
+            }
 
             return {
               documentType: 'RUC',
               documentNumber: clean,
-              name: (data.nombre || data.razonSocial || '').trim(),
-              address: fullAddress || data.direccion || 'LIMA, PERÚ',
+              name: rucName,
+              address: fullAddress || 'LIMA, PERÚ',
               status: data.estado || 'ACTIVO',
               condition: data.condicion || 'HABIDO',
               source: 'SUNAT_LIVE',
@@ -1294,7 +1298,7 @@ export class SalesService {
           }
         }
       } catch (err) {
-        // Si hay timeout o no hay conexión hacia la API pública, utilizar padrón inteligente
+        // Fallback a padrón si hay corte de red o timeout
       }
 
       // 3. Padrón Inteligente con empresas peruanas de referencia y fallback estructurado
@@ -1356,30 +1360,41 @@ export class SalesService {
         source: 'PADRON_MOCK',
       };
     } else {
-      // DNI (8 dígitos)
+      // DNI (8 dígitos) - Consulta a RENIEC en Decolecta
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3500);
+        const timeout = setTimeout(() => controller.abort(), 4500);
 
-        const res = await fetch(`https://api.apis.net.pe/v1/dni?numero=${clean}`, {
+        const res = await fetch(`https://api.decolecta.com/v1/reniec/dni?numero=${clean}`, {
           signal: controller.signal,
-          headers: { Accept: 'application/json' },
+          headers: {
+            Accept: 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
         });
         clearTimeout(timeout);
 
         if (res.ok) {
           const data: any = await res.json();
-          if (data && data.nombre) {
+          const fullName = (
+            data.full_name ||
+            data.nombre ||
+            [data.first_name, data.first_last_name, data.second_last_name]
+              .filter(Boolean)
+              .join(' ')
+          ).trim();
+
+          if (fullName) {
             return {
               documentType: 'DNI',
               documentNumber: clean,
-              name: data.nombre.trim(),
+              name: fullName,
               source: 'RENIEC_LIVE',
             };
           }
         }
       } catch (err) {
-        // Fallback
+        // Fallback a simulación solo si se corta la conexión
       }
 
       return {
