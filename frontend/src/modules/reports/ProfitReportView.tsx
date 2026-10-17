@@ -839,7 +839,7 @@ export const ProfitReportView: React.FC = () => {
       {reportMode === 'tax' && (
         <div className="space-y-4">
           {/* Tarjetas de Resumen Tributario */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
             {/* Base Imponible Total */}
             <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between hover:border-slate-700 transition-colors">
               <div>
@@ -885,6 +885,24 @@ export const ProfitReportView: React.FC = () => {
               </div>
               <div className="mt-1.5 text-[10px] text-blue-300/80 font-medium truncate">
                 {taxData?.summary.totalFiscalSales || 0} registros oficiales
+              </div>
+            </div>
+
+            {/* Pago a Cuenta Impuesto a la Renta 1% (RMT) */}
+            <div className="p-3.5 rounded-2xl bg-slate-900 border border-amber-500/30 flex flex-col justify-between hover:border-amber-500/50 transition-colors shadow-sm shadow-amber-950/20">
+              <div>
+                <div className="text-xs text-amber-400 font-bold mb-1 flex items-center justify-between gap-1">
+                  <span className="truncate">Renta 1% (RMT)</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/80 shrink-0 font-mono">
+                    1%
+                  </span>
+                </div>
+                <div className="text-xl font-black text-amber-300 font-mono tabular-nums whitespace-nowrap">
+                  {formatCurrency(taxData?.summary.estimatedIncomeTax1Pct ?? Number(((taxData?.summary.totalTaxableBase || 0) * 0.01).toFixed(2)))}
+                </div>
+              </div>
+              <div className="mt-1.5 text-[10px] text-amber-300/80 font-medium truncate">
+                Pago a Cta. MYPE Tributario
               </div>
             </div>
 

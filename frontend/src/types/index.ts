@@ -266,6 +266,7 @@ export interface TaxBookResponse {
     totalTaxableBase: number;
     totalIgv: number;
     totalAmount: number;
+    estimatedIncomeTax1Pct: number;
   };
   records: TaxBookRecord[];
 }

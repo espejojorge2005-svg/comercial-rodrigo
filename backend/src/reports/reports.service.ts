@@ -233,6 +233,8 @@ export class ReportsService {
       };
     });
 
+    const estimatedIncomeTax1Pct = Number((totalTaxableBase * 0.01).toFixed(2));
+
     return {
       period: {
         startDate: query.startDate || null,
@@ -246,6 +248,7 @@ export class ReportsService {
         totalTaxableBase: Number(totalTaxableBase.toFixed(2)),
         totalIgv: Number(totalIgv.toFixed(2)),
         totalAmount: Number(totalAmount.toFixed(2)),
+        estimatedIncomeTax1Pct,
       },
       records,
     };
@@ -295,41 +298,108 @@ export class ReportsService {
     subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getRow(2).height = 20;
 
-    sheet.addRow([]); // Espacio
+    // 2. RESUMEN DE EMISIONES Y TARJETAS TRIBUTARIAS (KPIs para el Contador y SUNAT)
+    sheet.mergeCells('A3:M3');
+    const countsCell = sheet.getCell('A3');
+    countsCell.value = `RESUMEN DE EMISIONES:  Boletas (03): ${data.summary.receiptCount}   |   Facturas (01): ${data.summary.invoiceCount}   |   Notas de Crédito (07): ${data.summary.creditNoteCount}   |   Total Comprobantes: ${data.summary.totalFiscalSales}`;
+    countsCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: '334155' } };
+    countsCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } };
+    countsCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    countsCell.border = {
+      top: { style: 'thin', color: { argb: colors.border } },
+      bottom: { style: 'thin', color: { argb: colors.border } },
+      left: { style: 'thin', color: { argb: colors.border } },
+      right: { style: 'thin', color: { argb: colors.border } },
+    };
+    sheet.getRow(3).height = 20;
 
-    // 2. RESUMEN RÁPIDO EN CABECERA (KPIs para el Contador)
-    const kpiRowIndex = 4;
-    sheet.getCell(`B${kpiRowIndex}`).value = 'Boletas (03):';
-    sheet.getCell(`B${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`C${kpiRowIndex}`).value = data.summary.receiptCount;
+    sheet.getRow(4).height = 22;
+    sheet.getRow(5).height = 28;
 
-    sheet.getCell(`D${kpiRowIndex}`).value = 'Facturas (01):';
-    sheet.getCell(`D${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`E${kpiRowIndex}`).value = data.summary.invoiceCount;
+    const renderSummaryCard = (
+      startCol: string,
+      endCol: string,
+      startColIdx: number,
+      endColIdx: number,
+      title: string,
+      value: number,
+      theme: { headerBg: string; headerText: string; bodyBg: string; bodyText: string; borderColor: string },
+    ) => {
+      sheet.mergeCells(`${startCol}4:${endCol}4`);
+      sheet.mergeCells(`${startCol}5:${endCol}5`);
 
-    sheet.getCell(`F${kpiRowIndex}`).value = 'Notas de Crédito (07):';
-    sheet.getCell(`F${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`G${kpiRowIndex}`).value = data.summary.creditNoteCount;
+      for (let c = startColIdx; c <= endColIdx; c++) {
+        const hCell = sheet.getRow(4).getCell(c);
+        hCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.headerBg } };
+        hCell.border = {
+          top: { style: 'thin', color: { argb: theme.borderColor } },
+          bottom: { style: 'thin', color: { argb: theme.borderColor } },
+          left: { style: 'thin', color: { argb: theme.borderColor } },
+          right: { style: 'thin', color: { argb: theme.borderColor } },
+        };
 
-    sheet.getCell(`H${kpiRowIndex}`).value = 'Op. Gravada Neta:';
-    sheet.getCell(`H${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`I${kpiRowIndex}`).value = data.summary.totalTaxableBase;
-    sheet.getCell(`I${kpiRowIndex}`).numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
+        const vCell = sheet.getRow(5).getCell(c);
+        vCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.bodyBg } };
+        vCell.border = {
+          top: { style: 'thin', color: { argb: theme.borderColor } },
+          bottom: { style: 'medium', color: { argb: theme.borderColor } },
+          left: { style: 'thin', color: { argb: theme.borderColor } },
+          right: { style: 'thin', color: { argb: theme.borderColor } },
+        };
+      }
 
-    sheet.getCell(`J${kpiRowIndex}`).value = 'Total IGV Neto:';
-    sheet.getCell(`J${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`K${kpiRowIndex}`).value = data.summary.totalIgv;
-    sheet.getCell(`K${kpiRowIndex}`).numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
+      const titleCell = sheet.getCell(`${startCol}4`);
+      titleCell.value = title;
+      titleCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: theme.headerText } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-    sheet.getCell(`L${kpiRowIndex}`).value = 'Total Neto:';
-    sheet.getCell(`L${kpiRowIndex}`).font = { bold: true };
-    sheet.getCell(`M${kpiRowIndex}`).value = data.summary.totalAmount;
-    sheet.getCell(`M${kpiRowIndex}`).numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
+      const valueCell = sheet.getCell(`${startCol}5`);
+      valueCell.value = value;
+      valueCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: theme.bodyText } };
+      valueCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      valueCell.numFmt = '"S/ "#,##0.00;[Red]"-S/ "#,##0.00';
+    };
 
-    sheet.addRow([]); // Espacio
+    // Tarjeta 1: TOTAL OP. GRAVADA
+    renderSummaryCard('A', 'C', 1, 3, 'TOTAL OP. GRAVADA', data.summary.totalTaxableBase, {
+      headerBg: 'DBEAFE',
+      headerText: '1E3A8A',
+      bodyBg: 'F8FAFC',
+      bodyText: '1E3A8A',
+      borderColor: '93C5FD',
+    });
+
+    // Tarjeta 2: TOTAL I.G.V.
+    renderSummaryCard('D', 'F', 4, 6, 'TOTAL I.G.V.', data.summary.totalIgv, {
+      headerBg: 'E0E7FF',
+      headerText: '3730A3',
+      bodyBg: 'F8FAFC',
+      bodyText: '3730A3',
+      borderColor: 'A5B4FC',
+    });
+
+    // Tarjeta 3: TOTAL FACTURADO
+    renderSummaryCard('G', 'I', 7, 9, 'TOTAL FACTURADO', data.summary.totalAmount, {
+      headerBg: 'D1FAE5',
+      headerText: '065F46',
+      bodyBg: 'F8FAFC',
+      bodyText: '065F46',
+      borderColor: '6EE7B7',
+    });
+
+    // Tarjeta 4: PAGO A CTA. RENTA 1% (RMT)
+    renderSummaryCard('J', 'M', 10, 13, 'PAGO A CTA. RENTA 1% (RMT)', data.summary.estimatedIncomeTax1Pct, {
+      headerBg: 'FEF3C7',
+      headerText: '92400E',
+      bodyBg: 'FFFBEB',
+      bodyText: '92400E',
+      borderColor: 'FCD34D',
+    });
+
+    sheet.addRow([]); // Fila 6: Espacio
 
     // 3. CABECERA DE LA TABLA
-    const tableHeaderRowIndex = 6;
+    const tableHeaderRowIndex = 7;
     const headers = [
       'N°',
       'FECHA EMISIÓN',

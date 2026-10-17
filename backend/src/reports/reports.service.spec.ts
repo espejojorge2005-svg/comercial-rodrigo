@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import ExcelJS from 'exceljs';
 import { ReportsService } from './reports.service.js';
 import { ReceiptType, CashMovementType } from '@prisma/client';
 
@@ -118,6 +119,10 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
 
       // Total neto: 100 + 200 - 100 = 200
       expect(result.summary.totalAmount).toBe(200.0);
+
+      // Pago a cuenta del Impuesto a la Renta (1% Régimen MYPE Tributario)
+      // totalTaxableBase = 84.75 + 169.49 - 84.75 = 169.49 -> 1% = 1.69
+      expect(result.summary.estimatedIncomeTax1Pct).toBe(1.69);
     });
 
     it('debe generar el buffer Excel del Libro Tributario con ExcelJS', async () => {
@@ -144,6 +149,27 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       expect(buffer).toBeDefined();
       expect(Buffer.isBuffer(buffer)).toBe(true);
       expect(buffer.length).toBeGreaterThan(1000);
+
+      // Validar estructura del Excel generado y las 4 tarjetas de resumen
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as any);
+      const sheet = workbook.getWorksheet('Registro de Ventas e Ingresos');
+      expect(sheet).toBeDefined();
+
+      // Verificar títulos de las 4 tarjetas de resumen (Fila 4)
+      expect(sheet?.getCell('A4').value).toBe('TOTAL OP. GRAVADA');
+      expect(sheet?.getCell('D4').value).toBe('TOTAL I.G.V.');
+      expect(sheet?.getCell('G4').value).toBe('TOTAL FACTURADO');
+      expect(sheet?.getCell('J4').value).toBe('PAGO A CTA. RENTA 1% (RMT)');
+
+      // Verificar valor de la tarjeta de Renta 1% (Fila 5) -> 84.75 * 0.01 = 0.85
+      expect(sheet?.getCell('J5').value).toBe(0.85);
+
+      // Verificar encabezados estándar de la tabla SUNAT (Fila 7)
+      expect(sheet?.getCell('A7').value).toBe('N°');
+      expect(sheet?.getCell('I7').value).toBe('BASE IMPONIBLE (S/)');
+      expect(sheet?.getCell('J7').value).toBe('IGV 18% (S/)');
+      expect(sheet?.getCell('K7').value).toBe('IMPORTE TOTAL (S/)');
     });
   });
 

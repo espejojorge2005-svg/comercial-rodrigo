@@ -217,14 +217,14 @@ export class SalesService {
             );
           }
         } else if (dto.paymentMethod === 'MIXED') {
-          if (digitalPaidNum > totalCalculated) {
-            throw new BadRequestException(
-              `En pago MIXTO, el monto digital (S/ ${digitalPaidNum.toFixed(2)}) no puede exceder el total de la venta (S/ ${totalCalculated.toFixed(2)}).`,
-            );
-          }
           if (changeAmountNum > cashPaidNum) {
             throw new BadRequestException(
               `En pago MIXTO, el vuelto (S/ ${changeAmountNum.toFixed(2)}) no puede ser mayor al efectivo entregado (S/ ${cashPaidNum.toFixed(2)}). No se permite entregar vuelto en efectivo sobre cobros digitales.`,
+            );
+          }
+          if (digitalPaidNum > totalCalculated) {
+            throw new BadRequestException(
+              `En pago MIXTO, el monto digital (S/ ${digitalPaidNum.toFixed(2)}) no puede exceder el total de la venta (S/ ${totalCalculated.toFixed(2)}).`,
             );
           }
         }

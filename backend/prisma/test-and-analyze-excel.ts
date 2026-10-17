@@ -36,20 +36,20 @@ async function runAdministratorAudit() {
   console.log(`   📋 Título: ${banner}`);
   console.log(`   📋 Subtítulo: ${subBanner}`);
 
-  // Leer KPIs en cabecera
-  const boletasCount = taxSheet.getCell('C4').value;
-  const facturasCount = taxSheet.getCell('F4').value;
-  const baseImponibleKpi = taxSheet.getCell('I4').value;
-  const igvKpi = taxSheet.getCell('K4').value;
+  // Leer Tarjetas Resumen (KPIs) en cabecera
+  const baseImponibleKpi = taxSheet.getCell('A5').value;
+  const igvKpi = taxSheet.getCell('D5').value;
+  const totalKpi = taxSheet.getCell('G5').value;
+  const renta1PctKpi = taxSheet.getCell('J5').value;
 
-  console.log(`\n   --- KPIs Declarados en Cabecera de Excel ---`);
-  console.log(`   - Boletas Electrónicas: ${boletasCount}`);
-  console.log(`   - Facturas Electrónicas: ${facturasCount}`);
-  console.log(`   - Base Imponible Gravada: S/ ${Number(baseImponibleKpi).toFixed(2)}`);
-  console.log(`   - IGV Acumulado (18%):   S/ ${Number(igvKpi).toFixed(2)}`);
+  console.log(`\n   --- Tarjetas Resumen (KPIs) Declaradas en Cabecera de Excel ---`);
+  console.log(`   - Base Imponible Gravada:      S/ ${Number(baseImponibleKpi).toFixed(2)}`);
+  console.log(`   - IGV Acumulado (18%):        S/ ${Number(igvKpi).toFixed(2)}`);
+  console.log(`   - Total Facturado SUNAT:       S/ ${Number(totalKpi).toFixed(2)}`);
+  console.log(`   - Pago a Cta. Renta 1% (RMT):  S/ ${Number(renta1PctKpi).toFixed(2)}`);
 
   // Auditar cada fila de venta fiscal en la tabla
-  let rowIdx = 7; // Las filas de datos comienzan en la 7
+  let rowIdx = 8; // Las filas de datos comienzan en la fila 8 (Fila 7 es encabezado)
   let computedTaxable = 0;
   let computedIgv = 0;
   let computedTotal = 0;
