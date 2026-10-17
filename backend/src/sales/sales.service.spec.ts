@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SalesService } from './sales.service.js';
-import { ReceiptType } from '@prisma/client';
+import { ReceiptType, EmissionStatus } from '@prisma/client';
 
 describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
   let salesService: SalesService;
@@ -474,6 +474,197 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       expect(result.originalTicketNumber).toBe('NV01-00000045');
       expect(result.sale.fullReceiptNumber).toBe('B001-00000012');
       expect(mockBilling.issueReceipt).toHaveBeenCalled();
+    });
+
+    it('debe marcar la venta canjeada como REJECTED si el PSE rechaza la emisión', async () => {
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-nv-rej',
+          saleNumber: 46,
+          receiptType: ReceiptType.NOTA_VENTA,
+          series: 'NV01',
+          correlativeNumber: 46,
+          fullReceiptNumber: 'NV01-00000046',
+          isVoided: false,
+          totalAmount: 118,
+          paymentMethod: 'CASH',
+          items: [{ product: { name: 'Aceite Primor', unitType: 'NIU' }, quantity: 1, unitPrice: 118, subtotal: 118 }],
+          cashShift: { cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' } },
+          user: { id: 'user-1', name: 'Cajero' },
+        }),
+      };
+      mockPrisma.cashShift = {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 13 }),
+          },
+          sale: {
+            update: vi.fn().mockResolvedValue({
+              id: 'sale-nv-rej',
+              receiptType: ReceiptType.BOLETA,
+              series: 'B001',
+              correlativeNumber: 13,
+              fullReceiptNumber: 'B001-00000013',
+              isFiscal: true,
+              taxableBase: 100,
+              igvAmount: 18,
+              totalAmount: 118,
+            }),
+          },
+        };
+        return callback(tx);
+      });
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: false,
+        message: 'DNI no existe en RENIEC',
+      });
+      mockPrisma.sale.update = vi.fn().mockResolvedValue({
+        id: 'sale-nv-rej',
+        fullReceiptNumber: 'B001-00000013',
+        receiptType: ReceiptType.BOLETA,
+        emissionStatus: EmissionStatus.REJECTED,
+      });
+
+      const result = await salesService.convertSaleReceipt('sale-nv-rej', 'user-1', {
+        targetReceiptType: ReceiptType.BOLETA,
+        customerDocument: '71234567',
+        customerName: 'Juan Perez',
+      });
+
+      expect(mockPrisma.sale.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            emissionStatus: EmissionStatus.REJECTED,
+          }),
+        }),
+      );
+      expect(result.sale.emissionStatus).toBe(EmissionStatus.REJECTED);
+    });
+  });
+
+  describe('Sincronizador Offline (syncOfflineSales)', () => {
+    it('debe actualizar emissionStatus a REJECTED si el PSE reporta rechazo formal', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegisterId: 'reg-1',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegisterId: 'reg-1',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.kardexMovement = {
+        findFirst: vi.fn().mockResolvedValue(null),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Arroz 1kg',
+              isActive: true,
+              currentStock: 50,
+              costPrice: 3,
+            }),
+            update: vi.fn().mockResolvedValue({
+              id: 'p1',
+              currentStock: 49,
+            }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 88 }),
+          },
+          sale: {
+            create: vi.fn().mockResolvedValue({
+              id: 'sale-off-1',
+              saleNumber: 88,
+              receiptType: ReceiptType.BOLETA,
+              series: 'B001',
+              correlativeNumber: 88,
+              fullReceiptNumber: 'B001-00000088',
+              totalAmount: 100,
+              emissionStatus: EmissionStatus.PENDING,
+              items: [],
+            }),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+        };
+        return callback(tx);
+      });
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: false,
+        message: 'DNI no encontrado en padrón RENIEC',
+      });
+      mockPrisma.sale = {
+        update: vi.fn().mockResolvedValue({
+          id: 'sale-off-1',
+          fullReceiptNumber: 'B001-00000088',
+          receiptType: ReceiptType.BOLETA,
+          emissionStatus: EmissionStatus.REJECTED,
+          totalAmount: 100,
+          taxableBase: 84.75,
+          igvAmount: 15.25,
+          cashPaid: 100,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [],
+        }),
+      };
+
+      const syncResult = await salesService.syncOfflineSales('user-1', {
+        shiftId: 'shift-1',
+        sales: [
+          {
+            offlineId: 'off-uuid-1',
+            cashShiftId: 'shift-1',
+            createdAt: new Date().toISOString(),
+            receiptType: ReceiptType.BOLETA,
+            paymentMethod: 'CASH',
+            cashPaid: 100,
+            digitalPaid: 0,
+            changeAmount: 0,
+            customerName: 'JUAN PEREZ',
+            customerDocument: '71234567',
+            items: [
+              {
+                productId: 'p1',
+                quantity: 1,
+                unitPrice: 100,
+                subtotal: 100,
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(syncResult.syncedCount).toBe(1);
+      expect(mockPrisma.sale.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            emissionStatus: EmissionStatus.REJECTED,
+          }),
+        }),
+      );
+      expect(syncResult.results[0].sale.emissionStatus).toBe(EmissionStatus.REJECTED);
     });
   });
 });

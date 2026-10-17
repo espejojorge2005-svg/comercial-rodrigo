@@ -1035,6 +1035,31 @@ export class SalesService {
             },
           },
         });
+      } else {
+        finalSale = await this.prisma.sale.update({
+          where: { id: sale.id },
+          data: {
+            emissionStatus: EmissionStatus.REJECTED,
+          },
+          include: {
+            items: {
+              include: {
+                product: {
+                  select: { id: true, name: true, barcode: true, unitType: true },
+                },
+              },
+            },
+            cashShift: {
+              include: { cashRegister: true },
+            },
+            user: {
+              select: { id: true, name: true, username: true },
+            },
+          },
+        });
+        this.logger.error(
+          `[convertSaleReceipt] Canje ${txResult.fullReceiptNumber} rechazado por PSE: ${billingRes.message}`,
+        );
       }
     } catch (err: any) {
       this.logger.error(
@@ -2025,6 +2050,32 @@ export class SalesService {
                   },
                 },
               });
+            } else {
+              // El PSE reportó rechazo formal de SUNAT
+              finalSale = await this.prisma.sale.update({
+                where: { id: txResult.sale.id },
+                data: {
+                  emissionStatus: EmissionStatus.REJECTED,
+                },
+                include: {
+                  items: {
+                    include: {
+                      product: {
+                        select: { id: true, name: true, barcode: true, unitType: true },
+                      },
+                    },
+                  },
+                  cashShift: {
+                    include: { cashRegister: true },
+                  },
+                  user: {
+                    select: { id: true, name: true, username: true },
+                  },
+                },
+              });
+              this.logger.error(
+                `[syncOfflineSales] Rechazado por PSE: Boleta/Factura offline [${offlineSale.offlineId}] falló validación SUNAT: ${billingRes.message}`,
+              );
             }
           } catch (billingErr: any) {
             this.logger.error(
