@@ -229,15 +229,17 @@ export class SalesService {
           }
         }
 
-        // Validación fiscal para Boletas de Venta: Exigencia de DNI si es >= S/ 700.00
+        // Validación fiscal para Boletas de Venta: Exigencia de DNI, Carnet de Extranjería o RUC si es >= S/ 700.00
         if (receiptType === ReceiptType.BOLETA && totalCalculated >= 700) {
-          const dni = (dto.customerDocument || '').trim();
-          if (!/^\d{8}$/.test(dni)) {
+          const doc = (dto.customerDocument || '').trim();
+          // Se permite DNI (8), Carnet de Extranjería / Pasaporte (9 a 12) o RUC (11)
+          if (doc.length < 8 || doc.length > 12) {
             throw new BadRequestException(
-              `Para Boletas de Venta con monto igual o superior a S/ 700.00 (Total: S/ ${totalCalculated.toFixed(2)}), SUNAT exige DNI obligatorio de 8 dígitos.`,
+              `Para Boletas de Venta con monto igual o superior a S/ 700.00 (Total: S/ ${totalCalculated.toFixed(2)}), SUNAT exige identificar al cliente con DNI, Carnet de Extranjería o RUC válido (8 a 12 caracteres).`,
             );
           }
-          if (!dto.customerName || dto.customerName.trim().length < 3 || dto.customerName === 'Cliente Varios') {
+          const customerNameUpper = (dto.customerName || '').trim().toUpperCase();
+          if (!dto.customerName || dto.customerName.trim().length < 3 || customerNameUpper === 'CLIENTE VARIOS' || customerNameUpper === 'CLIENTES VARIOS') {
             throw new BadRequestException(
               'Para Boletas de Venta con monto igual o superior a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
             );
@@ -877,12 +879,13 @@ export class SalesService {
       }
     } else if (targetReceiptType === ReceiptType.BOLETA) {
       if (totalCalculated >= 700) {
-        if (!trimmedDoc || (trimmedDoc.length !== 8 && trimmedDoc.length !== 11)) {
+        if (!trimmedDoc || trimmedDoc.length < 8 || trimmedDoc.length > 12) {
           throw new BadRequestException(
-            'Para Boletas con monto mayor o igual a S/ 700.00, es obligatorio consignar el DNI o RUC del cliente según normativa SUNAT.',
+            'Para Boletas con monto mayor o igual a S/ 700.00, es obligatorio consignar el DNI, Carnet de Extranjería o RUC del cliente según normativa SUNAT (8 a 12 caracteres).',
           );
         }
-        if (!trimmedName) {
+        const trimmedNameUpper = trimmedName.toUpperCase();
+        if (!trimmedName || trimmedName.length < 3 || trimmedNameUpper === 'CLIENTE VARIOS' || trimmedNameUpper === 'CLIENTES VARIOS') {
           throw new BadRequestException(
             'Para Boletas con monto mayor o igual a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
           );

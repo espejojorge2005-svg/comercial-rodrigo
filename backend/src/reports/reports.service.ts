@@ -111,6 +111,7 @@ export class ReportsService {
       if (doc) {
         if (doc.length === 11) customerDocType = '6';
         else if (doc.length === 8) customerDocType = '1';
+        else if (doc.length >= 9 && doc.length <= 12) customerDocType = '4';
         else customerDocType = '0';
       }
 
@@ -163,6 +164,7 @@ export class ReportsService {
       if (doc) {
         if (doc.length === 11) customerDocType = '6';
         else if (doc.length === 8) customerDocType = '1';
+        else if (doc.length >= 9 && doc.length <= 12) customerDocType = '4';
         else customerDocType = '0';
       }
 

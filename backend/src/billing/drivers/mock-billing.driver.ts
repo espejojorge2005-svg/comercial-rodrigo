@@ -50,6 +50,8 @@ export class MockBillingDriver implements IBillingDriver {
       customerDocType = '6';
     } else if (cleanDoc.length === 8) {
       customerDocType = '1';
+    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
+      customerDocType = '4';
     }
 
     const customerDocNum = cleanDoc || '-';
@@ -122,6 +124,8 @@ export class MockBillingDriver implements IBillingDriver {
       customerDocType = '6';
     } else if (cleanDoc.length === 8) {
       customerDocType = '1';
+    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
+      customerDocType = '4';
     }
 
     const customerDocNum = cleanDoc || '-';

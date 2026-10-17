@@ -67,6 +67,161 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
     });
   });
 
+  describe('Validaciones de Boleta >= S/ 700.00 (Exigencia Legal SUNAT)', () => {
+    beforeEach(() => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Saco de Azúcar 50kg',
+              isActive: true,
+              currentStock: 50,
+              costPrice: 150,
+            }),
+            update: vi.fn().mockResolvedValue({
+              id: 'p1',
+              currentStock: 46,
+            }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 5 }),
+          },
+          sale: {
+            create: vi.fn().mockResolvedValue({
+              id: 'sale-700',
+              saleNumber: 5,
+              receiptType: ReceiptType.BOLETA,
+              totalAmount: 800,
+              items: [],
+            }),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+        };
+        return callback(tx);
+      });
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: true,
+        hash: 'hash-test',
+        qrString: 'qr-test',
+        emissionStatus: 'SIMULATED',
+      });
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-700',
+          saleNumber: 5,
+          receiptType: ReceiptType.BOLETA,
+          totalAmount: 800,
+          taxableBase: 677.97,
+          igvAmount: 122.03,
+          cashPaid: 800,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [],
+        }),
+        update: vi.fn().mockResolvedValue({
+          id: 'sale-700',
+          totalAmount: 800,
+          items: [],
+        }),
+      };
+    });
+
+    it('debe rechazar Boleta >= S/ 700 si el documento tiene menos de 8 caracteres', async () => {
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.BOLETA,
+          customerDocument: '1234567', // 7 dígitos
+          customerName: 'JUAN PEREZ',
+          paymentMethod: 'CASH',
+          cashPaid: 800,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 4, unitPrice: 200, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('SUNAT exige identificar al cliente con DNI, Carnet de Extranjería o RUC válido (8 a 12 caracteres)');
+    });
+
+    it('debe rechazar Boleta >= S/ 700 si el documento tiene más de 12 caracteres', async () => {
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.BOLETA,
+          customerDocument: '1234567890123', // 13 caracteres
+          customerName: 'JUAN PEREZ',
+          paymentMethod: 'CASH',
+          cashPaid: 800,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 4, unitPrice: 200, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('SUNAT exige identificar al cliente con DNI, Carnet de Extranjería o RUC válido (8 a 12 caracteres)');
+    });
+
+    it('debe rechazar Boleta >= S/ 700 si el nombre es "Cliente Varios" o "CLIENTES VARIOS"', async () => {
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.BOLETA,
+          customerDocument: '71234567',
+          customerName: 'CLIENTES VARIOS',
+          paymentMethod: 'CASH',
+          cashPaid: 800,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 4, unitPrice: 200, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('se requieren los nombres y apellidos completos del cliente');
+    });
+
+    it('debe permitir Boleta >= S/ 700 con Carnet de Extranjería (CE de 9 caracteres) y nombre completo', async () => {
+      const result = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.BOLETA,
+        customerDocument: '001234567', // Carnet de Extranjería (9 caracteres)
+        customerName: 'Carlos Andres Rodriguez',
+        paymentMethod: 'CASH',
+        cashPaid: 800,
+        digitalPaid: 0,
+        changeAmount: 0,
+        items: [{ productId: 'p1', quantity: 4, unitPrice: 200, isWholesaleApplied: false }],
+      });
+
+      expect(result.sale).toBeDefined();
+      expect(result.sale.totalAmount).toBe(800);
+    });
+
+    it('debe permitir Boleta >= S/ 700 con RUC personal (11 dígitos) y nombre completo', async () => {
+      const result = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.BOLETA,
+        customerDocument: '10458923011', // RUC personal de 11 dígitos
+        customerName: 'Juan Carlos Perez Gomez',
+        paymentMethod: 'CASH',
+        cashPaid: 800,
+        digitalPaid: 0,
+        changeAmount: 0,
+        items: [{ productId: 'p1', quantity: 4, unitPrice: 200, isWholesaleApplied: false }],
+      });
+
+      expect(result.sale).toBeDefined();
+      expect(result.sale.totalAmount).toBe(800);
+    });
+  });
+
   describe('Validación Financiera Estricta del Pago (Cuadre de Caja y Antifraude)', () => {
     it('debe rechazar venta si (cashPaid + digitalPaid) - changeAmount no coincide con el total', async () => {
       mockPrisma.cashShift = {

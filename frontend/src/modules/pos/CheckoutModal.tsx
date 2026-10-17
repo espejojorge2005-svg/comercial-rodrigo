@@ -149,13 +149,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const safeAddress = custAddress || '';
 
   const isBoletaOver700 = receiptType === 'BOLETA' && totalAmount >= 700;
-  const dniDigitsOnly = safeDoc.replace(/\D/g, '');
+  const cleanCustDoc = safeDoc.trim();
   const rucDigitsOnly = safeDoc.replace(/\D/g, '');
 
-  const isDniValidForBoleta = !isBoletaOver700 || dniDigitsOnly.length === 8;
+  const isDocValidForBoleta =
+    !isBoletaOver700 ||
+    (cleanCustDoc.length >= 8 && cleanCustDoc.length <= 12);
   const isNameValidForBoleta =
     !isBoletaOver700 ||
-    (safeName.trim().length >= 3 && safeName.trim().toLowerCase() !== 'cliente varios');
+    (safeName.trim().length >= 3 &&
+      safeName.trim().toLowerCase() !== 'cliente varios' &&
+      safeName.trim().toLowerCase() !== 'clientes varios');
 
   const validRucPrefixes = ['10', '20', '15', '17'];
   const isRucValidForFactura =
@@ -175,9 +179,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   let validationMessage = '';
 
   if (receiptType === 'BOLETA' && isBoletaOver700) {
-    if (!isDniValidForBoleta) {
+    if (!isDocValidForBoleta) {
       isFormValid = false;
-      validationMessage = 'SUNAT exige DNI obligatorio de 8 dígitos para boletas ≥ S/ 700.00';
+      validationMessage = 'SUNAT exige DNI, Carnet de Extranjería o RUC (8 a 12 car.) para boletas ≥ S/ 700.00';
     } else if (!isNameValidForBoleta) {
       isFormValid = false;
       validationMessage = 'Ingrese los nombres y apellidos completos del cliente';
@@ -599,7 +603,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </strong>
                 <span>
                   Por normativa tributaria, toda Boleta de Venta igual o superior a S/ 700.00 debe
-                  identificar obligatoriamente al comprador con su DNI de 8 dígitos y nombres completos.
+                  identificar obligatoriamente al comprador con DNI, Carnet de Extranjería o RUC (8 a 12 caracteres) y nombres completos.
                 </span>
               </div>
             </div>
@@ -637,8 +641,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   {receiptType === 'FACTURA'
                     ? 'RUC (11 dígitos) *'
                     : receiptType === 'BOLETA' && isBoletaOver700
-                      ? 'DNI (8 dígitos) *'
-                      : 'DNI / RUC (Opcional)'}
+                      ? 'DNI / CE / RUC (8 a 12 car.) *'
+                      : 'DNI / RUC / CE (Opcional)'}
                 </label>
                 <div className="relative flex items-center">
                   <input
@@ -646,24 +650,26 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     maxLength={receiptType === 'FACTURA' ? 11 : 12}
                     value={custDoc}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
+                      const val = receiptType === 'FACTURA'
+                        ? e.target.value.replace(/\D/g, '')
+                        : e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
                       setCustDoc(val);
                       setLookupBadge(null);
                       if (receiptType === 'FACTURA' && val.length === 11) {
                         handleLookupDocument(val);
-                      } else if (receiptType === 'BOLETA' && val.length === 8) {
+                      } else if (receiptType === 'BOLETA' && (val.length === 8 || val.length === 11)) {
                         handleLookupDocument(val);
                       }
                     }}
                     placeholder={
                       receiptType === 'FACTURA'
                         ? 'ej. 20601234567'
-                        : receiptType === 'BOLETA'
-                          ? 'ej. 45892301'
+                        : receiptType === 'BOLETA' && isBoletaOver700
+                          ? 'DNI, CE o RUC (ej. 45892301)'
                           : 'ej. 45892301'
                     }
                     className={`w-full bg-slate-900 border rounded-xl pl-3 pr-10 py-2 text-xs text-white outline-none font-mono transition-all ${
-                      (receiptType === 'BOLETA' && isBoletaOver700 && !isDniValidForBoleta) ||
+                      (receiptType === 'BOLETA' && isBoletaOver700 && !isDocValidForBoleta) ||
                       (receiptType === 'FACTURA' && !isRucValidForFactura && custDoc.length > 0)
                         ? 'border-rose-500/70 focus:border-rose-500'
                         : 'border-slate-800 focus:border-blue-500'
@@ -693,9 +699,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     Debe iniciar con 10, 20, 15 o 17 (11 dígitos)
                   </span>
                 )}
-                {receiptType === 'BOLETA' && isBoletaOver700 && !isDniValidForBoleta && (
+                {receiptType === 'BOLETA' && isBoletaOver700 && !isDocValidForBoleta && (
                   <span className="text-[10px] text-rose-400 mt-1 block">
-                    El DNI debe contener exactamente 8 dígitos
+                    Ingrese DNI (8), Carnet de Extranjería o RUC (8 a 12 caracteres)
                   </span>
                 )}
               </div>

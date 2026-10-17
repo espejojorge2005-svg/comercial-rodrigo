@@ -164,6 +164,8 @@ export class NubefactBillingDriver implements IBillingDriver {
       clienteTipoDoc = '6';
     } else if (cleanDoc.length === 8) {
       clienteTipoDoc = '1';
+    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
+      clienteTipoDoc = '4';
     }
 
     // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
@@ -313,6 +315,8 @@ export class NubefactBillingDriver implements IBillingDriver {
       clienteTipoDoc = '6';
     } else if (cleanDoc.length === 8) {
       clienteTipoDoc = '1';
+    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
+      clienteTipoDoc = '4';
     }
 
     // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
