@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SalesService } from './sales.service.js';
-import { ReceiptType, EmissionStatus } from '@prisma/client';
+import { ReceiptType, EmissionStatus, PaymentMethod } from '@prisma/client';
 
 describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
   let salesService: SalesService;
@@ -720,14 +720,13 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       };
 
       const syncResult = await salesService.syncOfflineSales('user-1', {
-        shiftId: 'shift-1',
         sales: [
           {
             offlineId: 'off-uuid-1',
             cashShiftId: 'shift-1',
             createdAt: new Date().toISOString(),
             receiptType: ReceiptType.BOLETA,
-            paymentMethod: 'CASH',
+            paymentMethod: PaymentMethod.CASH,
             cashPaid: 100,
             digitalPaid: 0,
             changeAmount: 0,
@@ -738,7 +737,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
                 productId: 'p1',
                 quantity: 1,
                 unitPrice: 100,
-                subtotal: 100,
+                isWholesaleApplied: false,
               },
             ],
           },

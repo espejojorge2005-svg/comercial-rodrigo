@@ -96,6 +96,7 @@ describe('Billing Engine & Drivers (Triple Vía Fiscal)', () => {
           taxableBase: 58.80, // Si viniera con redondeo global ingenuo
           igvAmount: 10.58,   // Si viniera con redondeo global ingenuo
           customerName: 'Cliente Prueba',
+          paymentMethod: 'CASH',
           items: [
             { name: 'Producto A', quantity: 3, unitPrice: 10.55, subtotal: 31.65, unitType: 'UNIT' },
             { name: 'Producto B', quantity: 1, unitPrice: 7.33, subtotal: 7.33, unitType: 'KG' },
