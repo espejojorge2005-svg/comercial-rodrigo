@@ -908,9 +908,29 @@ export class SalesService {
       targetReceiptType,
     );
 
-    // 3. Cálculo de base imponible e IGV
-    const taxableBase = Math.round((totalCalculated / 1.18) * 100) / 100;
-    const igvAmount = Math.round((totalCalculated - taxableBase) * 100) / 100;
+    // 3. Cálculo de base imponible e IGV (Cálculo estricto línea por línea para cuadre con Nubefact / SUNAT SIRE)
+    let taxableBase = 0;
+    let igvAmount = 0;
+
+    if (sale.items && sale.items.length > 0) {
+      let lineByLineTaxableBase = 0;
+      let lineByLineIgv = 0;
+
+      for (const item of sale.items) {
+        const subtotalItem = Number(item.subtotal);
+        const itemValorTotal = Number((subtotalItem / 1.18).toFixed(2));
+        const itemIgv = Number((subtotalItem - itemValorTotal).toFixed(2));
+
+        lineByLineTaxableBase += itemValorTotal;
+        lineByLineIgv += itemIgv;
+      }
+
+      taxableBase = Number(lineByLineTaxableBase.toFixed(2));
+      igvAmount = Number(lineByLineIgv.toFixed(2));
+    } else {
+      taxableBase = Number((totalCalculated / 1.18).toFixed(2));
+      igvAmount = Number((totalCalculated - taxableBase).toFixed(2));
+    }
     const originalTicketNumber =
       sale.fullReceiptNumber || `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`;
 

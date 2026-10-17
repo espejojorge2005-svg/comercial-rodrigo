@@ -549,6 +549,95 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       );
       expect(result.sale.emissionStatus).toBe(EmissionStatus.REJECTED);
     });
+
+    it('debe calcular base imponible e IGV línea por línea en el canje para cuadre exacto con SIRE (evitando descuadre por redondeo global)', async () => {
+      // 3 items de S/ 10.00 cada uno = S/ 30.00 total.
+      // Global: 30 / 1.18 = 25.42 (IGV: 4.58)
+      // Línea por línea SIRE / Nubefact: 10 / 1.18 = 8.47 (IGV: 1.53) * 3 = Base: 25.41 (IGV: 4.59)
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-nv-sire',
+          saleNumber: 47,
+          receiptType: ReceiptType.NOTA_VENTA,
+          series: 'NV01',
+          correlativeNumber: 47,
+          fullReceiptNumber: 'NV01-00000047',
+          isVoided: false,
+          totalAmount: 30,
+          paymentMethod: 'CASH',
+          items: [
+            { product: { name: 'Item 1', unitType: 'NIU' }, quantity: 1, unitPrice: 10, subtotal: 10 },
+            { product: { name: 'Item 2', unitType: 'NIU' }, quantity: 1, unitPrice: 10, subtotal: 10 },
+            { product: { name: 'Item 3', unitType: 'NIU' }, quantity: 1, unitPrice: 10, subtotal: 10 },
+          ],
+          cashShift: { cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' } },
+          user: { id: 'user-1', name: 'Cajero' },
+        }),
+      };
+      mockPrisma.cashShift = {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+
+      let capturedUpdateData: any = null;
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 14 }),
+          },
+          sale: {
+            update: vi.fn().mockImplementation(({ data }) => {
+              capturedUpdateData = data;
+              return Promise.resolve({
+                id: 'sale-nv-sire',
+                receiptType: ReceiptType.BOLETA,
+                series: 'B001',
+                correlativeNumber: 14,
+                fullReceiptNumber: 'B001-00000014',
+                isFiscal: true,
+                taxableBase: Number(data.taxableBase),
+                igvAmount: Number(data.igvAmount),
+                totalAmount: 30,
+              });
+            }),
+          },
+        };
+        return callback(tx);
+      });
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: true,
+        hash: 'hashSire',
+        qrString: 'qrSire',
+        emissionStatus: 'ACCEPTED',
+      });
+      mockPrisma.sale.update = vi.fn().mockResolvedValue({
+        id: 'sale-nv-sire',
+        fullReceiptNumber: 'B001-00000014',
+        receiptType: ReceiptType.BOLETA,
+        emissionStatus: 'ACCEPTED',
+      });
+
+      await salesService.convertSaleReceipt('sale-nv-sire', 'user-1', {
+        targetReceiptType: ReceiptType.BOLETA,
+        customerDocument: '71234567',
+        customerName: 'Juan Perez',
+      });
+
+      // Debe ser 25.41 y 4.59 (línea por línea), NO 25.42 y 4.58 (global)
+      expect(Number(capturedUpdateData.taxableBase)).toBe(25.41);
+      expect(Number(capturedUpdateData.igvAmount)).toBe(4.59);
+      expect(mockBilling.issueReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taxableBase: 25.41,
+          igvAmount: 4.59,
+        }),
+      );
+    });
   });
 
   describe('Sincronizador Offline (syncOfflineSales)', () => {
