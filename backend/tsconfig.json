@@ -19,6 +19,6 @@
     "strictPropertyInitialization": false,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*", "prisma/**/*"],
-  "exclude": ["node_modules", "dist", "test"]
+  "include": ["src/**/*", "prisma/seed.ts"],
+  "exclude": ["node_modules", "dist", "test", "scripts"]
 }
