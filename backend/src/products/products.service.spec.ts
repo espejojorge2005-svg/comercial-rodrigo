@@ -71,17 +71,17 @@ describe('ProductsService', () => {
     it('en getProducts para CAJERO no debe exponer márgenes ni costo', async () => {
       mockPrisma.product.findMany.mockResolvedValue([rawProduct]);
 
-      const products = await service.getProducts(Role.CAJERO);
+      const products = (await service.getProducts(Role.CAJERO)) as any[];
 
       expect(products).toHaveLength(1);
-      expect((products[0] as any).costPrice).toBeUndefined();
-      expect((products[0] as any).marginRetailPercent).toBeUndefined();
+      expect(products[0].costPrice).toBeUndefined();
+      expect(products[0].marginRetailPercent).toBeUndefined();
     });
 
     it('en getProducts para ADMIN debe calcular márgenes de ganancia', async () => {
       mockPrisma.product.findMany.mockResolvedValue([rawProduct]);
 
-      const products = await service.getProducts(Role.ADMIN);
+      const products = (await service.getProducts(Role.ADMIN)) as any[];
 
       expect(products).toHaveLength(1);
       expect(products[0]).toHaveProperty('costPrice', 3.5);
