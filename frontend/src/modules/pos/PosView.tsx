@@ -16,7 +16,6 @@ import {
   History,
   ArrowLeft,
   AlertTriangle,
-  ArrowRightLeft,
 } from 'lucide-react';
 import type { Product, Category } from '../../types/index.js';
 import { getUnitBadge } from '../../lib/units.js';
@@ -178,24 +177,11 @@ export const PosView: React.FC = () => {
               setSalesModalFilter('ALL');
               setIsRecentSalesOpen(true);
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-slate-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
-            title="Ver ventas realizadas en el turno actual"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-slate-200 border border-slate-700/80 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            title="Consultar ventas del turno, historial general y canje de comprobantes"
           >
             <History className="w-3.5 h-3.5 text-slate-400" />
-            <span>Ventas del Turno</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setSalesModalScope('all');
-              setSalesModalFilter('NOTA_VENTA');
-              setIsRecentSalesOpen(true);
-            }}
-            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-            title="Buscar y canjear tickets de clientes de cualquier fecha por Boleta o Factura oficial"
-          >
-            <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
-            <span>Canjear Ticket Histórico</span>
+            <span>Ventas & Canjes</span>
           </button>
 
           <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-right">
