@@ -4,6 +4,6 @@
     "rootDir": "./src",
     "types": ["node"]
   },
-  "include": ["src"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma", "scripts"]
 }
