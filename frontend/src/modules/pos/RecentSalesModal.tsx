@@ -16,9 +16,9 @@ import {
   FileText,
   ArrowRightLeft,
   Loader2,
-  Globe,
-  Sparkles,
   RefreshCw,
+  Clock,
+  Layers,
 } from 'lucide-react';
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { ConvertReceiptModal } from './ConvertReceiptModal.js';
@@ -187,7 +187,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
         }
       }
     } catch (err: any) {
-      setSearchTicketError(err.message || 'No se encontró ningún ticket con ese identificador.');
+      setSearchTicketError(err.message || 'No se encontró ningún comprobante con ese número.');
     } finally {
       setIsSearchingExternalTicket(false);
     }
@@ -269,47 +269,31 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
         <div className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative text-slate-100 flex flex-col max-h-[92vh]">
           {/* Header */}
-          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+          <div className="flex items-center justify-between pb-3.5 border-b border-slate-800 shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shadow-inner">
-                {scope === 'all' ? (
-                  <Globe className="w-5 h-5 text-indigo-400" />
-                ) : (
-                  <History className="w-5 h-5 text-indigo-400" />
-                )}
+              <div className="w-10 h-10 rounded-2xl bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shadow-inner shrink-0">
+                <History className="w-5 h-5 text-indigo-400" />
               </div>
               <div>
                 <h3 className="text-base font-bold text-white leading-tight flex items-center gap-2">
-                  <span>
-                    {scope === 'all'
-                      ? 'Historial General & Canje de Comprobantes'
-                      : 'Ventas del Turno Actual'}
+                  <span>Historial de Ventas y Canje de Comprobantes</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold border border-slate-700">
+                    {scope === 'shift' ? 'Turno Actual' : 'Historial General'}
                   </span>
-                  {scope === 'all' ? (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 font-bold border border-indigo-500/20">
-                      Todas las fechas
-                    </span>
-                  ) : (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/20">
-                      {activeShift?.cashRegister?.name || 'Caja en turno'}
-                    </span>
-                  )}
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  {scope === 'all'
-                    ? 'Busca tickets de clientes emitidos cualquier día para canjearlos por Boleta o Factura oficial SUNAT'
-                    : `Caja: ${activeShift?.cashRegister?.name || 'Activa'} • Total en lista: ${sales.length}`}
+                  Búsqueda de ventas anteriores para canje a Boleta o Factura oficial SUNAT
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={fetchSales}
                 disabled={isLoading}
                 className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer disabled:opacity-50"
-                title="Recargar ventas"
+                title="Actualizar listado"
               >
                 <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
               </button>
@@ -324,7 +308,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
 
           {/* Banner Toast de Éxito al Canjear */}
           {successToast && (
-            <div className="mt-3 p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="mt-3 p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between gap-2 shrink-0 animate-in fade-in">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span className="font-semibold">{successToast}</span>
@@ -338,40 +322,40 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             </div>
           )}
 
-          {/* Selector de Ámbito: Turno Actual vs Historial General */}
-          <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
-            <div className="inline-flex p-1 bg-slate-950 border border-slate-800 rounded-2xl">
+          {/* Selector de Ámbito y Periodo de Fechas */}
+          <div className="mt-3.5 flex items-center justify-between gap-3 flex-wrap shrink-0">
+            {/* Control Segmentado: Turno vs Historial */}
+            <div className="inline-flex p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0">
               <button
                 type="button"
                 onClick={() => setScope('shift')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
                   scope === 'shift'
                     ? 'bg-slate-800 text-white shadow-sm border border-slate-700/80'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <History className="w-3.5 h-3.5" />
+                <Clock className="w-3.5 h-3.5" />
                 <span>Turno Actual</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setScope('all')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
                   scope === 'all'
                     ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Globe className="w-3.5 h-3.5" />
-                <span>Historial General (Cualquier Día)</span>
+                <Layers className="w-3.5 h-3.5" />
+                <span>Historial Completo</span>
               </button>
             </div>
 
             {/* Selector de periodo si está en Historial General */}
             {scope === 'all' && (
-              <div className="flex items-center gap-1 overflow-x-auto text-[11px]">
-                <span className="text-slate-500 font-semibold mr-1">Periodo:</span>
+              <div className="inline-flex items-center p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0 gap-1 text-[11px]">
                 {(
                   [
                     { id: 'all', label: 'Todo' },
@@ -385,10 +369,10 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                     key={p.id}
                     type="button"
                     onClick={() => setDatePeriod(p.id)}
-                    className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
                       datePeriod === p.id
-                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                        : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800/80'
+                        ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     {p.label}
@@ -398,35 +382,37 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             )}
           </div>
 
-          {/* Filtros por tipo de comprobante */}
-          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+          {/* Filtros por tipo de comprobante (Segmented Bar Sobria y Formal) */}
+          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs shrink-0 min-h-[38px]">
             <button
               type="button"
               onClick={() => setReceiptFilter('ALL')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${
+              className={`h-8 px-3 rounded-xl font-medium transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 receiptFilter === 'ALL'
-                  ? 'bg-slate-800 text-white border border-slate-700'
-                  : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800/80'
+                  ? 'bg-slate-800 text-white border border-slate-700 shadow-sm font-semibold'
+                  : 'bg-slate-950/70 text-slate-400 hover:text-slate-200 border border-slate-800'
               }`}
             >
-              Todos ({sales.length})
+              <span>Todos</span>
+              <span className="px-1.5 py-0.2 rounded-md bg-slate-800 text-[10px] text-slate-300 font-mono">
+                {sales.length}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setReceiptFilter('NOTA_VENTA')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+              className={`h-8 px-3 rounded-xl font-medium transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 receiptFilter === 'NOTA_VENTA'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                  : 'bg-slate-950/60 text-slate-400 hover:text-amber-300/80 border border-slate-800/80'
+                  ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40 shadow-sm font-semibold'
+                  : 'bg-slate-950/70 text-slate-400 hover:text-amber-200 border border-slate-800'
               }`}
-              title="Mostrar solo Notas de Venta internas que se pueden canjear por Boleta o Factura"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>🏷️ Notas de Venta (Canjeables)</span>
+              <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
+              <span>Notas de Venta</span>
               {canjeableCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-200 text-[10px]">
-                  {canjeableCount}
+                <span className="px-1.5 py-0.2 rounded-md bg-amber-500/30 text-amber-200 text-[10px] font-semibold">
+                  {canjeableCount} canjeables
                 </span>
               )}
             </button>
@@ -434,42 +420,42 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             <button
               type="button"
               onClick={() => setReceiptFilter('BOLETA')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${
+              className={`h-8 px-3 rounded-xl font-medium transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 receiptFilter === 'BOLETA'
-                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                  : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800/80'
+                  ? 'bg-indigo-500/20 text-indigo-200 border border-indigo-500/40 shadow-sm font-semibold'
+                  : 'bg-slate-950/70 text-slate-400 hover:text-slate-200 border border-slate-800'
               }`}
             >
-              📄 Boletas
+              <span>Boletas</span>
             </button>
 
             <button
               type="button"
               onClick={() => setReceiptFilter('FACTURA')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${
+              className={`h-8 px-3 rounded-xl font-medium transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 receiptFilter === 'FACTURA'
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                  : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800/80'
+                  ? 'bg-purple-500/20 text-purple-200 border border-purple-500/40 shadow-sm font-semibold'
+                  : 'bg-slate-950/70 text-slate-400 hover:text-slate-200 border border-slate-800'
               }`}
             >
-              🏢 Facturas
+              <span>Facturas</span>
             </button>
 
             <button
               type="button"
               onClick={() => setReceiptFilter('VOIDED')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${
+              className={`h-8 px-3 rounded-xl font-medium transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 receiptFilter === 'VOIDED'
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                  : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800/80'
+                  ? 'bg-rose-500/20 text-rose-200 border border-rose-500/40 shadow-sm font-semibold'
+                  : 'bg-slate-950/70 text-slate-400 hover:text-slate-200 border border-slate-800'
               }`}
             >
-              ❌ Anuladas
+              <span>Anuladas</span>
             </button>
           </div>
 
           {/* Buscador inteligente */}
-          <div className="my-3 space-y-2">
+          <div className="my-3 space-y-2 shrink-0">
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -486,8 +472,8 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                       handleSearchExactTicket();
                     }
                   }}
-                  placeholder="Buscar por # comprobante (ej: NV01-00000001, 15, B001...), cliente o DNI/RUC..."
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none transition-all shadow-inner"
+                  placeholder="Buscar por comprobante (ej: NV01-00000001, 15, B001...), cliente o documento..."
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none transition-all"
                 />
               </div>
 
@@ -496,15 +482,15 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                   type="button"
                   onClick={handleSearchExactTicket}
                   disabled={isSearchingExternalTicket}
-                  className="px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 shadow-sm"
-                  title="Buscar ticket en el servidor para canjear de inmediato"
+                  className="px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 shadow-sm"
+                  title="Buscar ticket exacto en base de datos"
                 >
                   {isSearchingExternalTicket ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <ArrowRightLeft className="w-4 h-4 text-amber-400" />
+                    <Search className="w-4 h-4 text-amber-400" />
                   )}
-                  <span>Buscar Ticket Específico</span>
+                  <span>Buscar Ticket</span>
                 </button>
               )}
             </div>
@@ -517,8 +503,8 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             )}
           </div>
 
-          {/* Listado de Ventas */}
-          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+          {/* Listado de Ventas con scroll protegido */}
+          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 min-h-0">
             {isLoading ? (
               <div className="py-14 text-center text-xs text-slate-400">
                 <div className="w-8 h-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mx-auto mb-2" />
@@ -531,10 +517,10 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setScope('all')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 text-indigo-300 hover:text-white border border-indigo-500/30 font-bold transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 text-indigo-300 hover:text-white border border-indigo-500/30 font-semibold transition-all cursor-pointer"
                   >
-                    <Globe className="w-3.5 h-3.5" />
-                    <span>Buscar en el Historial General (Todas las fechas)</span>
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Buscar en el Historial Completo</span>
                   </button>
                 )}
               </div>
@@ -597,22 +583,22 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
 
                             {sale.isVoided ? (
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-bold border border-rose-500/30 flex items-center gap-1">
+                                <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 text-[10px] font-semibold border border-rose-500/30 flex items-center gap-1">
                                   <Ban className="w-3 h-3" /> Anulada
                                 </span>
                                 {sale.creditNote && (
-                                  <span className="px-2 py-0.5 rounded-full bg-rose-950/70 text-rose-300 text-[10px] font-mono font-bold border border-rose-700/50">
+                                  <span className="px-2 py-0.5 rounded-md bg-rose-950/70 text-rose-300 text-[10px] font-mono font-bold border border-rose-700/50">
                                     NC: {sale.creditNote.fullNumber}
                                   </span>
                                 )}
                               </div>
                             ) : wasCanjeada ? (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-bold border border-amber-500/30 flex items-center gap-1">
-                                <ArrowRightLeft className="w-3 h-3 text-amber-400" /> Canjeado por {sale.voidedReason.replace('CANJE_TICKET:', '')}
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-medium border border-slate-700 flex items-center gap-1">
+                                <ArrowRightLeft className="w-3 h-3 text-slate-400" /> Canjeado por {sale.voidedReason.replace('CANJE_TICKET:', '')}
                               </span>
                             ) : (
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold border border-emerald-500/20">
+                                <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold border border-emerald-500/20">
                                   {sale.paymentMethod === 'CASH'
                                     ? 'Efectivo'
                                     : sale.paymentMethod === 'TRANSFER'
@@ -622,8 +608,8 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                         : 'Pago Mixto'}
                                 </span>
                                 {isCanjeable && (
-                                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/40">
-                                    ✓ Canjeable a Boleta/Factura
+                                  <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-[10px] font-semibold border border-amber-500/30">
+                                    Canjeable a Boleta/Factura
                                   </span>
                                 )}
                               </div>
@@ -659,7 +645,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                 setSelectedSaleForPrint(sale);
                                 setPrintAsCreditNote(true);
                               }}
-                              className="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/30 transition-all cursor-pointer flex items-center gap-1.5 text-[11px] font-bold shadow-sm"
+                              className="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/30 transition-all cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold shadow-sm"
                               title={`Ver e Imprimir Nota de Crédito ${sale.creditNote.fullNumber}`}
                             >
                               <FileText className="w-3.5 h-3.5 text-rose-400" />
@@ -667,15 +653,15 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                             </button>
                           )}
 
-                          {/* BOTÓN PROMINENTE: Canjear Nota de Venta a Boleta o Factura */}
+                          {/* Botón Canjear Nota de Venta a Boleta o Factura */}
                           {isCanjeable && (
                             <button
                               onClick={() => setSaleToConvert(sale)}
-                              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black border border-amber-400 transition-all cursor-pointer flex items-center gap-1.5 text-xs shadow-md shadow-amber-500/20"
+                              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold border border-amber-400 transition-all cursor-pointer flex items-center gap-1.5 text-xs shadow-sm"
                               title="Canjear este ticket por Boleta o Factura Electrónica SUNAT"
                             >
                               <ArrowRightLeft className="w-3.5 h-3.5" />
-                              <span>Canjear a Boleta/Factura</span>
+                              <span>Canjear Comprobante</span>
                             </button>
                           )}
 
@@ -962,7 +948,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
           onSuccess={(updatedSale) => {
             fetchSales();
             setSuccessToast(
-              `¡Ticket ${saleToConvert.fullReceiptNumber || saleToConvert.saleNumber} canjeado exitosamente por ${updatedSale.receiptType === 'FACTURA' ? 'Factura Electrónica' : 'Boleta Electrónica'} ${updatedSale.fullReceiptNumber}!`,
+              `Ticket ${saleToConvert.fullReceiptNumber || saleToConvert.saleNumber} canjeado exitosamente por ${updatedSale.receiptType === 'FACTURA' ? 'Factura Electrónica' : 'Boleta Electrónica'} ${updatedSale.fullReceiptNumber}`,
             );
             setSelectedSaleForPrint(updatedSale);
             setPrintAsCreditNote(false);
