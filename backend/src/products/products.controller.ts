@@ -75,6 +75,13 @@ export class ProductsController {
     return this.productsService.bulkImportProducts(dto, userId);
   }
 
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('summary')
+  async getInventorySummary() {
+    return this.productsService.getInventorySummary();
+  }
+
   @Get(':id')
   async getProduct(
     @Param('id') id: string,

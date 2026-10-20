@@ -643,4 +643,73 @@ export class ProductsService {
       createdAt: m.createdAt,
     }));
   }
+
+  /**
+   * Resumen y valorización global del almacén (Solo ADMIN)
+   * Devuelve métricas calculadas sobre el 100% de productos activos
+   * sin distorsiones por paginación o filtros de vista.
+   */
+  async getInventorySummary() {
+    const products = await this.prisma.product.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        costPrice: true,
+        retailPrice: true,
+        currentStock: true,
+        minStock: true,
+        expirationDate: true,
+      },
+    });
+
+    const now = new Date();
+    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    const in30Days = new Date(todayStart.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    let totalStockUnits = 0;
+    let totalValuedCost = 0;
+    let totalValuedRetail = 0;
+    let lowStockCount = 0;
+    let expiredCount = 0;
+    let expiringSoonCount = 0;
+    let sumMarkup = 0;
+    let validCostCount = 0;
+
+    for (const p of products) {
+      const stock = Number(p.currentStock);
+      const cost = Number(p.costPrice);
+      const retail = Number(p.retailPrice);
+      const minStock = Number(p.minStock);
+
+      totalStockUnits += stock;
+      totalValuedCost += stock * cost;
+      totalValuedRetail += stock * retail;
+
+      if (stock <= minStock) lowStockCount++;
+
+      if (p.expirationDate) {
+        if (p.expirationDate < todayStart) {
+          expiredCount++;
+        } else if (p.expirationDate <= in30Days) {
+          expiringSoonCount++;
+        }
+      }
+
+      if (cost > 0) {
+        sumMarkup += ((retail - cost) / cost) * 100;
+        validCostCount++;
+      }
+    }
+
+    return {
+      totalProducts: products.length,
+      totalStockUnits: Number(totalStockUnits.toFixed(2)),
+      totalValuedCost: Number(totalValuedCost.toFixed(2)),
+      totalValuedRetail: Number(totalValuedRetail.toFixed(2)),
+      lowStockCount,
+      expiredCount,
+      expiringSoonCount,
+      avgMarkupPercent: validCostCount > 0 ? Number((sumMarkup / validCostCount).toFixed(1)) : 0,
+    };
+  }
 }

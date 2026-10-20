@@ -54,6 +54,27 @@ export const InventoryView: React.FC = () => {
   const [itemsPerPage, setItemsPerPage] = useState<number>(25);
   const [paginationMeta, setPaginationMeta] = useState<PaginationMeta | null>(null);
 
+  // Resumen y valorización global del almacén (independiente de paginación)
+  const [summary, setSummary] = useState<{
+    totalProducts: number;
+    totalStockUnits: number;
+    totalValuedCost: number;
+    totalValuedRetail: number;
+    lowStockCount: number;
+    expiredCount: number;
+    expiringSoonCount: number;
+    avgMarkupPercent: number;
+  } | null>(null);
+
+  const fetchSummary = useCallback(async () => {
+    try {
+      const data = await apiRequest<any>('/products/summary');
+      if (data) setSummary(data);
+    } catch (err) {
+      console.error('Error fetching inventory summary:', err);
+    }
+  }, []);
+
   // Exportar a Excel en vivo (Stock Valorizado + Kardex + Alertas)
   const handleExportExcel = async () => {
     setIsExportingExcel(true);
@@ -155,6 +176,7 @@ export const InventoryView: React.FC = () => {
 
   useEffect(() => {
     if (activeTab === 'catalog') {
+      fetchSummary();
       const timer = setTimeout(() => {
         fetchProducts();
       }, 200);
@@ -162,33 +184,36 @@ export const InventoryView: React.FC = () => {
     } else {
       fetchKardex();
     }
-  }, [activeTab, fetchProducts, fetchKardex, kardexProductFilter]);
+  }, [activeTab, fetchProducts, fetchKardex, fetchSummary, kardexProductFilter]);
 
-  // Métricas de Almacén y Vencimiento
-  const totalProducts = paginationMeta ? paginationMeta.total : products.length;
-  const lowStockCount = products.filter((p) => p.currentStock <= p.minStock).length;
-  const expiredCount = products.filter((p) => {
+  // Métricas de Almacén y Vencimiento (Integrando totales reales de almacén y subtotales locales)
+  const totalProducts = summary?.totalProducts ?? (paginationMeta ? paginationMeta.total : products.length);
+  const lowStockCount = summary?.lowStockCount ?? products.filter((p) => p.currentStock <= p.minStock).length;
+  const expiredCount = summary?.expiredCount ?? products.filter((p) => {
     const info = getProductExpirationInfo(p.expirationDate);
     return info.state === 'EXPIRED';
   }).length;
-  const expiringSoonCount = products.filter((p) => {
+  const expiringSoonCount = summary?.expiringSoonCount ?? products.filter((p) => {
     const info = getProductExpirationInfo(p.expirationDate);
     return info.state === 'CRITICAL' || info.state === 'WARNING';
   }).length;
   const totalUnitsStock = products.reduce((acc, p) => acc + (p.currentStock || 0), 0);
+  const globalTotalStockUnits = summary?.totalStockUnits ?? totalUnitsStock;
   const totalStockValue = products.reduce(
     (acc, p) => acc + p.currentStock * (p.costPrice || 0),
     0,
   );
-  const avgMargin =
-    products.length > 0
-      ? (
-          products.reduce((acc, p) => {
-            const cost = p.costPrice || 0;
-            return acc + (cost > 0 ? ((p.retailPrice - cost) / cost) * 100 : 0);
-          }, 0) / products.length
-        ).toFixed(1)
-      : '0';
+  const globalTotalStockValue = summary?.totalValuedCost ?? totalStockValue;
+  const avgMargin = summary?.avgMarkupPercent !== undefined
+    ? String(summary.avgMarkupPercent)
+    : (products.length > 0
+        ? (
+            products.reduce((acc, p) => {
+              const cost = p.costPrice || 0;
+              return acc + (cost > 0 ? ((p.retailPrice - cost) / cost) * 100 : 0);
+            }, 0) / products.length
+          ).toFixed(1)
+        : '0');
 
   const kardexIncomeTotal = kardexList.reduce((acc, m) => {
     const isIncome =
@@ -213,6 +238,7 @@ export const InventoryView: React.FC = () => {
       await apiRequest(`/products/${id}`, { method: 'DELETE' });
       toast.success(`Producto "${name}" desactivado con éxito.`);
       fetchProducts();
+      fetchSummary();
     } catch (err: any) {
       toast.error(err.message || 'Error al desactivar el producto');
     }
@@ -294,12 +320,15 @@ export const InventoryView: React.FC = () => {
 
       {/* Tarjetas Estadísticas Limpias y Espaciosas (4 Columnas) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Total de artículos y existencias físicas registradas en el almacén">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Total Productos</span>
+            <span>Total Catálogo</span>
             <Package className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="text-xl font-extrabold text-white">{totalProducts}</div>
+          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+            {globalTotalStockUnits} unidades físicas
+          </div>
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
@@ -342,16 +371,24 @@ export const InventoryView: React.FC = () => {
               </span>
             )}
           </div>
+          <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+            Total almacén general
+          </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Valorización monetaria de las existencias actuales a precio de costo">
+        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Valorización monetaria de las existencias actuales a precio de costo de compra">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
             <span>Valorización (Costo)</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-xl font-extrabold text-emerald-400">
-            {formatCurrency(totalStockValue)}
+            {formatCurrency(globalTotalStockValue)}
           </div>
+          {summary?.totalValuedRetail ? (
+            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+              Venta est.: {formatCurrency(summary.totalValuedRetail)}
+            </div>
+          ) : null}
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Sobreprecio promedio aplicado sobre el costo de adquisición (Markup)">
@@ -360,6 +397,9 @@ export const InventoryView: React.FC = () => {
             <TrendingUp className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-xl font-extrabold text-blue-400">{avgMargin}%</div>
+          <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+            Margen de marcación
+          </div>
         </div>
       </div>
 
@@ -641,7 +681,9 @@ export const InventoryView: React.FC = () => {
                 <tfoot className="sticky bottom-0 bg-slate-950/95 border-t-2 border-slate-700 text-slate-200 font-semibold text-xs shadow-md">
                   <tr>
                     <td colSpan={5} className="p-3 font-bold uppercase tracking-wider text-[11px] text-white">
-                      Totales Generales ({products.length} productos listados)
+                      {paginationMeta && paginationMeta.total > products.length
+                        ? `Subtotal Página ${paginationMeta.page} (${products.length} de ${paginationMeta.total} productos)`
+                        : `Totales Generales (${products.length} productos listados)`}
                     </td>
                     <td className="p-3 text-right font-mono font-extrabold text-emerald-400 text-sm">
                       {totalUnitsStock} u.
@@ -650,7 +692,7 @@ export const InventoryView: React.FC = () => {
                       {formatCurrency(totalStockValue)}
                     </td>
                     <td colSpan={2} className="p-3 text-right text-[11px] text-slate-400">
-                      Margen Promedio:
+                      {paginationMeta && paginationMeta.total > products.length ? 'Markup Pág.:' : 'Markup Promedio:'}
                     </td>
                     <td className="p-3 text-right font-mono font-bold text-blue-400">
                       +{avgMargin}%
@@ -931,6 +973,7 @@ export const InventoryView: React.FC = () => {
           onSuccess={() => {
             setIsCreateModalOpen(false);
             fetchProducts();
+            fetchSummary();
           }}
         />
       )}
@@ -943,6 +986,7 @@ export const InventoryView: React.FC = () => {
           onSuccess={() => {
             fetchProducts();
             fetchCategories();
+            fetchSummary();
           }}
         />
       )}
@@ -957,6 +1001,7 @@ export const InventoryView: React.FC = () => {
           onSuccess={() => {
             setEditingProduct(null);
             fetchProducts();
+            fetchSummary();
           }}
         />
       )}
@@ -970,6 +1015,7 @@ export const InventoryView: React.FC = () => {
           onSuccess={() => {
             setAdjustingProduct(null);
             fetchProducts();
+            fetchSummary();
           }}
         />
       )}

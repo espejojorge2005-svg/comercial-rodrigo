@@ -29,6 +29,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { useConfigStore } from '../../store/useConfigStore.js';
+import { toast } from '../../store/useToastStore.js';
 import { exportShiftAuditExcel } from '../../lib/excelExport.js';
 import { ShiftReceiptTicketModal } from './ShiftReceiptTicketModal.js';
 
@@ -71,6 +72,7 @@ export const ShiftAuditView: React.FC = () => {
       setShifts(data || []);
     } catch (err) {
       console.error(err);
+      toast.error('Error al cargar el historial de turnos de caja.');
     } finally {
       setIsLoading(false);
     }
@@ -79,6 +81,21 @@ export const ShiftAuditView: React.FC = () => {
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
+
+  const handleExportExcel = () => {
+    try {
+      const dataToExport = filteredShifts.length > 0 ? filteredShifts : shifts;
+      if (!dataToExport || dataToExport.length === 0) {
+        toast.warning('No hay datos de turnos disponibles para exportar.');
+        return;
+      }
+      exportShiftAuditExcel(dataToExport, config.name);
+      toast.success('Auditoría de Cajas exportada a Excel con éxito.');
+    } catch (err: any) {
+      console.error('Error al exportar arqueos a Excel:', err);
+      toast.error('Ocurrió un error al intentar exportar el reporte a Excel.');
+    }
+  };
 
   const filteredShifts = shifts.filter((s) => {
     const q = searchTerm.toLowerCase();
@@ -116,7 +133,7 @@ export const ShiftAuditView: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
           <button
-            onClick={() => exportShiftAuditExcel(filteredShifts.length > 0 ? filteredShifts : shifts, config.name)}
+            onClick={handleExportExcel}
             disabled={shifts.length === 0}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700 transition-all cursor-pointer shadow-sm disabled:opacity-50"
             title="Exportar Arqueos, Ventas y Gastos a Excel (.xlsx)"

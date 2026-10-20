@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/useAuthStore.js';
 import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
 import { X, Lock, Coins, ShieldCheck, AlertTriangle, Printer } from 'lucide-react';
 import { ShiftReceiptTicketModal, type ShiftReceiptData } from './ShiftReceiptTicketModal.js';
+import { toast } from '../../store/useToastStore.js';
 
 interface CloseShiftModalProps {
   isOpen: boolean;
@@ -24,6 +25,18 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   // Mantenemos los datos del turno que se está cerrando para que no desaparezca cuando activeShift sea null
   const currentShift = activeShift || closedShiftSnapshot;
 
+  // Atajo de teclado: Escape para cancelar antes de cerrar
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !closeResult && !showTicketModal) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, closeResult, showTicketModal, onClose]);
+
   if (!isOpen || !currentShift) return null;
 
   const handleFinalClose = () => {
@@ -43,9 +56,11 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
       const numericAmount = parseFloat(actualBalance) || 0;
       const res = await closeShift(numericAmount, notes);
       setCloseResult(res);
+      toast.success(res?.message || '¡Turno de caja cerrado exitosamente!');
       setShowTicketModal(true); // Abre la vista previa del ticket de inmediato
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('Error al cerrar turno:', err);
+      toast.error(err.message || 'Error al procesar el cierre de caja. Verifique su conexión y reintente.');
     }
   };
 

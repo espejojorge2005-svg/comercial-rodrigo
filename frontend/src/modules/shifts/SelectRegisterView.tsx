@@ -13,6 +13,7 @@ import {
   AlertCircle,
   ArrowRight,
 } from 'lucide-react';
+import { toast } from '../../store/useToastStore.js';
 
 export const SelectRegisterView: React.FC = () => {
   const { user, logout } = useAuthStore();
@@ -40,7 +41,13 @@ export const SelectRegisterView: React.FC = () => {
     e.preventDefault();
     if (!selectedRegisterId) return;
     const num = parseFloat(initialBalance) || 0;
-    await openShift(selectedRegisterId, num, notes);
+    const ok = await openShift(selectedRegisterId, num, notes);
+    if (ok) {
+      toast.success('¡Turno de caja aperturado exitosamente! Listo para registrar ventas.');
+    } else {
+      const err = useShiftStore.getState().error;
+      toast.error(err || 'No se pudo aperturar el turno en esta caja.');
+    }
   };
 
   const quickAmounts = [50, 100, 150, 200, 300];
