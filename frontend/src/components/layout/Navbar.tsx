@@ -5,7 +5,6 @@ import { useConfigStore } from '../../store/useConfigStore.js';
 import { CloseShiftModal } from '../../modules/shifts/CloseShiftModal.js';
 import { StoreSettingsModal } from '../../modules/settings/StoreSettingsModal.js';
 import { AdminProfileModal } from '../../modules/users/AdminProfileModal.js';
-import { RecentSalesModal } from '../../modules/pos/RecentSalesModal.js';
 import { ConnectionStatusBadge } from './OfflineStatusBanner.js';
 import {
   ShoppingCart,
@@ -17,7 +16,6 @@ import {
   Lock,
   User as UserIcon,
   Users,
-  ArrowRightLeft,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -32,7 +30,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isAdminProfileModalOpen, setIsAdminProfileModalOpen] = useState(false);
-  const [isSalesModalOpen, setIsSalesModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'ADMIN';
 
@@ -100,16 +97,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
               <ShoppingCart className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="hidden sm:inline">POS Caja</span>
               <span className="sm:hidden">POS</span>
-            </button>
-
-            <button
-              onClick={() => setIsSalesModalOpen(true)}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 shadow-sm"
-              title="Buscar comprobantes de cualquier fecha y canjear tickets por Boleta o Factura oficial"
-            >
-              <ArrowRightLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
-              <span className="hidden sm:inline">Ventas & Canjes</span>
-              <span className="sm:hidden">Canjes</span>
             </button>
 
             {isAdmin && (
@@ -263,14 +250,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
           onClose={() => setIsAdminProfileModalOpen(false)}
         />
       )}
-
-      {/* Modal Global de Ventas y Canje de Comprobantes */}
-      <RecentSalesModal
-        isOpen={isSalesModalOpen}
-        onClose={() => setIsSalesModalOpen(false)}
-        initialScope="all"
-        initialFilter="NOTA_VENTA"
-      />
     </>
   );
 };
