@@ -1100,13 +1100,32 @@ export class SalesService {
    */
   async findTicketByNumber(ticketNumber: string) {
     const cleanNum = ticketNumber.trim().toUpperCase();
+    const conditions: Prisma.SaleWhereInput[] = [
+      { fullReceiptNumber: cleanNum },
+      { fullReceiptNumber: { contains: cleanNum, mode: 'insensitive' } },
+    ];
+
+    const seriesMatch = cleanNum.match(/^([A-Z0-9]{2,4})[- ]*(\d+)$/i);
+    if (seriesMatch) {
+      const seriesPrefix = seriesMatch[1].toUpperCase();
+      const corrNum = parseInt(seriesMatch[2], 10);
+      const paddedTicket = `${seriesPrefix}-${String(corrNum).padStart(8, '0')}`;
+      conditions.push({ fullReceiptNumber: paddedTicket });
+      conditions.push({
+        AND: [
+          { series: { equals: seriesPrefix, mode: 'insensitive' } },
+          { correlativeNumber: corrNum },
+        ],
+      });
+    } else if (/^\d+$/.test(cleanNum)) {
+      const num = parseInt(cleanNum, 10);
+      conditions.push({ saleNumber: num });
+      conditions.push({ correlativeNumber: num });
+    }
 
     const sale = await this.prisma.sale.findFirst({
       where: {
-        OR: [
-          { fullReceiptNumber: cleanNum },
-          { fullReceiptNumber: { contains: cleanNum, mode: 'insensitive' } },
-        ],
+        OR: conditions,
       },
       include: {
         items: {
@@ -1144,6 +1163,7 @@ export class SalesService {
     filter?: {
       shiftId?: string;
       isVoided?: boolean;
+      receiptType?: string;
       startDate?: string;
       endDate?: string;
       limit?: number;
@@ -1155,13 +1175,37 @@ export class SalesService {
     if (filter?.shiftId) where.cashShiftId = filter.shiftId;
     if (filter?.isVoided !== undefined) where.isVoided = filter.isVoided;
 
+    if (filter?.receiptType && filter.receiptType !== 'ALL') {
+      where.receiptType = filter.receiptType as ReceiptType;
+    }
+
     if (filter?.search) {
       const term = filter.search.trim();
-      where.OR = [
+      const orConditions: Prisma.SaleWhereInput[] = [
         { fullReceiptNumber: { contains: term, mode: 'insensitive' } },
         { customerName: { contains: term, mode: 'insensitive' } },
         { customerDocument: { contains: term, mode: 'insensitive' } },
       ];
+
+      const seriesMatch = term.match(/^([A-Za-z0-9]{2,4})[- ]*(\d+)$/);
+      if (seriesMatch) {
+        const seriesPrefix = seriesMatch[1].toUpperCase();
+        const corrNum = parseInt(seriesMatch[2], 10);
+        const paddedTicket = `${seriesPrefix}-${String(corrNum).padStart(8, '0')}`;
+        orConditions.push({ fullReceiptNumber: { contains: paddedTicket, mode: 'insensitive' } });
+        orConditions.push({
+          AND: [
+            { series: { equals: seriesPrefix, mode: 'insensitive' } },
+            { correlativeNumber: corrNum },
+          ],
+        });
+      } else if (/^\d+$/.test(term)) {
+        const num = parseInt(term, 10);
+        orConditions.push({ saleNumber: num });
+        orConditions.push({ correlativeNumber: num });
+      }
+
+      where.OR = orConditions;
     }
 
     if (filter?.startDate || filter?.endDate) {

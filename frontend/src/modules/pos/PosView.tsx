@@ -62,6 +62,8 @@ export const PosView: React.FC = () => {
   // Estados de modales
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [isRecentSalesOpen, setIsRecentSalesOpen] = useState<boolean>(false);
+  const [salesModalScope, setSalesModalScope] = useState<'shift' | 'all'>('shift');
+  const [salesModalFilter, setSalesModalFilter] = useState<'ALL' | 'NOTA_VENTA' | 'BOLETA' | 'FACTURA' | 'VOIDED'>('ALL');
   const [isMovementOpen, setIsMovementOpen] = useState<boolean>(false);
   const [completedSale, setCompletedSale] = useState<any | null>(null);
 
@@ -171,21 +173,29 @@ export const PosView: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setIsRecentSalesOpen(true)}
+            onClick={() => {
+              setSalesModalScope('shift');
+              setSalesModalFilter('ALL');
+              setIsRecentSalesOpen(true);
+            }}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-slate-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
-            title="Ver ventas realizadas y anular con PIN"
+            title="Ver ventas realizadas en el turno actual"
           >
             <History className="w-3.5 h-3.5 text-slate-400" />
             <span>Ventas del Turno</span>
           </button>
 
           <button
-            onClick={() => setIsRecentSalesOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-            title="Canjear tickets de venta por Boleta o Factura electrónica oficial"
+            onClick={() => {
+              setSalesModalScope('all');
+              setSalesModalFilter('NOTA_VENTA');
+              setIsRecentSalesOpen(true);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            title="Buscar y canjear tickets de clientes de cualquier fecha por Boleta o Factura oficial"
           >
             <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
-            <span>Canjear Ticket</span>
+            <span>Canjear Ticket Histórico</span>
           </button>
 
           <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-right">
@@ -607,6 +617,8 @@ export const PosView: React.FC = () => {
       <RecentSalesModal
         isOpen={isRecentSalesOpen}
         onClose={() => setIsRecentSalesOpen(false)}
+        initialScope={salesModalScope}
+        initialFilter={salesModalFilter}
         onSaleVoided={() => {
           fetchProducts();
           fetchActiveShift();

@@ -74,6 +74,7 @@ export class SalesController {
     @CurrentUser('role') userRole: Role,
     @Query('shiftId') shiftId?: string,
     @Query('isVoided') isVoided?: string,
+    @Query('receiptType') receiptType?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('limit') limit?: string,
@@ -84,6 +85,7 @@ export class SalesController {
     return this.salesService.getSales(userRole, {
       shiftId,
       isVoided: isVoidedBool,
+      receiptType,
       startDate,
       endDate,
       limit: limit ? parseInt(limit, 10) : undefined,

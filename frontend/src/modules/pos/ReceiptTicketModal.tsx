@@ -1,8 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import QRCode from 'qrcode';
 import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
-import { Printer, ArrowRight, X, ShieldCheck, Sparkles, FileText } from 'lucide-react';
+import {
+  Printer,
+  ArrowRight,
+  X,
+  ShieldCheck,
+  Sparkles,
+  FileText,
+  Zap,
+} from 'lucide-react';
 import type { Sale } from '../../types/index.js';
 
 interface ReceiptTicketModalProps {
@@ -19,13 +27,47 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   isCreditNoteTicket = false,
 }) => {
   const { config } = useConfigStore();
-  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>('80mm');
+
+  // Preferencia persistida de ancho de papel térmico (80mm o 58mm)
+  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('pos_thermal_paper_width');
+      if (saved === '58mm' || saved === '80mm') return saved;
+    }
+    return '80mm';
+  });
+
+  // Preferencia persistida de impresión automática al abrir
+  const [autoPrintEnabled, setAutoPrintEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('pos_thermal_auto_print') === 'true';
+    }
+    return false;
+  });
+
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  const autoPrintTriggeredRef = useRef(false);
 
   const isCreditNote = Boolean(isCreditNoteTicket || saleData?.isCreditNoteTicket);
   const creditNote = saleData?.creditNote;
   const receiptType = saleData?.receiptType || 'NOTA_VENTA';
-  const isFiscal = isCreditNote || saleData?.isFiscal || receiptType === 'BOLETA' || receiptType === 'FACTURA';
+  const isFiscal =
+    isCreditNote || saleData?.isFiscal || receiptType === 'BOLETA' || receiptType === 'FACTURA';
+
+  const handlePaperWidthChange = (width: '80mm' | '58mm') => {
+    setPaperWidth(width);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pos_thermal_paper_width', width);
+    }
+  };
+
+  const handleToggleAutoPrint = () => {
+    const nextVal = !autoPrintEnabled;
+    setAutoPrintEnabled(nextVal);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pos_thermal_auto_print', String(nextVal));
+    }
+  };
 
   // Generar código QR oficial en DataURL para comprobantes fiscales y notas de crédito
   useEffect(() => {
@@ -82,32 +124,17 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     };
   }, [isOpen, saleData, isFiscal, isCreditNote, creditNote, receiptType, config.ruc]);
 
-
-  if (!isOpen || !saleData) return null;
-
-  const getPaymentMethodLabel = (method?: string) => {
-    switch (method) {
-      case 'CASH':
-        return 'EFECTIVO';
-      case 'TRANSFER':
-        return 'YAPE / PLIN';
-      case 'CARD':
-        return 'TARJETA';
-      case 'MIXED':
-        return 'PAGO MIXTO';
-      default:
-        return method || 'EFECTIVO';
-    }
-  };
-
-  const getFullReceiptNumber = () => {
+  const getFullReceiptNumber = useCallback(() => {
+    if (!saleData) return '';
     if (saleData.fullReceiptNumber) return saleData.fullReceiptNumber;
-    const series = saleData.series || (receiptType === 'FACTURA' ? 'F001' : receiptType === 'BOLETA' ? 'B001' : 'NV01');
+    const series =
+      saleData.series ||
+      (receiptType === 'FACTURA' ? 'F001' : receiptType === 'BOLETA' ? 'B001' : 'NV01');
     const corr = String(saleData.correlativeNumber || saleData.saleNumber || 1).padStart(8, '0');
     return `${series}-${corr}`;
-  };
+  }, [saleData, receiptType]);
 
-  const handlePrint = () => {
+  const handlePrint = useCallback(() => {
     const printElement = document.getElementById('printable-ticket');
     if (!printElement) {
       window.print();
@@ -147,6 +174,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
           <style>
             @page {
               margin: 0mm;
+              size: auto;
             }
             @media print {
               html, body {
@@ -175,7 +203,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               max-width: ${targetWidth} !important;
               min-width: ${targetWidth} !important;
               margin: 0 auto !important;
-              padding: 2mm 1mm 4mm 1mm !important;
+              padding: 2mm 1.5mm 10mm 1.5mm !important;
               font-size: ${baseFontSize} !important;
               line-height: 1.25 !important;
               overflow: hidden !important;
@@ -217,7 +245,56 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     setTimeout(() => {
       printIframe.contentWindow?.focus();
       printIframe.contentWindow?.print();
-    }, 250);
+    }, 280);
+  }, [paperWidth, getFullReceiptNumber]);
+
+  // Atajo de teclado: Enter para imprimir directamente, Escape para cerrar
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handlePrint();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, handlePrint, onClose]);
+
+  // Auto-impresión si la opción está activada
+  useEffect(() => {
+    if (isOpen && autoPrintEnabled && !autoPrintTriggeredRef.current) {
+      autoPrintTriggeredRef.current = true;
+      const timer = setTimeout(() => {
+        handlePrint();
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+    if (!isOpen) {
+      autoPrintTriggeredRef.current = false;
+    }
+  }, [isOpen, autoPrintEnabled, handlePrint]);
+
+  if (!isOpen || !saleData) return null;
+
+  const getPaymentMethodLabel = (method?: string) => {
+    switch (method) {
+      case 'CASH':
+        return 'EFECTIVO';
+      case 'TRANSFER':
+        return 'YAPE / PLIN';
+      case 'CARD':
+        return 'TARJETA';
+      case 'MIXED':
+        return 'PAGO MIXTO';
+      default:
+        return method || 'EFECTIVO';
+    }
   };
 
   const fullReceiptNumber = getFullReceiptNumber();
@@ -283,36 +360,52 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
           <p className="text-xs text-slate-400">
             {isCreditNote
               ? `${creditNote?.fullNumber || 'NC'} • Anulación fiscal de ${fullReceiptNumber}`
-              : `${fullReceiptNumber} • Formato para tiqueteras térmicas de 80mm y 58mm`}
+              : `${fullReceiptNumber} • Formato para tiqueteras térmicas`}
           </p>
 
-          {/* Selector de Ancho de Tiquetera (80mm vs 58mm) */}
-          <div className="mt-3 flex items-center justify-center gap-2">
-            <span className="text-[11px] text-slate-400">Ancho tiquetera:</span>
-            <div className="inline-flex p-1 bg-slate-950 border border-slate-800 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setPaperWidth('80mm')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  paperWidth === '80mm'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                80mm (Estándar)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPaperWidth('58mm')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  paperWidth === '58mm'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                58mm (Mini)
-              </button>
+          {/* Selector de Ancho de Tiquetera y Auto-print */}
+          <div className="mt-3 flex items-center justify-between gap-2 flex-wrap bg-slate-950/80 p-2 rounded-2xl border border-slate-800/80">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase">Rollo:</span>
+              <div className="inline-flex p-0.5 bg-slate-900 border border-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => handlePaperWidthChange('80mm')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    paperWidth === '80mm'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  80mm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePaperWidthChange('58mm')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    paperWidth === '58mm'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  58mm
+                </button>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={handleToggleAutoPrint}
+              className={`px-2.5 py-1 rounded-xl border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                autoPrintEnabled
+                  ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+              title="Imprimir automáticamente el ticket al abrir"
+            >
+              <Zap className={`w-3.5 h-3.5 ${autoPrintEnabled ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
+              <span>Auto-imprimir: {autoPrintEnabled ? 'ON' : 'OFF'}</span>
+            </button>
           </div>
         </div>
 
@@ -408,7 +501,6 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               )}
             </div>
           )}
-
 
           {/* INFORMACIÓN DE LA OPERACIÓN Y CLIENTE */}
           <div className="text-[10.5px] space-y-0.5 border-b border-dashed border-slate-400 pb-2 mb-2">
@@ -648,22 +740,27 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         </div>
 
         {/* Acciones de impresión y cierre */}
-        <div className="flex gap-3 pt-2 print:hidden">
-          <button
-            onClick={handlePrint}
-            className="w-1/2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Imprimir ({paperWidth})</span>
-          </button>
+        <div className="pt-2 print:hidden space-y-2">
+          <div className="flex gap-3">
+            <button
+              onClick={handlePrint}
+              className="w-1/2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Imprimir ({paperWidth})</span>
+            </button>
 
-          <button
-            onClick={onClose}
-            className="w-1/2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-white border border-slate-700 flex items-center justify-center gap-2 transition-all cursor-pointer"
-          >
-            <span>Nueva Venta</span>
-            <ArrowRight className="w-4 h-4 text-slate-300" />
-          </button>
+            <button
+              onClick={onClose}
+              className="w-1/2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold text-xs text-white border border-slate-700 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <span>Nueva Venta</span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-500 text-center">
+            Atajo rápido: Pulsa <kbd className="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Enter</kbd> para imprimir o <kbd className="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Esc</kbd> para salir.
+          </p>
         </div>
       </div>
     </div>

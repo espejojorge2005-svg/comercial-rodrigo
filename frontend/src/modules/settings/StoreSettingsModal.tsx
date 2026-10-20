@@ -11,6 +11,8 @@ import {
   AlertCircle,
   Printer,
   Save,
+  Zap,
+  Info,
 } from 'lucide-react';
 
 interface StoreSettingsModalProps {
@@ -31,6 +33,21 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
   const [address, setAddress] = useState(config.address);
   const [footerText, setFooterText] = useState(config.footerText);
 
+  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('pos_thermal_paper_width');
+      if (saved === '58mm' || saved === '80mm') return saved;
+    }
+    return '80mm';
+  });
+
+  const [autoPrintEnabled, setAutoPrintEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('pos_thermal_auto_print') === 'true';
+    }
+    return false;
+  });
+
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -44,8 +61,142 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
       setFooterText(config.footerText);
       setError(null);
       setSuccessMsg(null);
+      if (typeof window !== 'undefined') {
+        const savedW = localStorage.getItem('pos_thermal_paper_width');
+        if (savedW === '58mm' || savedW === '80mm') setPaperWidth(savedW);
+        setAutoPrintEnabled(localStorage.getItem('pos_thermal_auto_print') === 'true');
+      }
     }
   }, [isOpen, config]);
+
+  const handlePaperWidthChange = (width: '80mm' | '58mm') => {
+    setPaperWidth(width);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pos_thermal_paper_width', width);
+    }
+  };
+
+  const handleToggleAutoPrint = () => {
+    const nextVal = !autoPrintEnabled;
+    setAutoPrintEnabled(nextVal);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pos_thermal_auto_print', String(nextVal));
+    }
+  };
+
+  const handlePrintSample = () => {
+    let printIframe = document.getElementById('pos-print-iframe') as HTMLIFrameElement;
+    if (!printIframe) {
+      printIframe = document.createElement('iframe');
+      printIframe.id = 'pos-print-iframe';
+      printIframe.style.position = 'fixed';
+      printIframe.style.right = '0';
+      printIframe.style.bottom = '0';
+      printIframe.style.width = '0px';
+      printIframe.style.height = '0px';
+      printIframe.style.border = 'none';
+      document.body.appendChild(printIframe);
+    }
+
+    const iframeDoc = printIframe.contentDocument || printIframe.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    const is58 = paperWidth === '58mm';
+    const targetWidth = is58 ? '48mm' : '72mm';
+    const baseFontSize = is58 ? '9.5px' : '11px';
+
+    iframeDoc.open();
+    iframeDoc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>PRUEBA-TIQUETERA</title>
+          <style>
+            @page { margin: 0mm; size: auto; }
+            * { box-sizing: border-box !important; margin: 0; padding: 0; }
+            body {
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: 'Courier New', Courier, monospace, monospace;
+              background: #fff !important;
+              color: #000 !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .ticket-container {
+              width: ${targetWidth} !important;
+              max-width: ${targetWidth} !important;
+              min-width: ${targetWidth} !important;
+              margin: 0 auto !important;
+              padding: 2mm 1.5mm 10mm 1.5mm !important;
+              font-size: ${baseFontSize} !important;
+              line-height: 1.25 !important;
+            }
+            .text-center { text-align: center !important; }
+            .text-right { text-align: right !important; }
+            .font-bold { font-weight: bold !important; }
+            .font-extrabold { font-weight: 800 !important; }
+            .border-b { border-bottom: 1px dashed #000 !important; }
+            .border-t { border-top: 1px dashed #000 !important; }
+            table { width: 100% !important; border-collapse: collapse !important; font-size: inherit !important; margin: 3px 0 !important; }
+            th { text-align: left !important; border-bottom: 1px dashed #000 !important; padding: 2px 0 !important; }
+            td { padding: 2px 0 !important; }
+          </style>
+        </head>
+        <body>
+          <div class="ticket-container">
+            <div class="text-center border-b" style="padding-bottom: 5px; margin-bottom: 5px;">
+              <div class="font-extrabold" style="font-size: 13px;">${name || 'COMERCIAL RODRIGO'}</div>
+              <div style="font-size: 10px;">${subtitle || 'VENTA POR MAYOR Y MENOR'}</div>
+              <div style="font-size: 10px;">RUC: ${ruc || '10458923011'} • Tel: ${phone || '(01) 987-654-321'}</div>
+              <div style="font-size: 9px;">${address || 'Av. Principal 1234, Lima'}</div>
+              <div class="font-bold border-t" style="margin-top: 5px; padding-top: 3px;">
+                *** TICKET DE PRUEBA TÉRMICA (${paperWidth}) ***
+              </div>
+            </div>
+            <div style="font-size: 10px; margin-bottom: 5px;">
+              <div>FECHA: ${new Date().toLocaleString('es-PE')}</div>
+              <div>ESTADO: TIQUETERA CALIBRADA</div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>CANT</th>
+                  <th>DESCRIPCIÓN</th>
+                  <th class="text-right">TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>PRUEBA DE ANCHO ${paperWidth}</td>
+                  <td class="text-right">S/. 12.00</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>PRODUCTO DEMOSTRACIÓN</td>
+                  <td class="text-right">S/. 18.00</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="border-t font-extrabold text-right" style="padding-top: 4px; font-size: 12px;">
+              TOTAL: S/. 30.00
+            </div>
+            <div class="text-center border-t" style="margin-top: 8px; padding-top: 5px; font-size: 9px;">
+              ${footerText || '¡GRACIAS POR SU COMPRA!'}
+            </div>
+          </div>
+        </body>
+      </html>
+    `);
+    iframeDoc.close();
+
+    setTimeout(() => {
+      printIframe.contentWindow?.focus();
+      printIframe.contentWindow?.print();
+    }, 280);
+  };
 
   if (!isOpen) return null;
 
@@ -295,6 +446,73 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
                     {footerText || '¡GRACIAS POR SU COMPRA!'}
                   </p>
                 </div>
+              </div>
+
+              {/* Ajustes de Impresora Térmica */}
+              <div className="mt-4 p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-300">Ancho de Rollo:</span>
+                  <div className="inline-flex p-0.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => handlePaperWidthChange('80mm')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                        paperWidth === '80mm'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      80mm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePaperWidthChange('58mm')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                        paperWidth === '58mm'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      58mm
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+                  <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    <span>Auto-imprimir en cobro:</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleToggleAutoPrint}
+                    className={`px-2 py-0.5 rounded-lg border text-[10.5px] font-bold transition-all cursor-pointer ${
+                      autoPrintEnabled
+                        ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/40'
+                        : 'bg-slate-950 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    {autoPrintEnabled ? 'ACTIVADO' : 'DESACTIVADO'}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handlePrintSample}
+                  className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-slate-700/80 mt-1 shadow-sm"
+                  title="Enviar un comprobante de prueba a la tiquetera física para comprobar alineación y corte"
+                >
+                  <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Imprimir Ticket de Prueba ({paperWidth})</span>
+                </button>
+              </div>
+
+              {/* Tip Modo Kiosco */}
+              <div className="mt-2.5 p-2 rounded-xl bg-blue-950/20 border border-blue-900/30 text-[10px] text-blue-300 flex items-start gap-1.5 leading-snug">
+                <Info className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Tip de Impresión Rápida:</strong> Para imprimir sin que aparezca la ventana de confirmación del navegador, añade <code className="bg-slate-900 px-1 py-0.5 rounded text-blue-200 font-mono">--kiosk-printing</code> al acceso directo de Chrome o Edge.
+                </span>
               </div>
             </div>
 
