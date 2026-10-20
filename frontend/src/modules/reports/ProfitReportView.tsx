@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiRequest, downloadReportBlob } from '../../api/client.js';
+import { toast } from '../../store/useToastStore.js';
 import {
   formatCurrency,
   formatPeruDate,
@@ -176,8 +177,9 @@ export const ProfitReportView: React.FC = () => {
           `Libro_Ventas_SUNAT_${getPeruYMD()}.xlsx`,
         );
       }
+      toast.success('Reporte Excel generado y descargado con éxito.');
     } catch (err: any) {
-      alert(`Error descargando reporte Excel: ${err.message || err}`);
+      toast.error(`Error descargando reporte Excel: ${err.message || err}`);
     } finally {
       setIsDownloading(false);
     }

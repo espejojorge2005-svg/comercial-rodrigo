@@ -14,6 +14,8 @@ import { useConfigStore } from './store/useConfigStore.js';
 import { useOfflineSyncStore } from './store/useOfflineSyncStore.js';
 import { OfflineStatusBanner } from './components/layout/OfflineStatusBanner.js';
 
+import { ToastContainer } from './components/layout/ToastContainer.js';
+
 export const App: React.FC = () => {
   const { user, token, initAuth } = useAuthStore();
   const { activeShift, fetchActiveShift, isLoading: shiftLoading } = useShiftStore();
@@ -48,6 +50,7 @@ export const App: React.FC = () => {
   if (isInitializing) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 gap-3">
+        <ToastContainer />
         <div className="w-10 h-10 border-3 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
         <span className="text-xs font-semibold text-slate-400">Cargando Comercial Rodrigo...</span>
       </div>
@@ -56,18 +59,29 @@ export const App: React.FC = () => {
 
   // 2. Si no ha iniciado sesión -> Mostrar Login
   if (!token || !user) {
-    return <LoginView />;
+    return (
+      <>
+        <ToastContainer />
+        <LoginView />
+      </>
+    );
   }
 
   // 3. Si es Cajero y no tiene turno abierto en caja -> Selector de Caja y Apertura obligatorio
   const isAdmin = user.role === 'ADMIN';
   if (!activeShift && !shiftLoading && !isAdmin) {
-    return <SelectRegisterView />;
+    return (
+      <>
+        <ToastContainer />
+        <SelectRegisterView />
+      </>
+    );
   }
 
   // 4. Si es Admin o tiene turno activo -> Mostrar Sistema Completo con Navbar
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      <ToastContainer />
       <Navbar currentTab={currentTab} onTabChange={setCurrentTab} />
       <OfflineStatusBanner />
 

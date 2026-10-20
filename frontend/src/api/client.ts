@@ -35,6 +35,18 @@ export async function apiRequest<T = any>(
     const response = await fetch(url, config);
 
     if (!response.ok) {
+      if (response.status === 401 && !endpoint.includes('/auth/login')) {
+        try {
+          const { toast } = await import('../store/useToastStore.js');
+          toast.error('Tu sesión ha expirado. Por favor, ingresa tus credenciales nuevamente.');
+          const { useAuthStore } = await import('../store/useAuthStore.js');
+          useAuthStore.getState().logout();
+        } catch {
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('auth_user');
+        }
+      }
+
       let errorMsg = `Error HTTP ${response.status}`;
       try {
         const errorJson = await response.json();

@@ -18,6 +18,7 @@ import { apiRequest } from '../../api/client.js';
 import { UserFormModal } from './UserFormModal.js';
 import { ChangePasswordModal } from './ChangePasswordModal.js';
 import { formatPeruDateTime } from '../../lib/utils.js';
+import { toast } from '../../store/useToastStore.js';
 
 export const UsersView: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -61,9 +62,10 @@ export const UsersView: React.FC = () => {
         method: 'PUT',
         data: { isActive: newStatus },
       });
+      toast.success(`Cuenta de "${user.name}" ${newStatus ? 'activada' : 'desactivada'} correctamente.`);
       fetchUsers();
     } catch (err: any) {
-      alert(`No se pudo cambiar el estado: ${err.message || err}`);
+      toast.error(`No se pudo cambiar el estado: ${err.message || err}`);
     }
   };
 

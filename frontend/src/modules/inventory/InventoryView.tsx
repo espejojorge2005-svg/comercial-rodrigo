@@ -32,6 +32,7 @@ import { SUNAT_UNITS, getUnitBadge, getUnitShortName } from '../../lib/units.js'
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { exportKardexAndInventoryExcel } from '../../lib/excelExport.js';
 import { ImportExcelModal } from './ImportExcelModal.js';
+import { toast } from '../../store/useToastStore.js';
 
 export const InventoryView: React.FC = () => {
   const { config } = useConfigStore();
@@ -68,8 +69,10 @@ export const InventoryView: React.FC = () => {
         allProducts = Array.isArray(full) ? full : (full?.data || products);
       }
       exportKardexAndInventoryExcel(allProducts, currentKardex, config.name);
-    } catch (err) {
+      toast.success('Inventario y Kardex exportados a Excel con éxito.');
+    } catch (err: any) {
       console.error(err);
+      toast.error('Ocurrió un error al generar el archivo Excel de inventario.');
     } finally {
       setIsExportingExcel(false);
     }
@@ -208,9 +211,10 @@ export const InventoryView: React.FC = () => {
     if (!confirm(`¿Estás seguro de desactivar el producto "${name}"?`)) return;
     try {
       await apiRequest(`/products/${id}`, { method: 'DELETE' });
+      toast.success(`Producto "${name}" desactivado con éxito.`);
       fetchProducts();
     } catch (err: any) {
-      alert(err.message || 'Error al eliminar');
+      toast.error(err.message || 'Error al desactivar el producto');
     }
   };
 
@@ -340,7 +344,7 @@ export const InventoryView: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Valorización monetaria de las existencias actuales a precio de costo">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
             <span>Valorización (Costo)</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
@@ -350,9 +354,9 @@ export const InventoryView: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Sobreprecio promedio aplicado sobre el costo de adquisición (Markup)">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Margen Promedio</span>
+            <span>Markup Prom. s/ Costo</span>
             <TrendingUp className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-xl font-extrabold text-blue-400">{avgMargin}%</div>

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { CartItem, Product } from '../types/index.js';
+import { toast } from './useToastStore.js';
 
 interface CartState {
   items: CartItem[];
@@ -40,7 +41,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     // Validar disponibilidad de stock
     if (newQty > product.currentStock) {
-      alert(
+      toast.warning(
         `Stock insuficiente para "${product.name}". Disponible en almacén: ${product.currentStock}`,
       );
       return false;
@@ -94,7 +95,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     if (!item) return;
 
     if (quantity > item.product.currentStock) {
-      alert(`Stock máximo disponible: ${item.product.currentStock}`);
+      toast.warning(`Stock máximo disponible para "${item.product.name}": ${item.product.currentStock}`);
       return;
     }
 
@@ -130,7 +131,7 @@ export const useCartStore = create<CartState>((set, get) => ({
         if (i.product.id !== productId) return i;
 
         if (!hasWholesalePrice(i.product)) {
-          alert(`El producto "${i.product.name}" no tiene precio mayorista configurado.`);
+          toast.info(`El producto "${i.product.name}" no tiene precio mayorista configurado.`);
           return i;
         }
 
