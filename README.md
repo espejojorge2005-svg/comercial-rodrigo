@@ -72,7 +72,7 @@ npm run dev
 | Componente | Plataforma | Configuración |
 | :--- | :--- | :--- |
 | **Frontend** | [Vercel](https://vercel.com) | Root Directory: `frontend`<br>Framework Preset: `Vite`<br>Build Command: `npm run build`<br>Output Directory: `dist` |
-| **Backend** | [Render](https://render.com) | Root Directory: `backend`<br>Environment: `Node`<br>Build Command: `npm install --legacy-peer-deps && npx prisma generate && npm run build`<br>Start Command: `node dist/main.js`<br>Variables: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `PORT=10000` |
+| **Backend** | [Render](https://render.com) | Root Directory: `backend`<br>Environment: `Node`<br>Build Command: `npm install --legacy-peer-deps && npx prisma generate && npx prisma migrate deploy && npm run build`<br>Start Command: `node dist/main.js`<br>Variables: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `PORT=10000` |
 | **Base de Datos** | [Supabase](https://supabase.com) | Proyecto PostgreSQL gratuito. Usar URI del pooler (puerto 6543) para `DATABASE_URL` y puerto 5432 para `DIRECT_URL`. |
 | **Keep-Alive** | [UptimeRobot](https://uptimerobot.com) | Monitor HTTP con ping cada 10 min a `https://<tu-backend-en-render>.onrender.com/health` para evitar hibernación (*cold starts*). |
 
