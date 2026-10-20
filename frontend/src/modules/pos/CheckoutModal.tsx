@@ -22,6 +22,8 @@ import {
   Mail,
   Search,
   Loader2,
+  CheckCircle2,
+  Percent,
 } from 'lucide-react';
 import { offlineStorage, type OfflineSale } from '../../lib/offlineStorage.js';
 import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
@@ -57,6 +59,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [cashPaid, setCashPaid] = useState<string>(String(totalAmount));
   const [digitalPaid, setDigitalPaid] = useState<string>('0');
+  const [cashPortion, setCashPortion] = useState<string>(String(totalAmount));
   const [custName, setCustName] = useState<string>(customerName || 'Cliente Varios');
   const [custDoc, setCustDoc] = useState<string>(customerDocument || '');
   const [custAddress, setCustAddress] = useState<string>('');
@@ -86,6 +89,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setCashPaid(String(totalAmount));
+      setCashPortion(String(totalAmount));
       setDigitalPaid('0');
       setError(null);
       setLookupBadge(null);
@@ -134,12 +138,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const cashNum = parseFloat(cashPaid) || 0;
   const digitalNum = parseFloat(digitalPaid) || 0;
 
+  // Porción de efectivo requerida para cubrir la venta en Pago Mixto
+  const requiredCash = Math.max(0, Number((totalAmount - digitalNum).toFixed(2)));
+
   // Cálculo del vuelto según método
   let changeAmount = 0;
   if (paymentMethod === 'CASH') {
     changeAmount = Math.max(0, Number((cashNum - totalAmount).toFixed(2)));
   } else if (paymentMethod === 'MIXED') {
-    const requiredCash = Math.max(0, totalAmount - digitalNum);
     changeAmount = Math.max(0, Number((cashNum - requiredCash).toFixed(2)));
   }
 
@@ -199,10 +205,47 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   }
 
+  const handleDigitalChange = (val: string) => {
+    setDigitalPaid(val);
+    if (val === '') {
+      setCashPortion(String(totalAmount));
+      setCashPaid(String(totalAmount));
+      return;
+    }
+    const dig = parseFloat(val);
+    if (isNaN(dig)) return;
+    const clampedDigital = Math.min(totalAmount, Math.max(0, dig));
+    const remCash = Number((totalAmount - clampedDigital).toFixed(2));
+    setCashPortion(String(remCash));
+    setCashPaid(String(remCash));
+  };
+
+  const handleCashPortionChange = (val: string) => {
+    setCashPortion(val);
+    if (val === '') {
+      setDigitalPaid(String(totalAmount));
+      setCashPaid('0');
+      return;
+    }
+    const csh = parseFloat(val);
+    if (isNaN(csh)) return;
+    const clampedCash = Math.min(totalAmount, Math.max(0, csh));
+    const remDigital = Number((totalAmount - clampedCash).toFixed(2));
+    setDigitalPaid(String(remDigital));
+    setCashPaid(val);
+  };
+
+  const handleSplitFiftyFifty = () => {
+    const half = Number((totalAmount / 2).toFixed(2));
+    const otherHalf = Number((totalAmount - half).toFixed(2));
+    setDigitalPaid(String(half));
+    setCashPortion(String(otherHalf));
+    setCashPaid(String(otherHalf));
+  };
+
   const handleSetExactCash = () => {
     if (paymentMethod === 'MIXED') {
-      const remaining = Math.max(0, Number((totalAmount - digitalNum).toFixed(2)));
-      setCashPaid(String(remaining));
+      setCashPaid(String(requiredCash));
     } else {
       setCashPaid(String(totalAmount));
     }
@@ -210,7 +253,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleAddCash = (amount: number) => {
     const current = parseFloat(cashPaid) || 0;
-    setCashPaid(String(current + amount));
+    setCashPaid(String(Number((current + amount).toFixed(2))));
   };
 
   // Atajo de teclado: Enter en Nota de Venta para cobro ultrarrápido
@@ -240,11 +283,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       return;
     }
 
-    if (paymentMethod === 'MIXED' && cashNum + digitalNum < totalAmount) {
-      setError(
-        `Monto total insuficiente. Pagado: ${formatCurrency(cashNum + digitalNum)}, Total: ${formatCurrency(totalAmount)}`,
-      );
-      return;
+    if (paymentMethod === 'MIXED') {
+      if (cashNum + digitalNum < totalAmount) {
+        setError(
+          `Monto total insuficiente. Pagado: ${formatCurrency(cashNum + digitalNum)}, Total: ${formatCurrency(totalAmount)}`,
+        );
+        return;
+      }
+      if (cashNum < requiredCash) {
+        setError(
+          `Efectivo recibido en gaveta insuficiente. Se requiere al menos ${formatCurrency(requiredCash)} en efectivo para completar la venta (Faltan ${formatCurrency(requiredCash - cashNum)})`,
+        );
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -798,10 +849,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       setPaymentMethod(m.id as PaymentMethod);
                       if (m.id === 'CASH') {
                         setCashPaid(String(totalAmount));
+                        setCashPortion(String(totalAmount));
                         setDigitalPaid('0');
+                      } else if (m.id === 'TRANSFER' || m.id === 'CARD') {
+                        setCashPaid('0');
+                        setCashPortion('0');
+                        setDigitalPaid(String(totalAmount));
                       } else if (m.id === 'MIXED') {
-                        setDigitalPaid(String(Number((totalAmount / 2).toFixed(2))));
-                        setCashPaid(String(Number((totalAmount / 2).toFixed(2))));
+                        const half = Number((totalAmount / 2).toFixed(2));
+                        const otherHalf = Number((totalAmount - half).toFixed(2));
+                        setDigitalPaid(String(half));
+                        setCashPortion(String(otherHalf));
+                        setCashPaid(String(otherHalf));
                       }
                     }}
                     className={`p-3 rounded-2xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
@@ -818,30 +877,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
-          {/* Desglose de Pago (Efectivo / Mixto) */}
-          {(paymentMethod === 'CASH' || paymentMethod === 'MIXED') && (
+          {/* Desglose de Pago (Solo Efectivo) */}
+          {paymentMethod === 'CASH' && (
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-4">
-              {paymentMethod === 'MIXED' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Monto Digital (Transferencia / Tarjeta)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">
-                      S/.
-                    </span>
-                    <input
-                      type="number"
-                      step="any"
-                      value={digitalPaid}
-                      onChange={(e) => setDigitalPaid(e.target.value)}
-                      onFocus={(e) => e.target.select()}
-                      className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2 text-sm font-bold text-white outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                  </div>
-                </div>
-              )}
-
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
@@ -853,7 +891,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     onClick={handleSetExactCash}
                     className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
                   >
-                    Monto exacto
+                    Monto exacto ({formatCurrency(totalAmount)})
                   </button>
                 </div>
 
@@ -898,6 +936,228 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 >
                   {formatCurrency(changeAmount)}
                 </span>
+              </div>
+            </div>
+          )}
+
+          {/* Desglose Formal de Pago Mixto (Cálculo Automático Bidireccional) */}
+          {paymentMethod === 'MIXED' && (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+              {/* Encabezado Formal con Presets */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                      Liquidación de Pago Mixto
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      Total de la venta:{' '}
+                      <span className="font-bold text-slate-100">{formatCurrency(totalAmount)}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleSplitFiftyFifty}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-500/30 text-[11px] font-bold text-indigo-300 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                    title="Dividir en partes iguales: 50% digital y 50% efectivo"
+                  >
+                    <Percent className="w-3 h-3 text-indigo-400" />
+                    50% / 50%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDigitalPaid(String(totalAmount));
+                      setCashPortion('0');
+                      setCashPaid('0');
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                    title="Asignar todo el monto a Tarjeta / Digital"
+                  >
+                    100% Digital
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDigitalPaid('0');
+                      setCashPortion(String(totalAmount));
+                      setCashPaid(String(totalAmount));
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                    title="Asignar todo el monto a Efectivo"
+                  >
+                    100% Efectivo
+                  </button>
+                </div>
+              </div>
+
+              {/* Grid Bidireccional de Montos */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. Monto Digital */}
+                <div className="bg-slate-900/90 border border-indigo-500/30 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 rounded-xl p-3.5 transition-all">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 text-indigo-400" />
+                      1. Monto Digital (Tarjeta / Yape)
+                    </label>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">
+                      {totalAmount > 0 ? ((digitalNum / totalAmount) * 100).toFixed(0) : 0}%
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-400 mb-2">
+                    Cobro por POS físico, QR o Transferencia
+                  </p>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-400 text-sm font-bold">
+                      S/.
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={digitalPaid}
+                      onChange={(e) => handleDigitalChange(e.target.value)}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="0.00"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-lg pl-10 pr-3 py-2 text-base font-extrabold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                </div>
+
+                {/* 2. Porción a Cubrir en Efectivo */}
+                <div className="bg-slate-900/90 border border-emerald-500/30 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 rounded-xl p-3.5 transition-all">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-emerald-400" />
+                      2. Cobro en Efectivo
+                    </label>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">
+                      {totalAmount > 0 ? ((requiredCash / totalAmount) * 100).toFixed(0) : 0}%
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-400 mb-2">
+                    Porción asignada para liquidar en efectivo
+                  </p>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-emerald-400 text-sm font-bold">
+                      S/.
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={cashPortion}
+                      onChange={(e) => handleCashPortionChange(e.target.value)}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="0.00"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg pl-10 pr-3 py-2 text-base font-extrabold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Barra de Distribución y Cobertura Visual */}
+              <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-2.5 space-y-2">
+                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden flex">
+                  <div
+                    className="bg-indigo-500 h-full transition-all duration-300"
+                    style={{
+                      width: `${totalAmount > 0 ? Math.min(100, (digitalNum / totalAmount) * 100) : 0}%`,
+                    }}
+                  />
+                  <div
+                    className="bg-emerald-500 h-full transition-all duration-300"
+                    style={{
+                      width: `${totalAmount > 0 ? Math.min(100, (requiredCash / totalAmount) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between text-[11px] gap-2">
+                  <span className="flex items-center gap-1.5 text-indigo-300 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
+                    Digital: {formatCurrency(digitalNum)}
+                  </span>
+                  <div className="flex items-center gap-1 text-slate-300 font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>
+                      Total cubierto: {formatCurrency(digitalNum + requiredCash)} / {formatCurrency(totalAmount)}
+                    </span>
+                  </div>
+                  <span className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                    Efectivo: {formatCurrency(requiredCash)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Recepción de Efectivo en Gaveta y Vuelto */}
+              <div className="border-t border-slate-800/80 pt-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Banknote className="w-4 h-4 text-amber-400" />
+                    Efectivo Recibido en Gaveta (Cliente entrega)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSetExactCash}
+                    className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 cursor-pointer flex items-center gap-1"
+                  >
+                    Monto exacto ({formatCurrency(requiredCash)})
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-base font-bold">
+                    S/.
+                  </span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={cashPaid}
+                    onChange={(e) => setCashPaid(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    required
+                    className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 rounded-xl pl-12 pr-4 py-2.5 text-lg font-extrabold text-white outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+
+                {/* Botones de billetes rápidos */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-slate-400 mr-1">Sumar billete:</span>
+                  {billButtons.map((amt) => (
+                    <button
+                      type="button"
+                      key={amt}
+                      onClick={() => handleAddCash(amt)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition-all cursor-pointer"
+                    >
+                      +{amt}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Tarjeta de Vuelto Formal */}
+                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-300 block">Vuelto a entregar:</span>
+                    <span className="text-[10.5px] text-slate-400">
+                      {cashNum >= requiredCash
+                        ? `Recibido ${formatCurrency(cashNum)} - Cobro Efectivo ${formatCurrency(requiredCash)}`
+                        : `⚠️ Faltan recibir ${formatCurrency(requiredCash - cashNum)} en efectivo`}
+                    </span>
+                  </div>
+                  <span
+                    className={`text-xl sm:text-2xl font-black ${
+                      changeAmount > 0 ? 'text-emerald-400' : 'text-slate-400'
+                    }`}
+                  >
+                    {formatCurrency(changeAmount)}
+                  </span>
+                </div>
               </div>
             </div>
           )}
