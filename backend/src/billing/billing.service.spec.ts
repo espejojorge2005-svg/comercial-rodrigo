@@ -189,5 +189,42 @@ describe('Billing Engine & Drivers (Triple Vía Fiscal)', () => {
       expect(result.emissionStatus).toBe('SIMULATED');
       expect(result.qrString).toContain('|B002|00000001|');
     });
+
+    it('debe retornar status PENDING y success false si Nubefact falla por red (sin falsear con MOCK)', async () => {
+      process.env.BILLING_DRIVER = 'NUBEFACT';
+      process.env.NUBEFACT_URL = 'https://api.nubefact.com/api/v1/fail-test';
+      process.env.NUBEFACT_TOKEN = 'test-token';
+
+      const failingService = new BillingService(mockDriver, nubefactDriver);
+      expect(failingService.getActiveDriverName()).toBe('NUBEFACT');
+
+      const origFetch = global.fetch;
+      global.fetch = (async () => {
+        throw new Error('Network connection timeout');
+      }) as any;
+
+      try {
+        const result = await failingService.issueReceipt({
+          receiptType: 'BOLETA',
+          series: 'B001',
+          correlativeNumber: 10,
+          totalAmount: 100,
+          taxableBase: 84.75,
+          igvAmount: 15.25,
+          customerName: 'Cliente Prueba',
+          paymentMethod: 'CASH',
+          items: [{ name: 'Item', quantity: 1, unitPrice: 100, subtotal: 100 }],
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.emissionStatus).toBe('PENDING');
+        expect(result.message).toContain('Falla de comunicación con PSE Nubefact');
+      } finally {
+        global.fetch = origFetch;
+        delete process.env.BILLING_DRIVER;
+        delete process.env.NUBEFACT_URL;
+        delete process.env.NUBEFACT_TOKEN;
+      }
+    });
   });
 });

@@ -47,10 +47,26 @@ export class BillingService {
       return await this.activeDriver.issueReceipt(input);
     } catch (err: any) {
       this.logger.error(
-        `Error al emitir comprobante con driver ${this.activeDriver.driverName}: ${err.message}. Intentando fallback a MOCK...`,
+        `Error al emitir comprobante con driver ${this.activeDriver.driverName}: ${err.message}`,
       );
-      // Fallback de resiliencia: si el driver real falla por red, simular para no bloquear la caja física
-      return await this.mockDriver.issueReceipt(input);
+
+      // Si el entorno está configurado deliberadamente en modo MOCK, simular
+      if (this.activeDriver.driverName === 'MOCK') {
+        return await this.mockDriver.issueReceipt(input);
+      }
+
+      // 🛡️ REGLA TRIBUTARIA SUNAT:
+      // En producción (NUBEFACT), ante corte de red o timeout NUNCA falsear aceptación con datos simulados.
+      // Se retorna PENDING (Modo Contingencia SUNAT) para permitir completar la venta en caja sin bloquear al cliente
+      // y posibilitar la retransmisión posterior al PSE.
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Falla de comunicación con PSE Nubefact: ${err.message}. Comprobante preservado en PENDING.`,
+        rawResponse: { error: err.message },
+      };
     }
   }
 
@@ -62,9 +78,21 @@ export class BillingService {
       return await this.activeDriver.issueCreditNote(input);
     } catch (err: any) {
       this.logger.error(
-        `Error al emitir Nota de Crédito con driver ${this.activeDriver.driverName}: ${err.message}. Intentando fallback a MOCK...`,
+        `Error al emitir Nota de Crédito con driver ${this.activeDriver.driverName}: ${err.message}`,
       );
-      return await this.mockDriver.issueCreditNote(input);
+
+      if (this.activeDriver.driverName === 'MOCK') {
+        return await this.mockDriver.issueCreditNote(input);
+      }
+
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Falla de comunicación con PSE Nubefact: ${err.message}. Nota de Crédito preservada en PENDING.`,
+        rawResponse: { error: err.message },
+      };
     }
   }
 }

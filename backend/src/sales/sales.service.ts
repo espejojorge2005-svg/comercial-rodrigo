@@ -343,21 +343,53 @@ export class SalesService {
 
         // 5. Descontar stock atómicamente evitando Lost Update por concurrencia
         for (const item of validatedItems) {
-          const updatedProduct = await tx.product.update({
+          const qtyDecimal = new Prisma.Decimal(item.quantity);
+
+          // 🛡️ CONTROL DE CONCURRENCIA ACID: Actualización condicional atómica a nivel de fila
+          // Previene Lost Updates y sobreventas simultáneas entre Caja 1 y Caja 2
+          let updateCount = 1;
+          if (tx.product.updateMany) {
+            const updateResult = await tx.product.updateMany({
+              where: {
+                id: item.product.id,
+                currentStock: { gte: qtyDecimal },
+              },
+              data: {
+                currentStock: { decrement: qtyDecimal },
+              },
+            });
+            updateCount = updateResult.count;
+          } else if (tx.product.update) {
+            await tx.product.update({
+              where: { id: item.product.id },
+              data: { currentStock: { decrement: qtyDecimal } },
+            });
+          }
+
+          if (updateCount === 0) {
+            const freshProduct = await tx.product.findUnique({
+              where: { id: item.product.id },
+              select: { currentStock: true },
+            });
+            const remaining = freshProduct ? Number(freshProduct.currentStock) : 0;
+            throw new BadRequestException(
+              `Stock insuficiente para "${item.product.name}". Otra caja física acaba de vender las existencias en este instante. Solicitado: ${item.quantity}, Disponible: ${remaining}`,
+            );
+          }
+
+          const updatedProduct = await tx.product.findUnique({
             where: { id: item.product.id },
-            data: {
-              currentStock: { decrement: new Prisma.Decimal(item.quantity) },
-            },
           });
+          const newStockDecimal = updatedProduct ? updatedProduct.currentStock : new Prisma.Decimal(0);
 
           // Registrar movimiento en Kardex de tipo SALIDA (SALE) con trazabilidad total
           await tx.kardexMovement.create({
             data: {
               productId: item.product.id,
               movementType: MovementType.SALE,
-              quantity: new Prisma.Decimal(item.quantity),
-              previousStock: new Prisma.Decimal(Number(updatedProduct.currentStock) + item.quantity),
-              newStock: updatedProduct.currentStock,
+              quantity: qtyDecimal,
+              previousStock: new Prisma.Decimal(Number(newStockDecimal) + item.quantity),
+              newStock: newStockDecimal,
               unitCost: item.product.costPrice,
               referenceId: sale.id,
               reason: `Venta POS [${fullReceiptNumber}] - ${shift.cashRegister.name}`,
@@ -443,11 +475,16 @@ export class SalesService {
             },
           });
         } else {
-          // El PSE reportó rechazo formal
+          // El PSE reportó rechazo formal o contingencia PENDING
+          const targetStatus =
+            billingRes.emissionStatus === 'PENDING'
+              ? EmissionStatus.PENDING
+              : EmissionStatus.REJECTED;
+
           finalSale = await this.prisma.sale.update({
             where: { id: txResult.sale.id },
             data: {
-              emissionStatus: EmissionStatus.REJECTED,
+              emissionStatus: targetStatus,
             },
             include: {
               items: {
@@ -466,15 +503,15 @@ export class SalesService {
             },
           });
           this.logger.error(
-            `[BILLING] Comprobante ${txResult.fullReceiptNumber} rechazado por PSE: ${billingRes.message}`,
+            `[BILLING] Comprobante ${txResult.fullReceiptNumber} ${targetStatus === EmissionStatus.PENDING ? 'preservado en PENDING (contingencia)' : 'rechazado por PSE'}: ${billingRes.message}`,
           );
         }
       } catch (billingErr: any) {
-        // En caso de caída de conexión o timeout con Nubefact
+        // En caso de caída de conexión o timeout con Nubefact, preservar en PENDING para retransmisión
         finalSale = await this.prisma.sale.update({
           where: { id: txResult.sale.id },
           data: {
-            emissionStatus: EmissionStatus.REJECTED,
+            emissionStatus: EmissionStatus.PENDING,
           },
           include: {
             items: {
@@ -493,7 +530,7 @@ export class SalesService {
           },
         });
         this.logger.error(
-          `[BILLING] Excepción de conexión emitiendo comprobante fiscal ${txResult.fullReceiptNumber}: ${billingErr.message}`,
+          `[BILLING] Excepción de conexión emitiendo comprobante fiscal ${txResult.fullReceiptNumber}: ${billingErr.message}. Estado preservado en PENDING.`,
         );
       }
     }
@@ -674,6 +711,33 @@ export class SalesService {
             voidedByAdminId: admin.id,
           },
         });
+
+        // 🛡️ RECONCILIACIÓN FINANCIERA DE CAJA FÍSICA:
+        // Si la venta perteneció a un turno que ya fue CERRADO, el efectivo reembolsado al cliente
+        // saldrá materialmente de la gaveta del turno actualmente ABIERTO en esa caja.
+        // Registramos un movimiento de EGRESO en el turno activo para evitar que al cajero le falte dinero en su arqueo ciego.
+        if (sale.cashShift.status === ShiftStatus.CLOSED && tx.cashShift && tx.cashMovement) {
+          const netCashRefunded = calculateNetCashFromSale(sale);
+          if (netCashRefunded > 0) {
+            const openShift = await tx.cashShift.findFirst({
+              where: {
+                cashRegisterId: sale.cashShift.cashRegisterId,
+                status: ShiftStatus.OPEN,
+              },
+            });
+
+            if (openShift) {
+              await tx.cashMovement.create({
+                data: {
+                  cashShiftId: openShift.id,
+                  type: CashMovementType.EXPENSE,
+                  amount: new Prisma.Decimal(netCashRefunded),
+                  reason: `Devolución en efectivo por anulación de ${sale.fullReceiptNumber || `Venta #${sale.saleNumber}`} (Turno anterior)`,
+                },
+              });
+            }
+          }
+        }
 
         return {
           voided,
@@ -1056,10 +1120,15 @@ export class SalesService {
           },
         });
       } else {
+        const targetStatus =
+          billingRes.emissionStatus === 'PENDING'
+            ? EmissionStatus.PENDING
+            : EmissionStatus.REJECTED;
+
         finalSale = await this.prisma.sale.update({
           where: { id: sale.id },
           data: {
-            emissionStatus: EmissionStatus.REJECTED,
+            emissionStatus: targetStatus,
           },
           include: {
             items: {
@@ -1078,12 +1147,12 @@ export class SalesService {
           },
         });
         this.logger.error(
-          `[convertSaleReceipt] Canje ${txResult.fullReceiptNumber} rechazado por PSE: ${billingRes.message}`,
+          `[convertSaleReceipt] Canje ${txResult.fullReceiptNumber} ${targetStatus === EmissionStatus.PENDING ? 'preservado en PENDING (contingencia)' : 'rechazado por PSE'}: ${billingRes.message}`,
         );
       }
     } catch (err: any) {
       this.logger.error(
-        `[convertSaleReceipt] Error emitiendo con PSE/SUNAT para canje ${txResult.fullReceiptNumber}: ${err.message}`,
+        `[convertSaleReceipt] Error emitiendo con PSE/SUNAT para canje ${txResult.fullReceiptNumber}: ${err.message}. Preservado en PENDING.`,
       );
     }
 

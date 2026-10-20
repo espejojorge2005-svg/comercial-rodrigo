@@ -457,6 +457,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     } catch (err: any) {
       const errMsg = err.message || '';
       const isConnectionIssue =
+        Boolean(err?.isNetworkError) ||
+        errMsg.includes('No se pudo conectar') ||
+        errMsg.includes('despertando') ||
         errMsg.includes('Failed to fetch') ||
         errMsg.includes('NetworkError') ||
         errMsg.includes('Load failed') ||

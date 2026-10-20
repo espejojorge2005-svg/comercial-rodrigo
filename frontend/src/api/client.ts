@@ -55,9 +55,10 @@ export async function apiRequest<T = any>(
       error instanceof TypeError &&
       (error.message.includes('fetch') || error.message.includes('NetworkError') || error.message.includes('Failed'))
     ) {
-      const friendlyError = new Error(
+      const friendlyError: any = new Error(
         'No se pudo conectar con el servidor backend. Si está en Render (plan gratuito), el servidor puede estar despertando tras inactividad (~30-50s). Por favor, reintenta en unos instantes.'
       );
+      friendlyError.isNetworkError = true;
       console.error(`API Error on [${options.method || 'GET'}] ${endpoint}:`, error);
       throw friendlyError;
     }

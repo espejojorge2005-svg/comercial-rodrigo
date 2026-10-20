@@ -346,6 +346,49 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
 
       expect(res).toBeDefined();
     });
+
+    it('debe rechazar venta simultánea si otra caja agotó el stock en concurrencia (updateMany count === 0)', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Arroz 1kg',
+              isActive: true,
+              currentStock: 0,
+              costPrice: 3,
+            }),
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 1 }),
+          },
+          sale: {
+            create: vi.fn().mockResolvedValue({ id: 'sale-1', items: [] }),
+          },
+        };
+        return callback(tx);
+      });
+
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.NOTA_VENTA,
+          paymentMethod: 'CASH',
+          cashPaid: 10,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 1, unitPrice: 10, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('Stock insuficiente para "Arroz 1kg". Otra caja física acaba de vender las existencias');
+    });
   });
 
   describe('Canje de Ticket / Nota de Venta a Comprobante Electrónico', () => {
@@ -753,6 +796,82 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
         }),
       );
       expect(syncResult.results[0].sale.emissionStatus).toBe(EmissionStatus.REJECTED);
+    });
+  });
+
+  describe('Anulaciones y Conciliación Financiera (voidSale)', () => {
+    it('debe registrar un egreso automático en el turno abierto si se anula una venta de un turno ya CERRADO', async () => {
+      mockPrisma.user = {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'admin-1',
+          name: 'Admin Test',
+          pin: '1234',
+        }),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-old-1',
+          saleNumber: 10,
+          fullReceiptNumber: 'NV01-00000010',
+          receiptType: ReceiptType.NOTA_VENTA,
+          totalAmount: 50,
+          cashPaid: 50,
+          changeAmount: 0,
+          digitalPaid: 0,
+          paymentMethod: PaymentMethod.CASH,
+          isVoided: false,
+          items: [{ productId: 'p1', quantity: 2, product: { id: 'p1', costPrice: 15 } }],
+          cashShiftId: 'shift-yesterday',
+          cashShift: {
+            id: 'shift-yesterday',
+            status: 'CLOSED', // ⚠️ Turno cerrado ayer
+            cashRegisterId: 'reg-1',
+            cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+          },
+        }),
+      };
+
+      let createdMovement: any = null;
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            update: vi.fn().mockResolvedValue({ id: 'p1', currentStock: 12, costPrice: 15 }),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+          sale: {
+            update: vi.fn().mockResolvedValue({ id: 'sale-old-1', saleNumber: 10, isVoided: true }),
+          },
+          cashShift: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: 'shift-today-open',
+              status: 'OPEN',
+              cashRegisterId: 'reg-1',
+            }),
+          },
+          cashMovement: {
+            create: vi.fn().mockImplementation(({ data }) => {
+              createdMovement = data;
+              return Promise.resolve(data);
+            }),
+          },
+        };
+        return callback(tx);
+      });
+
+      const res = await salesService.voidSale('sale-old-1', {
+        adminPin: '1234',
+        reason: 'Cliente devuelve producto por defecto',
+      });
+
+      expect(res.saleId).toBe('sale-old-1');
+      expect(createdMovement).toBeDefined();
+      expect(createdMovement.cashShiftId).toBe('shift-today-open');
+      expect(createdMovement.type).toBe('EXPENSE');
+      expect(Number(createdMovement.amount)).toBe(50);
+      expect(createdMovement.reason).toContain('Turno anterior');
     });
   });
 });
