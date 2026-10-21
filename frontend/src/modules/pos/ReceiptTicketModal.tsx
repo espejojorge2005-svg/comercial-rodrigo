@@ -536,7 +536,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             <div className="flex justify-between">
               <span>{receiptType === 'FACTURA' ? 'RAZÓN SOCIAL:' : 'CLIENTE:'}</span>
               <span className="truncate max-w-[170px] font-semibold text-right">
-                {saleData.customerName || 'Cliente Varios'}
+                {saleData.customerName || (receiptType === 'FACTURA' ? '-' : 'Clientes Varios')}
               </span>
             </div>
             {saleData.customerDocument && (

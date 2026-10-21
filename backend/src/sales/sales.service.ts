@@ -1704,6 +1704,19 @@ export class SalesService {
 
     const token = (process.env.DECOLECTA_TOKEN || process.env.APIS_TOKEN || '').trim();
 
+    const forbiddenPlaceholders = [
+      'CLIENTE VARIOS',
+      'CLIENTES VARIOS',
+      'EMPRESA',
+      'EMPRESA SAC',
+      'EMPRESA S.A.C.',
+      'EMPRESA SRL',
+      'EMPRESA S.R.L.',
+      'RUC',
+      'SIN NOMBRE',
+      'VARIOS',
+    ];
+
     if (clean.length === 11) {
       // 1. Validar prefijos válidos de RUC peruano
       const validPrefixes = ['10', '20', '15', '17'];
@@ -1807,7 +1820,11 @@ export class SalesService {
         orderBy: { createdAt: 'desc' },
         select: { customerName: true, customerAddress: true },
       });
-      if (previousSale && previousSale.customerName) {
+      if (
+        previousSale &&
+        previousSale.customerName &&
+        !forbiddenPlaceholders.includes(previousSale.customerName.trim().toUpperCase())
+      ) {
         return {
           documentType: 'RUC',
           documentNumber: clean,
@@ -1875,7 +1892,11 @@ export class SalesService {
         orderBy: { createdAt: 'desc' },
         select: { customerName: true },
       });
-      if (previousDniSale && previousDniSale.customerName) {
+      if (
+        previousDniSale &&
+        previousDniSale.customerName &&
+        !forbiddenPlaceholders.includes(previousDniSale.customerName.trim().toUpperCase())
+      ) {
         return {
           documentType: 'DNI',
           documentNumber: clean,
