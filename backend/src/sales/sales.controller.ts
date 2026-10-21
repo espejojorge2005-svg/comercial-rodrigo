@@ -46,6 +46,16 @@ export class SalesController {
     return this.salesService.convertSaleReceipt(id, userId, dto);
   }
 
+  @Post('reemit-pending-batch')
+  async reemitPendingBatch() {
+    return this.salesService.reemitPendingBatch();
+  }
+
+  @Post(':id/reemit-pending')
+  async reemitPendingSale(@Param('id') id: string) {
+    return this.salesService.reemitPendingSale(id);
+  }
+
   @Get('ticket/:ticketNumber')
   async findTicket(@Param('ticketNumber') ticketNumber: string) {
     return this.salesService.findTicketByNumber(ticketNumber);

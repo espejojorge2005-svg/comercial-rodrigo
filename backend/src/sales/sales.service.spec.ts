@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SalesService } from './sales.service.js';
+import { SalesService, isValidPeruvianRuc, getSunatCompliantEmissionDate } from './sales.service.js';
 import { ReceiptType, EmissionStatus, PaymentMethod } from '@prisma/client';
 
 describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
@@ -877,6 +877,166 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       expect(createdMovement.type).toBe('EXPENSE');
       expect(Number(createdMovement.amount)).toBe(50);
       expect(createdMovement.reason).toContain('Turno anterior');
+    });
+  });
+
+  describe('Hallazgo 1.5 - Validador de RUC Algoritmo Módulo 11 (SUNAT)', () => {
+    it('debe validar RUCs reales peruanos como válidos', () => {
+      expect(isValidPeruvianRuc('20100107482')).toBe(true); // BCP
+      expect(isValidPeruvianRuc('20100010721')).toBe(true); // Gloria
+      expect(isValidPeruvianRuc('20100055237')).toBe(true); // Alicorp
+      expect(isValidPeruvianRuc('20100070970')).toBe(true); // Supermercados Peruanos
+    });
+
+    it('debe rechazar RUCs con dígito verificador adulterado o erróneo', () => {
+      expect(isValidPeruvianRuc('20100107489')).toBe(false); // Último dígito alterado (debe ser 2)
+      expect(isValidPeruvianRuc('20100010729')).toBe(false); // Último dígito alterado (debe ser 1)
+      expect(isValidPeruvianRuc('12345678901')).toBe(false); // Prefijo no autorizado
+      expect(isValidPeruvianRuc('123')).toBe(false);
+    });
+
+    it('debe rechazar RUCs no válidos en lookupDocument con BadRequestException', async () => {
+      await expect(salesService.lookupDocument('20100107489')).rejects.toThrow(
+        'dígito verificador de SUNAT incorrecto',
+      );
+    });
+
+    it('debe retornar NOT_FOUND sin inventar empresas ficticias si no existe en API ni en BD', async () => {
+      mockPrisma.sale = {
+        findFirst: vi.fn().mockResolvedValue(null),
+      };
+
+      const res = await salesService.lookupDocument('20505411219'); // RUC válido matemáticamente pero no en padrón mock
+      expect(res.source).toBe('NOT_FOUND');
+      expect(res.name).toBe('');
+      expect(res.address).toBe('');
+      expect(res.status).toBe('DESCONOCIDO');
+    });
+
+    it('debe recuperar la Razón Social real del historial local si el cliente ya compró antes', async () => {
+      mockPrisma.sale = {
+        findFirst: vi.fn().mockResolvedValue({
+          customerName: 'INVERSIONES SANTA ROSA E.I.R.L.',
+          customerAddress: 'Av. Las Gardenias 450, Surco',
+        }),
+      };
+
+      const res = await salesService.lookupDocument('20505411219');
+      expect(res.source).toBe('LOCAL_HISTORY');
+      expect(res.name).toBe('INVERSIONES SANTA ROSA E.I.R.L.');
+      expect(res.address).toBe('Av. Las Gardenias 450, Surco');
+    });
+  });
+
+  describe('Hallazgo 1.4 - Plazo de Envío SUNAT (1 día calendario - R.S. 000003-2023)', () => {
+    it('debe mantener la fecha original si la emisión fue hoy o ayer', () => {
+      const today = new Date();
+      const checkToday = getSunatCompliantEmissionDate(today);
+      expect(checkToday.wasAdjusted).toBe(false);
+
+      const yesterday = new Date(Date.now() - 24 * 3600000);
+      const checkYesterday = getSunatCompliantEmissionDate(yesterday);
+      expect(checkYesterday.wasAdjusted).toBe(false);
+    });
+
+    it('debe ajustar a la fecha actual si la fecha original tiene 2 o más días de antigüedad', () => {
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600000);
+      const check = getSunatCompliantEmissionDate(threeDaysAgo);
+      expect(check.wasAdjusted).toBe(true);
+      expect(check.emissionDate.getDate()).toBe(new Date().getDate());
+    });
+
+    it('reemitPendingSale debe actualizar fecha si supera plazo y emitir exitosamente ante SUNAT', async () => {
+      const oldDate = new Date(Date.now() - 5 * 24 * 3600000); // 5 días de antigüedad
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-pending-1',
+          isFiscal: true,
+          receiptType: ReceiptType.BOLETA,
+          series: 'B001',
+          correlativeNumber: 15,
+          totalAmount: 118,
+          taxableBase: 100,
+          igvAmount: 18,
+          createdAt: oldDate,
+          emissionStatus: EmissionStatus.PENDING,
+          items: [
+            {
+              quantity: 1,
+              unitPrice: 118,
+              subtotal: 118,
+              product: { id: 'p1', name: 'Arroz', unitType: 'KGM' },
+            },
+          ],
+          cashShift: { cashRegister: { name: 'Caja 1' } },
+        }),
+        update: vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'sale-pending-1', ...data })),
+      };
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: true,
+        emissionStatus: EmissionStatus.ACCEPTED,
+        hash: 'hash-abc',
+        qrString: 'qr-abc',
+        externalId: 'ext-123',
+      });
+
+      const result = await salesService.reemitPendingSale('sale-pending-1');
+      expect(result.success).toBe(true);
+      expect(mockPrisma.sale.update).toHaveBeenCalled();
+      expect(mockBilling.issueReceipt).toHaveBeenCalled();
+    });
+  });
+
+  describe('Hallazgo 2.1 - Prevención de Colisión de Series por Caja Física', () => {
+    it('debe reutilizar la serie ya asignada a la caja en ReceiptSequence', async () => {
+      const tx = {
+        receiptSequence: {
+          findUnique: vi.fn().mockResolvedValue({
+            series: 'B005',
+            cashRegisterId: 'reg-5',
+          }),
+        },
+      };
+
+      const series = await salesService.getOrAllocateSeries(
+        tx,
+        'reg-5',
+        'POS-01',
+        'Caja Principal',
+        ReceiptType.BOLETA,
+      );
+
+      expect(series).toBe('B005');
+    });
+
+    it('debe detectar colisión si otra caja ya posee la serie y asignar la siguiente libre', async () => {
+      const tx = {
+        receiptSequence: {
+          findUnique: vi.fn().mockImplementation(({ where }) => {
+            if (where.cashRegisterId_receiptType) return Promise.resolve(null);
+            // Si consulta B001, está ocupada por OTRA caja ('reg-caja-1')
+            if (where.series === 'B001') {
+              return Promise.resolve({ series: 'B001', cashRegisterId: 'reg-caja-1' });
+            }
+            // B002 está libre
+            return Promise.resolve(null);
+          }),
+        },
+      };
+
+      const series = await salesService.getOrAllocateSeries(
+        tx,
+        'reg-caja-2',
+        'POS-01', // Ambas cajas tenían identificador similar
+        'Caja 1',
+        ReceiptType.BOLETA,
+      );
+
+      // Se reasigna automáticamente a B002 para evitar colisión entre cajas
+      expect(series).toBe('B002');
     });
   });
 });

@@ -78,13 +78,15 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
         if (data.address && (targetType === 'FACTURA' || !custAddress)) {
           setCustAddress(data.address);
         }
-        if (data.documentType === 'RUC') {
-          setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}`);
+        if (data.source === 'NOT_FOUND') {
+          setLookupBadge(`⚠️ ${data.message || 'No encontrado en línea (ingreso manual)'}`);
+        } else if (data.documentType === 'RUC') {
+          setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}${data.source === 'LOCAL_HISTORY' ? ' (Historial)' : ''}`);
           if (targetType !== 'FACTURA') {
             setTargetType('FACTURA');
           }
         } else {
-          setLookupBadge(data.source === 'RENIEC_LIVE' ? '✓ RENIEC: Nombre verificado' : '✓ DNI');
+          setLookupBadge(data.source === 'RENIEC_LIVE' ? '✓ RENIEC: Nombre verificado' : `✓ DNI${data.source === 'LOCAL_HISTORY' ? ' (Historial)' : ''}`);
           if (targetType !== 'BOLETA') {
             setTargetType('BOLETA');
           }
@@ -92,7 +94,7 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
       }
     } catch (err: any) {
       console.warn('Error al consultar documento:', err);
-      setLookupBadge('⚠️ No se encontró en SUNAT/RENIEC (puedes ingresarlo manual)');
+      setLookupBadge(`⚠️ ${err.message || 'No se encontró en SUNAT/RENIEC (puedes ingresarlo manual)'}`);
     } finally {
       setIsSearchingDoc(false);
     }

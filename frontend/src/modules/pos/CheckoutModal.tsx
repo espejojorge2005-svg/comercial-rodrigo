@@ -115,14 +115,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         if (data.address && (receiptType === 'FACTURA' || !custAddress)) {
           setCustAddress(data.address);
         }
-        if (data.documentType === 'RUC') {
-          setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}`);
+        if (data.source === 'NOT_FOUND') {
+          setLookupBadge(`⚠️ ${data.message || 'No encontrado en línea (ingreso manual)'}`);
+        } else if (data.documentType === 'RUC') {
+          setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}${data.source === 'LOCAL_HISTORY' ? ' (Historial)' : ''}`);
         } else {
-          setLookupBadge(data.source === 'RENIEC_LIVE' ? `✓ RENIEC: Nombre oficial verificado` : `✓ DNI`);
+          setLookupBadge(data.source === 'RENIEC_LIVE' ? `✓ RENIEC: Nombre verificado` : `✓ DNI${data.source === 'LOCAL_HISTORY' ? ' (Historial)' : ''}`);
         }
       }
     } catch (err: any) {
       console.warn('Document lookup error:', err);
+      setLookupBadge(`⚠️ ${err.message || 'Documento no válido'}`);
     } finally {
       setIsSearchingDoc(false);
     }
