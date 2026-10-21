@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { ConvertReceiptModal } from './ConvertReceiptModal.js';
+import { useAuthStore } from '../../store/useAuthStore.js';
 
 interface RecentSalesModalProps {
   isOpen: boolean;
@@ -42,6 +43,8 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
   initialFilter = 'ALL',
 }) => {
   const { activeShift } = useShiftStore();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'ADMIN';
 
   // Ámbito de búsqueda: 'shift' (solo turno actual) o 'all' (todas las fechas y turnos)
   const [scope, setScope] = useState<'shift' | 'all'>(initialScope);
@@ -733,9 +736,11 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                           ))}
                         </div>
 
-                        {(sale.pdfUrl || sale.xmlUrl || sale.cdrUrl) && (
+                        {(sale.pdfUrl || (isAdmin && (sale.xmlUrl || sale.cdrUrl))) && (
                           <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center gap-2 flex-wrap text-[10.5px]">
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase">Archivos Fiscales:</span>
+                            <span className="text-[10px] text-slate-400 font-semibold uppercase">
+                              {isAdmin ? 'Archivos Fiscales (Admin):' : 'Comprobante:'}
+                            </span>
                             {sale.pdfUrl && (
                               <a
                                 href={sale.pdfUrl}
@@ -746,7 +751,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                 Descargar PDF
                               </a>
                             )}
-                            {sale.xmlUrl && (
+                            {isAdmin && sale.xmlUrl && (
                               <a
                                 href={sale.xmlUrl}
                                 target="_blank"
@@ -756,7 +761,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                 XML (UBL 2.1)
                               </a>
                             )}
-                            {sale.cdrUrl && (
+                            {isAdmin && sale.cdrUrl && (
                               <a
                                 href={sale.cdrUrl}
                                 target="_blank"

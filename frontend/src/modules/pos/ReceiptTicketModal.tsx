@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import QRCode from 'qrcode';
 import { formatCurrency, formatPeruDateTime, numeroALetras } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
+import { useAuthStore } from '../../store/useAuthStore.js';
 import {
   Printer,
   ArrowRight,
@@ -27,6 +28,8 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   isCreditNoteTicket = false,
 }) => {
   const { config } = useConfigStore();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'ADMIN';
 
   // Preferencia persistida de ancho de papel térmico (80mm o 58mm)
   const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(() => {
@@ -45,8 +48,17 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     return false;
   });
 
+  // Preferencia persistida de auto-descarga de PDF al emitir comprobante
+  const [autoDownloadPdfEnabled, setAutoDownloadPdfEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('pos_auto_download_pdf') === 'true';
+    }
+    return false;
+  });
+
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const autoPrintTriggeredRef = useRef(false);
+  const autoDownloadTriggeredRef = useRef(false);
 
   const isCreditNote = Boolean(isCreditNoteTicket || saleData?.isCreditNoteTicket);
   const creditNote = saleData?.creditNote;
@@ -66,6 +78,14 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     setAutoPrintEnabled(nextVal);
     if (typeof window !== 'undefined') {
       localStorage.setItem('pos_thermal_auto_print', String(nextVal));
+    }
+  };
+
+  const handleToggleAutoDownloadPdf = () => {
+    const nextVal = !autoDownloadPdfEnabled;
+    setAutoDownloadPdfEnabled(nextVal);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pos_auto_download_pdf', String(nextVal));
     }
   };
 
@@ -280,6 +300,20 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     }
   }, [isOpen, autoPrintEnabled, handlePrint]);
 
+  // Auto-descarga de PDF si la opción está activada y el comprobante tiene URL de PDF
+  useEffect(() => {
+    if (isOpen && autoDownloadPdfEnabled && saleData?.pdfUrl && !autoDownloadTriggeredRef.current) {
+      autoDownloadTriggeredRef.current = true;
+      const timer = setTimeout(() => {
+        window.open(saleData.pdfUrl, '_blank');
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+    if (!isOpen) {
+      autoDownloadTriggeredRef.current = false;
+    }
+  }, [isOpen, autoDownloadPdfEnabled, saleData?.pdfUrl]);
+
   if (!isOpen || !saleData) return null;
 
   const getPaymentMethodLabel = (method?: string) => {
@@ -393,19 +427,37 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleToggleAutoPrint}
-              className={`px-2.5 py-1 rounded-xl border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                autoPrintEnabled
-                  ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
-                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
-              }`}
-              title="Imprimir automáticamente el ticket al abrir"
-            >
-              <Zap className={`w-3.5 h-3.5 ${autoPrintEnabled ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
-              <span>Auto-imprimir: {autoPrintEnabled ? 'ON' : 'OFF'}</span>
-            </button>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={handleToggleAutoPrint}
+                className={`px-2.5 py-1 rounded-xl border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  autoPrintEnabled
+                    ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+                title="Imprimir automáticamente el ticket al abrir"
+              >
+                <Zap className={`w-3.5 h-3.5 ${autoPrintEnabled ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
+                <span>Auto-imprimir: {autoPrintEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {isFiscal && (
+                <button
+                  type="button"
+                  onClick={handleToggleAutoDownloadPdf}
+                  className={`px-2.5 py-1 rounded-xl border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    autoDownloadPdfEnabled
+                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                  title="Abrir o descargar automáticamente el PDF del comprobante al emitirse"
+                >
+                  <FileText className={`w-3.5 h-3.5 ${autoDownloadPdfEnabled ? 'text-blue-400' : 'text-slate-500'}`} />
+                  <span>Auto-PDF: {autoDownloadPdfEnabled ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -793,35 +845,45 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               <ArrowRight className="w-4 h-4 text-slate-300" />
             </button>
           </div>
-          {(saleData?.pdfUrl || saleData?.xmlUrl || saleData?.cdrUrl) && (
+          {/* Descargas Fiscales:
+              - Si es ADMIN: Puede ver y descargar PDF, XML (UBL 2.1) y CDR SUNAT
+              - Si es CAJERO: Solo ve "Descargar PDF" para no saturar la pantalla con archivos técnicos
+          */}
+          {(saleData?.pdfUrl || (isAdmin && (saleData?.xmlUrl || saleData?.cdrUrl))) && (
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center gap-2 flex-wrap text-[11px]">
-              <span className="text-slate-400 font-semibold text-[10px] uppercase">Descargas SUNAT:</span>
+              <span className="text-slate-400 font-semibold text-[10px] uppercase">
+                {isAdmin ? 'Descargas SUNAT (Admin):' : 'Comprobante:'}
+              </span>
               {saleData.pdfUrl && (
                 <a
                   href={saleData.pdfUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition-all"
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition-all flex items-center gap-1.5"
+                  title="Descargar representación gráfica en PDF"
                 >
-                  Descargar PDF
+                  <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Descargar PDF</span>
                 </a>
               )}
-              {saleData.xmlUrl && (
+              {isAdmin && saleData.xmlUrl && (
                 <a
                   href={saleData.xmlUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-xs transition-all"
+                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-xs transition-all"
+                  title="Archivo XML firmado UBL 2.1 oficial para SUNAT (Solo Administrador)"
                 >
                   XML (UBL 2.1)
                 </a>
               )}
-              {saleData.cdrUrl && (
+              {isAdmin && saleData.cdrUrl && (
                 <a
                   href={saleData.cdrUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-2.5 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-xs transition-all"
+                  className="px-2.5 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-xs transition-all"
+                  title="Constancia de Recepción CDR de SUNAT (Solo Administrador)"
                 >
                   CDR SUNAT
                 </a>

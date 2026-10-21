@@ -1004,6 +1004,7 @@ export const ProfitReportView: React.FC = () => {
                     <th className="py-3 px-3 text-right w-28 min-w-[110px] whitespace-nowrap">IGV (18%)</th>
                     <th className="py-3 px-3 text-right w-32 min-w-[125px] whitespace-nowrap">Importe Total</th>
                     <th className="py-3 px-3 text-center w-36 whitespace-nowrap">Estado SUNAT</th>
+                    <th className="py-3 px-3 text-center w-36 whitespace-nowrap">Archivos SUNAT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -1085,12 +1086,52 @@ export const ProfitReportView: React.FC = () => {
                             {rec.emissionStatus}
                           </span>
                         </td>
+                        <td className="py-3 px-3 text-center font-sans whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1">
+                            {rec.pdfUrl ? (
+                              <a
+                                href={rec.pdfUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[10px] font-bold border border-indigo-500/30 transition-all"
+                                title="Descargar Representación Gráfica (PDF)"
+                              >
+                                PDF
+                              </a>
+                            ) : null}
+                            {rec.xmlUrl ? (
+                              <a
+                                href={rec.xmlUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-1.5 py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-500/30 transition-all"
+                                title="Descargar XML firmado (UBL 2.1)"
+                              >
+                                XML
+                              </a>
+                            ) : null}
+                            {rec.cdrUrl ? (
+                              <a
+                                href={rec.cdrUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-1.5 py-0.5 rounded bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/30 transition-all"
+                                title="Descargar Constancia de Recepción (CDR SUNAT)"
+                              >
+                                CDR
+                              </a>
+                            ) : null}
+                            {!rec.pdfUrl && !rec.xmlUrl && !rec.cdrUrl && (
+                              <span className="text-slate-600 text-[10px]">-</span>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                   {filteredTaxRecords.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="py-12 text-center text-slate-500 font-sans">
+                      <td colSpan={13} className="py-12 text-center text-slate-500 font-sans">
                         <div className="max-w-md mx-auto space-y-1">
                           <p className="font-semibold text-slate-400">
                             No se encontraron comprobantes fiscales (Boletas o Facturas) en este periodo.
@@ -1120,6 +1161,7 @@ export const ProfitReportView: React.FC = () => {
                       <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-emerald-400 text-sm min-w-[125px]">
                         {formatCurrency(taxData?.summary.totalAmount || 0)}
                       </td>
+                      <td></td>
                       <td></td>
                     </tr>
                   </tfoot>

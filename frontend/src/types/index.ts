@@ -259,6 +259,9 @@ export interface TaxBookRecord {
   isCreditNote?: boolean;
   modifiedDocument?: string | null;
   reasonDescription?: string | null;
+  pdfUrl?: string | null;
+  xmlUrl?: string | null;
+  cdrUrl?: string | null;
 }
 
 export interface TaxBookResponse {
