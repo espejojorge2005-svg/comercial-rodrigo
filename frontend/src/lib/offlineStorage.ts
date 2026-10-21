@@ -14,6 +14,7 @@ export interface OfflineSale {
   offlineId: string;
   offlineTicketNumber: string;
   receiptType?: ReceiptType;
+  targetReceiptType?: ReceiptType;
   series?: string;
   correlativeNumber?: number;
   fullReceiptNumber?: string;

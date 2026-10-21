@@ -44,6 +44,14 @@ export class SyncOfflineSaleDto {
   receiptType?: ReceiptType;
 
   @IsOptional()
+  @IsEnum(ReceiptType)
+  targetReceiptType?: ReceiptType;
+
+  @IsOptional()
+  @IsString()
+  offlineTicketNumber?: string;
+
+  @IsOptional()
   @IsString()
   customerName?: string;
 

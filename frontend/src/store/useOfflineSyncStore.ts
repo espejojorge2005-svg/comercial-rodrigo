@@ -53,8 +53,10 @@ export const useOfflineSyncStore = create<OfflineSyncState>((set, get) => ({
       const payload = {
         sales: pendingSales.map((s) => ({
           offlineId: s.offlineId,
+          offlineTicketNumber: s.offlineTicketNumber,
           cashShiftId: s.cashShiftId,
           receiptType: s.receiptType || 'NOTA_VENTA',
+          targetReceiptType: s.targetReceiptType,
           customerName: s.customerName || 'Cliente Varios',
           customerDocument: s.customerDocument || null,
           customerAddress: s.customerAddress || null,

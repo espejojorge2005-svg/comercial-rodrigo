@@ -457,6 +457,10 @@ export class SalesService {
               hash: billingRes.hash,
               qrString: billingRes.qrString,
               emissionStatus: finalEmissionStatus,
+              externalId: billingRes.externalId || null,
+              pdfUrl: billingRes.pdfUrl || null,
+              xmlUrl: billingRes.xmlUrl || null,
+              cdrUrl: billingRes.cdrUrl || null,
             },
             include: {
               items: {
@@ -1102,6 +1106,10 @@ export class SalesService {
             hash: billingRes.hash,
             qrString: billingRes.qrString,
             emissionStatus: finalStatus,
+            externalId: billingRes.externalId || null,
+            pdfUrl: billingRes.pdfUrl || null,
+            xmlUrl: billingRes.xmlUrl || null,
+            cdrUrl: billingRes.cdrUrl || null,
           },
           include: {
             items: {
@@ -1990,7 +1998,11 @@ export class SalesService {
 
             const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
 
-            const receiptType = offlineSale.receiptType || ReceiptType.NOTA_VENTA;
+            // Si la venta offline solicitó emisión a Boleta o Factura al reconectar, se respeta el tipo destino
+            const receiptType =
+              offlineSale.targetReceiptType ||
+              offlineSale.receiptType ||
+              ReceiptType.NOTA_VENTA;
             const isFiscal = receiptType !== ReceiptType.NOTA_VENTA;
             const taxableBase = totalTaxableBase;
             const igvAmount = isFiscal ? totalIgv : 0;
@@ -2017,6 +2029,10 @@ export class SalesService {
             const correlativeNumber = sequence.currentNumber;
             const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
 
+            // Trazabilidad de origen offline para auditoría cruzada sin duplicidad
+            const offlineTrace = offlineSale.offlineTicketNumber || offlineSale.offlineId;
+            const originReason = offlineTrace ? `ORIGEN_OFFLINE:${offlineTrace}` : null;
+
             // 1. Guardar la venta en base de datos local de forma inmediata (con emisión PENDING si es fiscal)
             const sale = await tx.sale.create({
               data: {
@@ -2034,6 +2050,7 @@ export class SalesService {
                 hash: null,
                 qrString: null,
                 emissionStatus: isFiscal ? EmissionStatus.PENDING : null,
+                voidedReason: originReason,
                 customerName: offlineSale.customerName || 'Cliente Varios',
                 customerDocument: offlineSale.customerDocument || null,
                 paymentMethod: offlineSale.paymentMethod,
@@ -2153,7 +2170,12 @@ export class SalesService {
                 subtotal: vi.subtotalItem,
                 unitType: vi.product.unitType,
               })),
-              createdAt: txResult.saleDate,
+              // 🛡️ REGLA TRIBUTARIA SUNAT (R.S. 000003-2023): Plazo de envío máx. 1 día calendario.
+              // Si la venta offline tiene más de 24h, se emite ante SUNAT con fecha actual para evitar rechazo Error 2324.
+              createdAt:
+                Date.now() - txResult.saleDate.getTime() > 24 * 60 * 60 * 1000
+                  ? new Date()
+                  : txResult.saleDate,
             });
 
             if (billingRes.success) {
@@ -2166,6 +2188,10 @@ export class SalesService {
                   hash: billingRes.hash,
                   qrString: billingRes.qrString,
                   emissionStatus: finalEmissionStatus,
+                  externalId: billingRes.externalId || null,
+                  pdfUrl: billingRes.pdfUrl || null,
+                  xmlUrl: billingRes.xmlUrl || null,
+                  cdrUrl: billingRes.cdrUrl || null,
                 },
                 include: {
                   items: {

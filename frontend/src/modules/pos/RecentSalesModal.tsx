@@ -733,6 +733,42 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                           ))}
                         </div>
 
+                        {(sale.pdfUrl || sale.xmlUrl || sale.cdrUrl) && (
+                          <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center gap-2 flex-wrap text-[10.5px]">
+                            <span className="text-[10px] text-slate-400 font-semibold uppercase">Archivos Fiscales:</span>
+                            {sale.pdfUrl && (
+                              <a
+                                href={sale.pdfUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium transition-all"
+                              >
+                                Descargar PDF
+                              </a>
+                            )}
+                            {sale.xmlUrl && (
+                              <a
+                                href={sale.xmlUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-0.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] transition-all"
+                              >
+                                XML (UBL 2.1)
+                              </a>
+                            )}
+                            {sale.cdrUrl && (
+                              <a
+                                href={sale.cdrUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-0.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-[10px] transition-all"
+                              >
+                                CDR (SUNAT)
+                              </a>
+                            )}
+                          </div>
+                        )}
+
                         {sale.isVoided && (
                           <div className="mt-2 p-2.5 rounded-xl bg-rose-950/40 border border-rose-900/40 text-[11px] text-rose-200 space-y-1">
                             <div className="flex justify-between items-center">

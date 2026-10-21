@@ -450,20 +450,35 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                 </>
               ) : (
                 <>
-                  {receiptType === 'NOTA_VENTA' && (
-                    <span className="text-[11px] font-extrabold block">
-                      NOTA DE VENTA - CONTROL INTERNO
-                    </span>
-                  )}
-                  {receiptType === 'BOLETA' && (
-                    <span className="text-[11px] font-extrabold block">
-                      BOLETA DE VENTA ELECTRÓNICA
-                    </span>
-                  )}
-                  {receiptType === 'FACTURA' && (
-                    <span className="text-[11px] font-extrabold block">
-                      FACTURA ELECTRÓNICA
-                    </span>
+                  {saleData.isOffline ? (
+                    <>
+                      <span className="text-[11px] font-extrabold block">
+                        TICKET DE VENTA (CONTINGENCIA OFFLINE)
+                      </span>
+                      {saleData.targetReceiptType && (
+                        <span className="text-[9.5px] font-semibold text-slate-700 block mt-0.5">
+                          SOLICITUD: {saleData.targetReceiptType === 'FACTURA' ? 'FACTURA ELECTRÓNICA' : 'BOLETA ELECTRÓNICA'}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {receiptType === 'NOTA_VENTA' && (
+                        <span className="text-[11px] font-extrabold block">
+                          NOTA DE VENTA - CONTROL INTERNO
+                        </span>
+                      )}
+                      {receiptType === 'BOLETA' && (
+                        <span className="text-[11px] font-extrabold block">
+                          BOLETA DE VENTA ELECTRÓNICA
+                        </span>
+                      )}
+                      {receiptType === 'FACTURA' && (
+                        <span className="text-[11px] font-extrabold block">
+                          FACTURA ELECTRÓNICA
+                        </span>
+                      )}
+                    </>
                   )}
                   <span className="text-xs font-extrabold block tracking-wider mt-0.5">
                     {fullReceiptNumber}
@@ -703,7 +718,12 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               {/* Leyenda Legal Oficial */}
               <div className="text-[9px] text-slate-500 space-y-0.5 pt-1">
                 <p className="font-bold">
-                  Representación impresa de la {isCreditNote ? 'NOTA DE CRÉDITO ELECTRÓNICA' : 'comprobante de pago electrónico'}
+                  Representación impresa de la{' '}
+                  {isCreditNote
+                    ? 'NOTA DE CRÉDITO ELECTRÓNICA'
+                    : receiptType === 'FACTURA'
+                      ? 'FACTURA ELECTRÓNICA'
+                      : 'BOLETA DE VENTA ELECTRÓNICA'}
                 </p>
                 <p>Autorizado mediante resolución de SUNAT</p>
                 <p>Consulte su comprobante en www.sunat.gob.pe</p>
@@ -724,7 +744,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 
               <div className="text-[9.5px] text-slate-500">
                 <p className="font-semibold text-slate-700">
-                  Comprobante de control interno sin valor tributario.
+                  {saleData.isOffline && saleData.targetReceiptType && saleData.targetReceiptType !== 'NOTA_VENTA'
+                    ? `Ticket provisional emitido en contingencia offline. Su ${saleData.targetReceiptType === 'FACTURA' ? 'Factura' : 'Boleta'} electrónica oficial será regularizada y transmitida a SUNAT automáticamente al reconectar.`
+                    : 'Comprobante de control interno sin valor tributario.'}
                 </p>
                 <p className="mt-0.5">
                   Para cambios o devoluciones es indispensable presentar este ticket.
@@ -758,6 +780,42 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               <ArrowRight className="w-4 h-4 text-slate-300" />
             </button>
           </div>
+          {(saleData?.pdfUrl || saleData?.xmlUrl || saleData?.cdrUrl) && (
+            <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center gap-2 flex-wrap text-[11px]">
+              <span className="text-slate-400 font-semibold text-[10px] uppercase">Descargas SUNAT:</span>
+              {saleData.pdfUrl && (
+                <a
+                  href={saleData.pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition-all"
+                >
+                  Descargar PDF
+                </a>
+              )}
+              {saleData.xmlUrl && (
+                <a
+                  href={saleData.xmlUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-xs transition-all"
+                >
+                  XML (UBL 2.1)
+                </a>
+              )}
+              {saleData.cdrUrl && (
+                <a
+                  href={saleData.cdrUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-xs transition-all"
+                >
+                  CDR SUNAT
+                </a>
+              )}
+            </div>
+          )}
+
           <p className="text-[10px] text-slate-500 text-center">
             Atajo rápido: Pulsa <kbd className="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Enter</kbd> para imprimir o <kbd className="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Esc</kbd> para salir.
           </p>

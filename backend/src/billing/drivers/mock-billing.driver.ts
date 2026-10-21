@@ -84,9 +84,9 @@ export class MockBillingDriver implements IBillingDriver {
       emissionStatus: 'SIMULATED',
       message: `Comprobante ${receiptType} ${series}-${paddedCorrelative} generado exitosamente en modo simulación fiscal`,
       externalId: `SIM-${Date.now()}-${series}-${paddedCorrelative}`,
-      pdfUrl: null,
-      xmlUrl: null,
-      cdrUrl: null,
+      pdfUrl: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${series}-${paddedCorrelative}.pdf`,
+      xmlUrl: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${series}-${paddedCorrelative}.xml`,
+      cdrUrl: `https://mock-pse.sunat.gob.pe/cpe/R-${companyRuc}-${docTypeCode}-${series}-${paddedCorrelative}.xml`,
       rawResponse: {
         driver: 'MOCK',
         tipo_comprobante: docTypeCode,
@@ -94,9 +94,9 @@ export class MockBillingDriver implements IBillingDriver {
         numero: correlativeNumber,
         sunat_status: 'ACEPTADO_SIMULADO',
         digest_value: hash,
-        enlace_del_pdf: null,
-        enlace_del_xml: null,
-        enlace_del_cdr: null,
+        enlace_del_pdf: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${series}-${paddedCorrelative}.pdf`,
+        enlace_del_xml: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${series}-${paddedCorrelative}.xml`,
+        enlace_del_cdr: `https://mock-pse.sunat.gob.pe/cpe/R-${companyRuc}-${docTypeCode}-${series}-${paddedCorrelative}.xml`,
       },
     };
   }
@@ -158,9 +158,9 @@ export class MockBillingDriver implements IBillingDriver {
       emissionStatus: 'SIMULATED',
       message: `Nota de Crédito ${creditNoteSeries}-${paddedCorrelative} generada exitosamente en modo simulación fiscal (Modifica ${modifiedFullNumber})`,
       externalId: `SIM-NC-${Date.now()}-${creditNoteSeries}-${paddedCorrelative}`,
-      pdfUrl: null,
-      xmlUrl: null,
-      cdrUrl: null,
+      pdfUrl: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${creditNoteSeries}-${paddedCorrelative}.pdf`,
+      xmlUrl: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${creditNoteSeries}-${paddedCorrelative}.xml`,
+      cdrUrl: `https://mock-pse.sunat.gob.pe/cpe/R-${companyRuc}-${docTypeCode}-${creditNoteSeries}-${paddedCorrelative}.xml`,
       rawResponse: {
         driver: 'MOCK',
         tipo_comprobante: docTypeCode,
@@ -171,9 +171,9 @@ export class MockBillingDriver implements IBillingDriver {
         motivo_descripcion: reasonDescription,
         sunat_status: 'ACEPTADO_SIMULADO',
         digest_value: hash,
-        enlace_del_pdf: null,
-        enlace_del_xml: null,
-        enlace_del_cdr: null,
+        enlace_del_pdf: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${creditNoteSeries}-${paddedCorrelative}.pdf`,
+        enlace_del_xml: `https://mock-pse.sunat.gob.pe/cpe/${companyRuc}-${docTypeCode}-${creditNoteSeries}-${paddedCorrelative}.xml`,
+        enlace_del_cdr: `https://mock-pse.sunat.gob.pe/cpe/R-${companyRuc}-${docTypeCode}-${creditNoteSeries}-${paddedCorrelative}.xml`,
       },
     };
   }

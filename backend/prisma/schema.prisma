@@ -186,6 +186,10 @@ model Sale {
   hash              String?
   qrString          String?
   emissionStatus    EmissionStatus?
+  externalId        String?
+  pdfUrl            String?
+  xmlUrl            String?
+  cdrUrl            String?
   cashShiftId       String
   cashShift         CashShift       @relation(fields: [cashShiftId], references: [id])
   userId            String

@@ -165,6 +165,10 @@ export interface CreditNote {
   hash?: string | null;
   qrString?: string | null;
   emissionStatus?: EmissionStatus | null;
+  externalId?: string | null;
+  pdfUrl?: string | null;
+  xmlUrl?: string | null;
+  cdrUrl?: string | null;
   createdAt: string;
 }
 
@@ -199,6 +203,10 @@ export interface Sale {
   hash?: string | null;
   qrString?: string | null;
   emissionStatus?: EmissionStatus | null;
+  externalId?: string | null;
+  pdfUrl?: string | null;
+  xmlUrl?: string | null;
+  cdrUrl?: string | null;
   createdAt: string;
   customerName?: string | null;
   customerDocument?: string | null;

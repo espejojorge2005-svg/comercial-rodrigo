@@ -292,31 +292,37 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const registerIdentifier = activeShift.cashRegister?.identifier || 'POS-01';
     const boxMatch = registerIdentifier.match(/\d+/) || [1];
     const boxNum = String(boxMatch[0]).padStart(2, '0');
-    let series = `NV${boxNum}`;
-    if (receiptType === 'BOLETA') series = `B${boxNum.padStart(3, '0')}`;
-    if (receiptType === 'FACTURA') series = `F${boxNum.padStart(3, '0')}`;
 
     const processOfflineSale = async () => {
       const nowIso = new Date().toISOString();
       const offlineId = `off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const randomCorr = Math.floor(Math.random() * 9000) + 1000;
-      const offlineTicketNumber = `${series}-${String(randomCorr).padStart(8, '0')}`;
+      const randomCorr = Math.floor(Math.random() * 90000) + 10000;
+      
+      // 🛡️ REGLA TRIBUTARIA SUNAT:
+      // En modo sin conexión NO se deben emitir Boletas o Facturas con correlativos aleatorios inventados
+      // que discrepen de la secuencia oficial de SUNAT.
+      // Se emite un Ticket / Nota de Venta de contingencia de control interno para entrega al cliente,
+      // registrando la solicitud de regularización fiscal para la sincronización automática.
+      const offlineSeries = `NV${boxNum}`;
+      const offlineTicketNumber = `${offlineSeries}-OFF-${String(randomCorr).padStart(6, '0')}`;
+      const wantsFiscal = receiptType === 'BOLETA' || receiptType === 'FACTURA';
 
       const offlineSale: OfflineSale = {
         offlineId,
         offlineTicketNumber,
-        receiptType,
-        series,
+        receiptType: 'NOTA_VENTA',
+        targetReceiptType: wantsFiscal ? receiptType : undefined,
+        series: offlineSeries,
         correlativeNumber: randomCorr,
         fullReceiptNumber: offlineTicketNumber,
-        isFiscal: receiptType !== 'NOTA_VENTA',
+        isFiscal: false,
         taxableBase,
-        igvAmount: receiptType !== 'NOTA_VENTA' ? igvAmount : 0,
+        igvAmount: 0,
         customerAddress: custAddress || null,
         customerEmail: custEmail.trim() || null,
-        hash: receiptType !== 'NOTA_VENTA' ? `SIM-${Date.now().toString(16)}` : null,
+        hash: null,
         qrString: null,
-        emissionStatus: receiptType !== 'NOTA_VENTA' ? 'SIMULATED' : null,
+        emissionStatus: null,
         cashShiftId: activeShift.id,
         shiftRegisterName: activeShift.cashRegister?.name || 'Caja',
         userId: activeShift.userId || '',
@@ -364,17 +370,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       const syntheticSale = {
         id: offlineId,
         saleNumber: randomCorr,
-        receiptType,
-        series,
+        receiptType: 'NOTA_VENTA' as ReceiptType,
+        targetReceiptType: wantsFiscal ? receiptType : undefined,
+        series: offlineSeries,
         correlativeNumber: randomCorr,
         fullReceiptNumber: offlineTicketNumber,
-        isFiscal: receiptType !== 'NOTA_VENTA',
+        isFiscal: false,
         taxableBase,
-        igvAmount: receiptType !== 'NOTA_VENTA' ? igvAmount : 0,
+        igvAmount: 0,
         customerAddress: custAddress || null,
-        hash: offlineSale.hash,
+        hash: null,
         qrString: null,
-        emissionStatus: offlineSale.emissionStatus,
+        emissionStatus: null,
         isOffline: true,
         customerName: offlineSale.customerName,
         customerDocument: custDoc || null,

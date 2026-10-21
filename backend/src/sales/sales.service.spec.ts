@@ -358,13 +358,18 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
         const tx = {
           product: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: 'p1',
-              name: 'Arroz 1kg',
-              isActive: true,
-              currentStock: 0,
-              costPrice: 3,
-            }),
+            findUnique: vi
+              .fn()
+              .mockResolvedValueOnce({
+                id: 'p1',
+                name: 'Arroz 1kg',
+                isActive: true,
+                currentStock: 10,
+                costPrice: 3,
+              })
+              .mockResolvedValueOnce({
+                currentStock: 0,
+              }),
             updateMany: vi.fn().mockResolvedValue({ count: 0 }),
           },
           receiptSequence: {
