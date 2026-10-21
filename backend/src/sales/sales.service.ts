@@ -451,7 +451,7 @@ export class SalesService {
         if (billingRes.success) {
           const finalEmissionStatus =
             (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
-          finalSale = (await this.prisma.sale.update({
+          finalSale = await this.prisma.sale.update({
             where: { id: txResult.sale.id },
             data: {
               hash: billingRes.hash,
@@ -1100,7 +1100,7 @@ export class SalesService {
       if (billingRes.success) {
         const finalStatus =
           (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
-        finalSale = (await this.prisma.sale.update({
+        finalSale = await this.prisma.sale.update({
           where: { id: sale.id },
           data: {
             hash: billingRes.hash,
@@ -2182,7 +2182,7 @@ export class SalesService {
               const finalEmissionStatus =
                 (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
 
-              finalSale = (await this.prisma.sale.update({
+              finalSale = await this.prisma.sale.update({
                 where: { id: txResult.sale.id },
                 data: {
                   hash: billingRes.hash,
