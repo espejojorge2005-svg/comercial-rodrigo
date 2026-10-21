@@ -419,7 +419,7 @@ export class SalesService {
     // =========================================================================
     // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
     // =========================================================================
-    let finalSale = txResult.sale;
+    let finalSale: any = txResult.sale;
 
     if (txResult.isFiscal) {
       const storeConfig = await this.prisma.storeConfig.findFirst();
@@ -451,7 +451,7 @@ export class SalesService {
         if (billingRes.success) {
           const finalEmissionStatus =
             (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
-          finalSale = await this.prisma.sale.update({
+          finalSale = (await this.prisma.sale.update({
             where: { id: txResult.sale.id },
             data: {
               hash: billingRes.hash,
@@ -461,7 +461,7 @@ export class SalesService {
               pdfUrl: billingRes.pdfUrl || null,
               xmlUrl: billingRes.xmlUrl || null,
               cdrUrl: billingRes.cdrUrl || null,
-            },
+            } as any,
             include: {
               items: {
                 include: {
@@ -1069,7 +1069,7 @@ export class SalesService {
     );
 
     // 5. Emisión Electrónica con el Motor PSE / Mock SUNAT (fuera de la transacción DB)
-    let finalSale = txResult.updatedSale;
+    let finalSale: any = txResult.updatedSale;
     const storeConfig = await this.prisma.storeConfig.findFirst();
 
     try {
@@ -1100,7 +1100,7 @@ export class SalesService {
       if (billingRes.success) {
         const finalStatus =
           (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
-        finalSale = await this.prisma.sale.update({
+        finalSale = (await this.prisma.sale.update({
           where: { id: sale.id },
           data: {
             hash: billingRes.hash,
@@ -1110,7 +1110,7 @@ export class SalesService {
             pdfUrl: billingRes.pdfUrl || null,
             xmlUrl: billingRes.xmlUrl || null,
             cdrUrl: billingRes.cdrUrl || null,
-          },
+          } as any,
           include: {
             items: {
               include: {
@@ -2145,7 +2145,7 @@ export class SalesService {
         // =========================================================================
         // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
         // =========================================================================
-        let finalSale = txResult.sale;
+        let finalSale: any = txResult.sale;
 
         if (txResult.isFiscal) {
           const storeConfig = await this.prisma.storeConfig.findFirst();
@@ -2182,7 +2182,7 @@ export class SalesService {
               const finalEmissionStatus =
                 (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
 
-              finalSale = await this.prisma.sale.update({
+              finalSale = (await this.prisma.sale.update({
                 where: { id: txResult.sale.id },
                 data: {
                   hash: billingRes.hash,
@@ -2192,7 +2192,7 @@ export class SalesService {
                   pdfUrl: billingRes.pdfUrl || null,
                   xmlUrl: billingRes.xmlUrl || null,
                   cdrUrl: billingRes.cdrUrl || null,
-                },
+                } as any,
                 include: {
                   items: {
                     include: {
