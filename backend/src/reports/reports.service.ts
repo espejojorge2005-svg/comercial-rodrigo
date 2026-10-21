@@ -151,9 +151,9 @@ export class ReportsService {
         isCreditNote: false,
         modifiedDocument: null,
         reasonDescription: sale.voidedReason || null,
-        pdfUrl: sale.pdfUrl || null,
-        xmlUrl: sale.xmlUrl || null,
-        cdrUrl: sale.cdrUrl || null,
+        pdfUrl: (sale as any).pdfUrl || null,
+        xmlUrl: (sale as any).xmlUrl || null,
+        cdrUrl: (sale as any).cdrUrl || null,
       };
     });
 
@@ -207,9 +207,9 @@ export class ReportsService {
         isCreditNote: true,
         modifiedDocument: `${modifiedDocType} - ${modifiedFullNumber}`,
         reasonDescription: cn.reasonDescription,
-        pdfUrl: cn.pdfUrl || null,
-        xmlUrl: cn.xmlUrl || null,
-        cdrUrl: cn.cdrUrl || null,
+        pdfUrl: (cn as any).pdfUrl || null,
+        xmlUrl: (cn as any).xmlUrl || null,
+        cdrUrl: (cn as any).cdrUrl || null,
       };
     });
 
