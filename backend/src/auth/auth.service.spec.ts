@@ -14,6 +14,7 @@ describe('AuthService', () => {
       user: {
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        findMany: vi.fn(),
         update: vi.fn(),
       },
     };
@@ -95,12 +96,16 @@ describe('AuthService', () => {
   });
 
   describe('verifyAdminPin', () => {
-    it('debe validar exitosamente un PIN de Administrador correcto', async () => {
-      mockPrisma.user.findFirst.mockResolvedValue({
-        id: 'admin-1',
-        name: 'Don Rodrigo',
-        username: 'rodrigo',
-      });
+    it('debe validar exitosamente un PIN de Administrador hasheado con bcrypt', async () => {
+      const hashedPin = await bcrypt.hash('1234', 10);
+      mockPrisma.user.findMany.mockResolvedValue([
+        {
+          id: 'admin-1',
+          name: 'Don Rodrigo',
+          username: 'rodrigo',
+          pin: hashedPin,
+        },
+      ]);
 
       const result = await authService.verifyAdminPin({ pin: '1234' });
 
@@ -109,22 +114,38 @@ describe('AuthService', () => {
         adminId: 'admin-1',
         adminName: 'Don Rodrigo',
       });
-      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
-        where: {
-          role: Role.ADMIN,
-          isActive: true,
-          pin: '1234',
+    });
+
+    it('debe validar y auto-migrar transparentemente un PIN legacy en texto plano', async () => {
+      mockPrisma.user.findMany.mockResolvedValue([
+        {
+          id: 'admin-legacy',
+          name: 'Admin Legacy',
+          username: 'legacy',
+          pin: '5678',
         },
-        select: {
-          id: true,
-          name: true,
-          username: true,
-        },
+      ]);
+      mockPrisma.user.update.mockResolvedValue({});
+
+      const result = await authService.verifyAdminPin({ pin: '5678' });
+
+      expect(result).toEqual({
+        valid: true,
+        adminId: 'admin-legacy',
+        adminName: 'Admin Legacy',
       });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'admin-legacy' },
+          data: expect.objectContaining({
+            pin: expect.stringMatching(/^\$2[aby]\$/),
+          }),
+        }),
+      );
     });
 
     it('debe lanzar UnauthorizedException si el PIN es incorrecto o de usuario inactivo', async () => {
-      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findMany.mockResolvedValue([]);
 
       await expect(
         authService.verifyAdminPin({ pin: '9999' }),

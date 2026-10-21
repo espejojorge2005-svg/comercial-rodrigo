@@ -200,3 +200,136 @@ export function getProductExpirationInfo(
   }
 }
 
+/**
+ * 🛡️ REGLA SUNAT (Catálogo 52 - Código 1000): LEYENDA DEL MONTO EN LETRAS
+ * Convierte un número monetario a su representación formal en letras en Soles peruanos.
+ * Formato: "SON: [MONTO EN LETRAS] CON [XX]/100 SOLES"
+ * Ejemplos:
+ * 150.50 -> "SON: CIENTO CINCUENTA CON 50/100 SOLES"
+ * 100.00 -> "SON: CIEN CON 00/100 SOLES"
+ * 1.00   -> "SON: UN CON 00/100 SOLES"
+ * 0.00   -> "SON: CERO CON 00/100 SOLES"
+ */
+export function numeroALetras(monto: number | string): string {
+  const num = typeof monto === 'string' ? parseFloat(monto) : monto;
+  if (isNaN(num) || num < 0) return 'SON: CERO CON 00/100 SOLES';
+
+  const entero = Math.floor(num);
+  const centavos = Math.round((num - entero) * 100);
+  const centavosStr = String(centavos).padStart(2, '0').slice(0, 2);
+
+  const unidades = [
+    '',
+    'UN',
+    'DOS',
+    'TRES',
+    'CUATRO',
+    'CINCO',
+    'SEIS',
+    'SIETE',
+    'OCHO',
+    'NUEVE',
+    'DIEZ',
+    'ONCE',
+    'DOCE',
+    'TRECE',
+    'CATORCE',
+    'QUINCE',
+    'DIECISÉIS',
+    'DIECISIETE',
+    'DIECIOCHO',
+    'DIECINUEVE',
+    'VEINTE',
+    'VEINTIUNO',
+    'VEINTIDÓS',
+    'VEINTITRÉS',
+    'VEINTICUATRO',
+    'VEINTICINCO',
+    'VEINTISÉIS',
+    'VEINTISIETE',
+    'VEINTIOCHO',
+    'VEINTINUEVE',
+  ];
+
+  const decenas = [
+    '',
+    '',
+    '',
+    'TREINTA',
+    'CUARENTA',
+    'CINCUENTA',
+    'SESENTA',
+    'SETENTA',
+    'OCHENTA',
+    'NOVENTA',
+  ];
+
+  const centenas = [
+    '',
+    'CIENTO',
+    'DOSCIENTOS',
+    'TRESCIENTOS',
+    'CUATROCIENTOS',
+    'QUINIENTOS',
+    'SEISCIENTOS',
+    'SETECIENTOS',
+    'OCHOCIENTOS',
+    'NOVECIENTOS',
+  ];
+
+  function convertirCentenas(n: number): string {
+    if (n === 0) return '';
+    if (n === 100) return 'CIEN';
+    let output = '';
+    if (n > 99) {
+      output += centenas[Math.floor(n / 100)] + ' ';
+      n %= 100;
+    }
+    if (n <= 29) {
+      output += unidades[n];
+    } else {
+      const dec = Math.floor(n / 10);
+      const uni = n % 10;
+      output += decenas[dec];
+      if (uni > 0) {
+        output += ' Y ' + (uni === 1 ? 'UN' : unidades[uni]);
+      }
+    }
+    return output.trim();
+  }
+
+  function convertirGrupo(n: number): string {
+    if (n === 0) return 'CERO';
+    let resultado = '';
+
+    const millones = Math.floor(n / 1000000);
+    const miles = Math.floor((n % 1000000) / 1000);
+    const resto = n % 1000;
+
+    if (millones > 0) {
+      if (millones === 1) {
+        resultado += 'UN MILLÓN ';
+      } else {
+        resultado += convertirCentenas(millones) + ' MILLONES ';
+      }
+    }
+
+    if (miles > 0) {
+      if (miles === 1) {
+        resultado += 'MIL ';
+      } else {
+        resultado += convertirCentenas(miles) + ' MIL ';
+      }
+    }
+
+    if (resto > 0 || resultado === '') {
+      resultado += convertirCentenas(resto);
+    }
+
+    return resultado.trim();
+  }
+
+  const letras = convertirGrupo(entero);
+  return `SON: ${letras || 'CERO'} CON ${centavosStr}/100 SOLES`;
+}
+

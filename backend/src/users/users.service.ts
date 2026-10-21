@@ -45,7 +45,6 @@ export class UsersService {
       role: u.role,
       hasPin: Boolean(u.pin),
       pin: u.pin ? '••••' : null,
-      rawPin: u.pin, // Para que el admin pueda ver su propio PIN si lo desea
       isActive: u.isActive,
       createdAt: u.createdAt,
       updatedAt: u.updatedAt,
@@ -71,6 +70,8 @@ export class UsersService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const hashedPin =
+      dto.role === Role.ADMIN && dto.pin ? await bcrypt.hash(dto.pin.trim(), 10) : null;
 
     const user = await this.prisma.user.create({
       data: {
@@ -78,7 +79,7 @@ export class UsersService {
         username: cleanUsername,
         password: hashedPassword,
         role: dto.role,
-        pin: dto.role === Role.ADMIN && dto.pin ? dto.pin.trim() : null,
+        pin: hashedPin,
         isActive: true,
       },
       select: {
@@ -153,7 +154,7 @@ export class UsersService {
     }
 
     if (dto.pin !== undefined) {
-      data.pin = dto.pin ? dto.pin.trim() : null;
+      data.pin = dto.pin ? await bcrypt.hash(dto.pin.trim(), 10) : null;
     }
 
     if (dto.isActive !== undefined) {

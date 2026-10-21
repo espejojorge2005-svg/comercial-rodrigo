@@ -34,7 +34,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
       setUsername(userToEdit.username || '');
       setPassword('');
       setRole(userToEdit.role || 'CAJERO');
-      setPin((userToEdit as any).rawPin || '');
+      setPin('');
       setIsActive(userToEdit.isActive ?? true);
     } else {
       setName('');
@@ -236,7 +236,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
                 maxLength={6}
                 value={pin}
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="Ej: 1234"
+                placeholder={isEditing ? 'Dejar vacío para mantener el actual' : 'Ej: 1234'}
                 className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 rounded-xl px-3.5 py-2 text-sm text-amber-300 placeholder-slate-600 outline-none font-mono tracking-widest text-center"
               />
             </div>

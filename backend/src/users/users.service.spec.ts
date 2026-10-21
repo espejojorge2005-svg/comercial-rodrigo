@@ -135,7 +135,7 @@ describe('UsersService', () => {
       expect(mockPrisma.user.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            pin: '4321',
+            pin: expect.stringMatching(/^\$2[aby]\$/),
           }),
         }),
       );

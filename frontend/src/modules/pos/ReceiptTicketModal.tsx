@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import QRCode from 'qrcode';
-import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
+import { formatCurrency, formatPeruDateTime, numeroALetras } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import {
   Printer,
@@ -630,8 +630,21 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               </span>
             </div>
 
+            {/* 🛡️ REGLA SUNAT (Cat. 52): LEYENDA DEL MONTO EN LETRAS */}
+            <div className="text-[9.5px] font-bold text-slate-800 border-t border-dotted border-slate-300 pt-1 leading-tight uppercase">
+              {numeroALetras(isCreditNote && creditNote?.totalAmount ? creditNote.totalAmount : saleData.totalAmount)}
+            </div>
+
+            {/* 🛡️ REGLA SUNAT: CONDICIÓN DE PAGO (CONTADO) */}
             <div className="flex justify-between text-slate-700 pt-1 text-[10.5px]">
-              <span>MÉTODO DE PAGO:</span>
+              <span>CONDICIÓN DE PAGO:</span>
+              <span className="font-extrabold uppercase text-slate-900">
+                CONTADO
+              </span>
+            </div>
+
+            <div className="flex justify-between text-slate-700 text-[10.5px]">
+              <span>MEDIO DE PAGO:</span>
               <span className="font-bold uppercase text-slate-900">
                 {getPaymentMethodLabel(saleData.paymentMethod)}
               </span>

@@ -172,9 +172,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     (rucDigitsOnly.length === 11 &&
       validRucPrefixes.some((p) => rucDigitsOnly.startsWith(p)));
 
+  const forbiddenCompanyNames = [
+    'EMPRESA',
+    'EMPRESA SAC',
+    'EMPRESA S.A.C.',
+    'EMPRESA SRL',
+    'EMPRESA S.R.L.',
+    'CLIENTE VARIOS',
+    'CLIENTES VARIOS',
+    'RUC',
+    'SIN NOMBRE',
+    'VARIOS',
+  ];
   const isNameValidForFactura =
     receiptType !== 'FACTURA' ||
-    (safeName.trim().length >= 2 && safeName.trim().toLowerCase() !== 'cliente varios');
+    (safeName.trim().length >= 2 &&
+      !forbiddenCompanyNames.includes(safeName.trim().toUpperCase()));
 
   const isAddressValidForFactura =
     receiptType !== 'FACTURA' || safeAddress.trim().length >= 3;
@@ -197,7 +210,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       validationMessage = 'El RUC debe tener 11 dígitos e iniciar con 10, 20, 15 o 17';
     } else if (!isNameValidForFactura) {
       isFormValid = false;
-      validationMessage = 'La Razón Social de la empresa es obligatoria para Factura';
+      validationMessage =
+        'Ingrese una Razón Social auténtica de la empresa para Factura (no se permiten nombres genéricos como EMPRESA)';
     } else if (!isAddressValidForFactura) {
       isFormValid = false;
       validationMessage = 'La Dirección Fiscal es obligatoria para Factura';
@@ -331,12 +345,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         userId: activeShift.userId || '',
         userName: activeShift.user?.name || '',
         customerName:
-          custName ||
-          (receiptType === 'BOLETA'
-            ? 'Clientes Varios'
-            : receiptType === 'FACTURA'
-              ? 'EMPRESA'
-              : 'Cliente Varios'),
+          custName.trim() ||
+          (receiptType === 'BOLETA' ? 'Clientes Varios' : ''),
         customerDocument: custDoc || null,
         paymentMethod,
         cashPaid: paymentMethod === 'TRANSFER' || paymentMethod === 'CARD' ? 0 : cashNum,
@@ -428,12 +438,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         cashShiftId: activeShift.id,
         receiptType,
         customerName:
-          custName ||
-          (receiptType === 'BOLETA'
-            ? 'Clientes Varios'
-            : receiptType === 'FACTURA'
-              ? 'EMPRESA'
-              : 'Cliente Varios'),
+          custName.trim() ||
+          (receiptType === 'BOLETA' ? 'Clientes Varios' : ''),
         customerDocument: custDoc || null,
         customerAddress: custAddress || null,
         customerEmail: custEmail.trim() || undefined,

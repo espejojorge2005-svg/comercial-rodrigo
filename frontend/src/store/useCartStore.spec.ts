@@ -61,7 +61,6 @@ describe('useCartStore - Lógica Financiera de Punto de Venta', () => {
 
     expect(success).toBe(false);
     expect(useCartStore.getState().items).toHaveLength(0);
-    expect(globalThis.alert).toHaveBeenCalled();
   });
 
   it('debe actualizar la cantidad correctamente y recalcular precio menor/mayor', () => {

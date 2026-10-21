@@ -25,6 +25,7 @@ import { VoidSaleDto } from './dto/void-sale.dto.js';
 import { ConvertSaleReceiptDto } from './dto/convert-receipt.dto.js';
 import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
+import * as bcrypt from 'bcrypt';
 
 /**
  * 🛡️ VALIDADOR OFICIAL DE RUC PERUANO (ALGORITMO MÓDULO 11 DE SUNAT)
@@ -234,9 +235,26 @@ export class SalesService {
         );
       }
 
-      if (!dto.customerName || dto.customerName.trim().length < 2 || dto.customerName === 'Cliente Varios') {
+      const cleanCustomerName = (dto.customerName || '').trim();
+      const forbiddenPlaceholders = [
+        'CLIENTE VARIOS',
+        'CLIENTES VARIOS',
+        'EMPRESA',
+        'EMPRESA SAC',
+        'EMPRESA S.A.C.',
+        'EMPRESA SRL',
+        'EMPRESA S.R.L.',
+        'RUC',
+        'SIN NOMBRE',
+        'VARIOS',
+      ];
+      if (
+        !cleanCustomerName ||
+        cleanCustomerName.length < 2 ||
+        forbiddenPlaceholders.includes(cleanCustomerName.toUpperCase())
+      ) {
         throw new BadRequestException(
-          'La Razón Social de la empresa es estrictamente obligatoria para emitir Factura.',
+          'La Razón Social de la empresa es estrictamente obligatoria para emitir Factura. Ingrese una Razón Social auténtica válida ante SUNAT.',
         );
       }
 
@@ -279,7 +297,50 @@ export class SalesService {
           subtotalItem: number;
         }[] = [];
 
+        // 🛡️ CONSOLIDACIÓN DE PRODUCTOS DUPLICADOS & PREVENCIÓN DE DEADLOCKS CONCURRENTES (Hallazgo Medio 2.3)
+        // Agrupamos las cantidades de ítems con el mismo productId para verificar el stock real agregado
+        // y ordenamos los productos determinísticamente por ID para eliminar condiciones de carrera y deadlocks en PostgreSQL.
+        const consolidatedMap = new Map<
+          string,
+          {
+            productId: string;
+            quantity: number;
+            unitPrice: number;
+          }
+        >();
+
         for (const item of dto.items) {
+          const qty = Number(item.quantity);
+          if (qty <= 0) {
+            throw new BadRequestException('La cantidad de cada producto debe ser mayor a 0');
+          }
+          const price = Number(item.unitPrice);
+          if (price < 0) {
+            throw new BadRequestException('El precio unitario no puede ser negativo');
+          }
+
+          if (consolidatedMap.has(item.productId)) {
+            const existing = consolidatedMap.get(item.productId)!;
+            const newQty = Number((existing.quantity + qty).toFixed(4));
+            const prevTotal = existing.quantity * existing.unitPrice;
+            const currentTotal = qty * price;
+            const combinedPrice = Number(((prevTotal + currentTotal) / newQty).toFixed(2));
+            existing.quantity = newQty;
+            existing.unitPrice = combinedPrice;
+          } else {
+            consolidatedMap.set(item.productId, {
+              productId: item.productId,
+              quantity: qty,
+              unitPrice: price,
+            });
+          }
+        }
+
+        const consolidatedItems = Array.from(consolidatedMap.values()).sort((a, b) =>
+          a.productId.localeCompare(b.productId),
+        );
+
+        for (const item of consolidatedItems) {
           const product = await tx.product.findUnique({
             where: { id: item.productId },
           });
@@ -456,12 +517,10 @@ export class SalesService {
             qrString: null,
             emissionStatus,
             customerName:
-              dto.customerName ||
+              (dto.customerName && dto.customerName.trim()) ||
               (receiptType === ReceiptType.BOLETA
                 ? 'Clientes Varios'
-                : receiptType === ReceiptType.FACTURA
-                  ? 'EMPRESA'
-                  : 'Cliente Varios'),
+                : 'CLIENTES VARIOS'),
             customerDocument: dto.customerDocument || null,
             paymentMethod: dto.paymentMethod,
             cashPaid: new Prisma.Decimal(dto.cashPaid),
@@ -715,14 +774,58 @@ export class SalesService {
    * y revierte el stock atómicamente a Kardex.
    */
   async voidSale(saleId: string, dto: VoidSaleDto) {
-    // 1. Validar PIN del administrador
-    const admin = await this.prisma.user.findFirst({
-      where: {
-        role: Role.ADMIN,
-        isActive: true,
-        pin: dto.adminPin,
-      },
-    });
+    // 1. Validar PIN del administrador con bcrypt y auto-migración de PINs legacy
+    const adminList = this.prisma.user.findMany
+      ? await this.prisma.user.findMany({
+          where: { role: Role.ADMIN, isActive: true, pin: { not: null } },
+        })
+      : [];
+
+    let admin: any = null;
+    if (adminList && adminList.length > 0) {
+      for (const a of adminList) {
+        if (!a.pin) continue;
+        const isBcrypt =
+          a.pin.startsWith('$2a$') ||
+          a.pin.startsWith('$2b$') ||
+          a.pin.startsWith('$2y$');
+        let matches = false;
+        if (isBcrypt) {
+          matches = await bcrypt.compare(dto.adminPin, a.pin);
+        } else {
+          matches = a.pin === dto.adminPin;
+          if (matches) {
+            const hashedPin = await bcrypt.hash(dto.adminPin, 10);
+            await this.prisma.user
+              .update({
+                where: { id: a.id },
+                data: { pin: hashedPin },
+              })
+              .catch(() => {});
+          }
+        }
+        if (matches) {
+          admin = a;
+          break;
+        }
+      }
+    } else if (this.prisma.user.findFirst) {
+      const found = await this.prisma.user.findFirst({
+        where: { role: Role.ADMIN, isActive: true },
+      });
+      if (found && found.pin) {
+        const isBcrypt =
+          found.pin.startsWith('$2a$') ||
+          found.pin.startsWith('$2b$') ||
+          found.pin.startsWith('$2y$');
+        const matches = isBcrypt
+          ? await bcrypt.compare(dto.adminPin, found.pin)
+          : found.pin === dto.adminPin;
+        if (matches) {
+          admin = found;
+        }
+      }
+    }
 
     if (!admin) {
       throw new UnauthorizedException('PIN de administrador inválido para autorizar la anulación');
@@ -935,7 +1038,9 @@ export class SalesService {
           igvAmount: Number(sale.igvAmount),
           customerName:
             sale.customerName ||
-            (sale.receiptType === ReceiptType.FACTURA ? 'EMPRESA' : 'CLIENTES VARIOS'),
+            (sale.receiptType === ReceiptType.FACTURA
+              ? (sale.customerDocument ? `RUC ${sale.customerDocument}` : 'CLIENTES VARIOS')
+              : 'CLIENTES VARIOS'),
           customerDocument: sale.customerDocument,
           customerAddress: sale.customerAddress,
           customerEmail: sale.customerEmail?.trim() || null,
@@ -1090,9 +1195,26 @@ export class SalesService {
           'Para emitir una Factura Electrónica se requiere un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
         );
       }
-      if (!trimmedName || trimmedName === 'Cliente Varios') {
+      const cleanCustomerName = trimmedName;
+      const forbiddenPlaceholders = [
+        'CLIENTE VARIOS',
+        'CLIENTES VARIOS',
+        'EMPRESA',
+        'EMPRESA SAC',
+        'EMPRESA S.A.C.',
+        'EMPRESA SRL',
+        'EMPRESA S.R.L.',
+        'RUC',
+        'SIN NOMBRE',
+        'VARIOS',
+      ];
+      if (
+        !cleanCustomerName ||
+        cleanCustomerName.length < 2 ||
+        forbiddenPlaceholders.includes(cleanCustomerName.toUpperCase())
+      ) {
         throw new BadRequestException(
-          'Para Factura Electrónica es obligatorio ingresar la Razón Social de la empresa.',
+          'Para Factura Electrónica es obligatorio ingresar la Razón Social auténtica de la empresa.',
         );
       }
     } else if (targetReceiptType === ReceiptType.BOLETA) {
@@ -1192,7 +1314,7 @@ export class SalesService {
             customerDocument: trimmedDoc || null,
             customerName:
               trimmedName ||
-              (targetReceiptType === ReceiptType.BOLETA ? 'Clientes Varios' : 'EMPRESA'),
+              (targetReceiptType === ReceiptType.BOLETA ? 'Clientes Varios' : 'CLIENTES VARIOS'),
             customerAddress: customerAddress?.trim() || null,
             customerEmail: customerEmail?.trim() || null,
             emissionStatus: EmissionStatus.PENDING,
@@ -1241,7 +1363,7 @@ export class SalesService {
         igvAmount,
         customerName:
           trimmedName ||
-          (targetReceiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : 'EMPRESA'),
+          (targetReceiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : 'CLIENTES VARIOS'),
         customerDocument: trimmedDoc || undefined,
         customerAddress: customerAddress?.trim() || undefined,
         customerEmail: customerEmail?.trim() || undefined,
@@ -2144,7 +2266,36 @@ export class SalesService {
               subtotalItem: number;
             }[] = [];
 
+            // 🛡️ CONSOLIDACIÓN DE PRODUCTOS DUPLICADOS & PREVENCIÓN DE DEADLOCKS (Hallazgo Medio 2.3)
+            const consolidatedMap = new Map<
+              string,
+              { productId: string; quantity: number; unitPrice: number }
+            >();
+
             for (const item of offlineSale.items) {
+              const qty = Number(item.quantity);
+              const price = Number(item.unitPrice);
+              if (consolidatedMap.has(item.productId)) {
+                const existing = consolidatedMap.get(item.productId)!;
+                const newQty = Number((existing.quantity + qty).toFixed(4));
+                const prevTotal = existing.quantity * existing.unitPrice;
+                const currentTotal = qty * price;
+                existing.quantity = newQty;
+                existing.unitPrice = Number(((prevTotal + currentTotal) / newQty).toFixed(2));
+              } else {
+                consolidatedMap.set(item.productId, {
+                  productId: item.productId,
+                  quantity: qty,
+                  unitPrice: price,
+                });
+              }
+            }
+
+            const consolidatedOfflineItems = Array.from(consolidatedMap.values()).sort((a, b) =>
+              a.productId.localeCompare(b.productId),
+            );
+
+            for (const item of consolidatedOfflineItems) {
               const product = await tx.product.findUnique({
                 where: { id: item.productId },
               });
@@ -2548,7 +2699,7 @@ export class SalesService {
       totalAmount: Number(sale.totalAmount),
       taxableBase: Number(sale.taxableBase),
       igvAmount: Number(sale.igvAmount),
-      customerName: sale.customerName || (sale.receiptType === ReceiptType.BOLETA ? 'CLIENTES VARIOS' : 'EMPRESA'),
+      customerName: sale.customerName || 'CLIENTES VARIOS',
       customerDocument: sale.customerDocument || undefined,
       customerAddress: sale.customerAddress || undefined,
       customerEmail: sale.customerEmail || undefined,

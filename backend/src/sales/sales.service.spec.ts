@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SalesService, isValidPeruvianRuc, getSunatCompliantEmissionDate } from './sales.service.js';
 import { ReceiptType, EmissionStatus, PaymentMethod } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
   let salesService: SalesService;
@@ -38,7 +39,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
           cashShiftId: 'shift-1',
           receiptType: ReceiptType.FACTURA,
           customerDocument: '12345678901', // no inicia en 10, 20, 15, 17
-          customerName: 'EMPRESA SAC',
+          customerName: 'DISTRIBUIDORA NORTE S.A.C.',
           customerAddress: 'Av. Industrial 123',
           paymentMethod: 'CASH',
           cashPaid: 100,
@@ -49,13 +50,32 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       ).rejects.toThrow('RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17');
     });
 
+    it('debe rechazar Factura con Razón Social ficticia o genérica (EMPRESA, EMPRESA SAC, Cliente Varios)', async () => {
+      for (const fakeName of ['EMPRESA', 'EMPRESA SAC', 'EMPRESA S.A.C.', 'Cliente Varios', 'CLIENTES VARIOS']) {
+        await expect(
+          salesService.createSale('user-1', {
+            cashShiftId: 'shift-1',
+            receiptType: ReceiptType.FACTURA,
+            customerDocument: '20601234567',
+            customerName: fakeName,
+            customerAddress: 'Av. Los Ficus 456',
+            paymentMethod: 'CASH',
+            cashPaid: 100,
+            digitalPaid: 0,
+            changeAmount: 0,
+            items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
+          }),
+        ).rejects.toThrow('La Razón Social de la empresa es estrictamente obligatoria para emitir Factura');
+      }
+    });
+
     it('debe rechazar Factura sin Dirección Fiscal', async () => {
       await expect(
         salesService.createSale('user-1', {
           cashShiftId: 'shift-1',
           receiptType: ReceiptType.FACTURA,
           customerDocument: '20601234567',
-          customerName: 'EMPRESA SAC',
+          customerName: 'DISTRIBUIDORA NORTE S.A.C.',
           customerAddress: '', // Vacío
           paymentMethod: 'CASH',
           cashPaid: 100,
@@ -64,6 +84,106 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
           items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
         }),
       ).rejects.toThrow('Dirección Fiscal de la empresa es estrictamente obligatoria');
+    });
+  });
+
+  describe('Hallazgo Medio 2.3: Consolidación de Productos Duplicados en una misma Venta', () => {
+    it('debe consolidar líneas duplicadas del mismo producto, sumar cantidades y ordenar determinísticamente por productId', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+
+      const productP1 = {
+        id: 'p1',
+        name: 'Arroz Superior 50kg',
+        isActive: true,
+        currentStock: 10,
+        costPrice: 120,
+      };
+      const productP2 = {
+        id: 'p2',
+        name: 'Aceite Vegetal 1L',
+        isActive: true,
+        currentStock: 20,
+        costPrice: 7,
+      };
+
+      let createdSaleData: any = null;
+
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockImplementation(({ where }) => {
+              if (where.id === 'p1') return Promise.resolve(productP1);
+              if (where.id === 'p2') return Promise.resolve(productP2);
+              return Promise.resolve(null);
+            }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 88 }),
+          },
+          sale: {
+            create: vi.fn().mockImplementation(({ data }) => {
+              createdSaleData = data;
+              return Promise.resolve({
+                id: 'sale-merged-1',
+                saleNumber: 88,
+                totalAmount: data.totalAmount,
+                taxableBase: data.taxableBase,
+                igvAmount: data.igvAmount,
+                cashPaid: data.cashPaid,
+                digitalPaid: data.digitalPaid,
+                changeAmount: data.changeAmount,
+                items: (data.items?.create || []).map((detail: any, idx: number) => ({
+                  id: `detail-${idx}`,
+                  productId: detail.productId,
+                  quantity: detail.quantity,
+                  unitPrice: detail.unitPrice,
+                  subtotal: detail.subtotal,
+                  product: detail.productId === 'p1' ? productP1 : productP2,
+                })),
+                cashShift: { cashRegister: { name: 'Caja 1' } },
+                user: { id: 'user-1', name: 'User Test' },
+              });
+            }),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+        };
+        return callback(tx);
+      });
+
+      // Enviamos ítems desordenados y duplicados: p2, luego p1 (2 unidades), luego p1 (3 unidades)
+      const res = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.NOTA_VENTA,
+        paymentMethod: 'CASH',
+        cashPaid: 200,
+        digitalPaid: 0,
+        changeAmount: 0,
+        items: [
+          { productId: 'p2', quantity: 2, unitPrice: 10, isWholesaleApplied: false },
+          { productId: 'p1', quantity: 2, unitPrice: 36, isWholesaleApplied: false },
+          { productId: 'p1', quantity: 3, unitPrice: 36, isWholesaleApplied: false },
+        ],
+      });
+
+      expect(res.sale).toBeDefined();
+      // Las líneas de p1 deben haberse consolidado: 2 + 3 = 5 unidades
+      expect(createdSaleData.items.create).toHaveLength(2);
+      // Ordenamiento determinista: 'p1' primero, luego 'p2' (p1.localeCompare(p2))
+      expect(createdSaleData.items.create[0].productId).toBe('p1');
+      expect(Number(createdSaleData.items.create[0].quantity)).toBe(5);
+      expect(createdSaleData.items.create[1].productId).toBe('p2');
+      expect(Number(createdSaleData.items.create[1].quantity)).toBe(2);
+      // Total: (5 * 36) + (2 * 10) = 180 + 20 = 200
+      expect(Number(res.sale.totalAmount)).toBe(200);
     });
   });
 
@@ -877,6 +997,58 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       expect(createdMovement.type).toBe('EXPENSE');
       expect(Number(createdMovement.amount)).toBe(50);
       expect(createdMovement.reason).toContain('Turno anterior');
+    });
+
+    it('debe autorizar voidSale con PIN de Administrador hasheado con bcrypt', async () => {
+      const hashedPin = await bcrypt.hash('9876', 10);
+      mockPrisma.user = {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'admin-bcrypt',
+            name: 'Admin Bcrypt',
+            pin: hashedPin,
+          },
+        ]),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-bcrypt-1',
+          saleNumber: 15,
+          fullReceiptNumber: 'NV01-00000015',
+          receiptType: ReceiptType.NOTA_VENTA,
+          totalAmount: 30,
+          cashPaid: 30,
+          changeAmount: 0,
+          digitalPaid: 0,
+          paymentMethod: PaymentMethod.CASH,
+          isVoided: false,
+          items: [{ productId: 'p1', quantity: 1, product: { id: 'p1', costPrice: 10 } }],
+          cashShiftId: 'shift-open',
+          cashShift: {
+            id: 'shift-open',
+            status: 'OPEN',
+            cashRegisterId: 'reg-1',
+            cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+          },
+        }),
+      };
+
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: { update: vi.fn().mockResolvedValue({ id: 'p1', currentStock: 10, costPrice: 10 }) },
+          kardexMovement: { create: vi.fn().mockResolvedValue({}) },
+          sale: { update: vi.fn().mockResolvedValue({ id: 'sale-bcrypt-1', saleNumber: 15, isVoided: true }) },
+        };
+        return callback(tx);
+      });
+
+      const res = await salesService.voidSale('sale-bcrypt-1', {
+        adminPin: '9876',
+        reason: 'Error de cobro autorizado por administrador',
+      });
+
+      expect(res.saleId).toBe('sale-bcrypt-1');
     });
   });
 
