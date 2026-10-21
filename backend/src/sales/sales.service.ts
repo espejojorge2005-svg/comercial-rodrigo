@@ -926,8 +926,9 @@ export class SalesService {
           });
         }
 
-        // Reingresar stock a Kardex de forma atómica para evitar Lost Updates
-        for (const item of sale.items) {
+        // Reingresar stock a Kardex de forma atómica para evitar Lost Updates (orden determinista por productId)
+        const sortedSaleItems = [...sale.items].sort((a, b) => a.productId.localeCompare(b.productId));
+        for (const item of sortedSaleItems) {
           const qtyToReturn = Number(item.quantity);
 
           // Devolver stock atómicamente con Prisma increment
