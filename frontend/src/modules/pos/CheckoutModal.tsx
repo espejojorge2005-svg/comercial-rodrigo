@@ -155,7 +155,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const isBoletaOver700 = receiptType === 'BOLETA' && totalAmount >= 700;
   const cleanCustDoc = safeDoc.trim();
-  const rucDigitsOnly = safeDoc.replace(/\D/g, '');
 
   const isDocValidForBoleta =
     !isBoletaOver700 ||
