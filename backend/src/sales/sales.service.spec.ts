@@ -1523,6 +1523,115 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       expect(result).toBeDefined();
       expect(result.message).toContain('anulada');
     });
+
+    it('al anular una venta de un turno ABIERTO, no debe generar CashMovement de egreso (evita doble resta en arqueo)', async () => {
+      mockPrisma.user = {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'admin-1', role: 'ADMIN', isActive: true, pin: '1234' },
+        ]),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-open-shift',
+          receiptType: ReceiptType.NOTA_VENTA,
+          saleNumber: 'NV01-00000010',
+          isVoided: false,
+          createdAt: new Date(),
+          paymentMethod: PaymentMethod.CASH,
+          cashPaid: 50,
+          changeAmount: 0,
+          totalAmount: 50,
+          cashShiftId: 'shift-open',
+          cashShift: {
+            id: 'shift-open',
+            status: ShiftStatus.OPEN, // Turno aún ABIERTO
+            cashRegisterId: 'reg-1',
+            cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+          },
+          items: [],
+        }),
+      };
+
+      const mockCashMovementCreate = vi.fn();
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (cb) => {
+        return cb({
+          sale: { update: vi.fn().mockResolvedValue({ id: 'sale-open-shift', isVoided: true }) },
+          cashShift: { update: vi.fn().mockResolvedValue({}) },
+          kardexMovement: { create: vi.fn().mockResolvedValue({}) },
+          product: { update: vi.fn().mockResolvedValue({}) },
+          cashMovement: { create: mockCashMovementCreate },
+        });
+      });
+
+      await salesService.voidSale('sale-open-shift', {
+        adminPin: '1234',
+        reason: 'Cliente canceló antes de salir',
+      });
+
+      // No se debe llamar a cashMovement.create en turno abierto para no duplicar la resta en arqueo
+      expect(mockCashMovementCreate).not.toHaveBeenCalled();
+    });
+
+    it('al anular una venta de un turno CERRADO, sí debe registrar automáticamente un CashMovement EXPENSE en el turno abierto', async () => {
+      mockPrisma.user = {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'admin-1', role: 'ADMIN', isActive: true, pin: '1234' },
+        ]),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-closed-shift',
+          receiptType: ReceiptType.NOTA_VENTA,
+          saleNumber: 'NV01-00000005',
+          isVoided: false,
+          createdAt: new Date(),
+          paymentMethod: PaymentMethod.CASH,
+          cashPaid: 70,
+          changeAmount: 0,
+          totalAmount: 70,
+          cashShiftId: 'shift-closed-prev',
+          cashShift: {
+            id: 'shift-closed-prev',
+            status: ShiftStatus.CLOSED, // Turno pasado CERRADO
+            cashRegisterId: 'reg-1',
+            cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+          },
+          items: [],
+        }),
+      };
+
+      const mockCashMovementCreate = vi.fn().mockResolvedValue({ id: 'mov-refund-1' });
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (cb) => {
+        return cb({
+          sale: { update: vi.fn().mockResolvedValue({ id: 'sale-closed-shift', isVoided: true }) },
+          cashShift: {
+            update: vi.fn().mockResolvedValue({}),
+            findFirst: vi.fn().mockResolvedValue({ id: 'current-open-shift' }),
+          },
+          kardexMovement: { create: vi.fn().mockResolvedValue({}) },
+          product: { update: vi.fn().mockResolvedValue({}) },
+          cashMovement: { create: mockCashMovementCreate },
+        });
+      });
+
+      await salesService.voidSale('sale-closed-shift', {
+        adminPin: '1234',
+        reason: 'Devolución de venta de turno anterior',
+      });
+
+      // Sí debe crear el movimiento de egreso en el turno activo para compensar el dinero que sale de gaveta
+      expect(mockCashMovementCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cashShiftId: 'current-open-shift',
+            type: CashMovementType.EXPENSE,
+            reason: expect.stringContaining('Turno anterior'),
+          }),
+        }),
+      );
+    });
   });
 });
 

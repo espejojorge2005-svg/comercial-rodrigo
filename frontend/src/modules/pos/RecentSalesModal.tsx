@@ -1014,6 +1014,12 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                           {saleToVoid.items?.length || 0} ítems
                         </span>
                       </div>
+                      {saleToVoid.paymentMethod === 'CASH' && (
+                        <p className="text-[10px] text-slate-400 pt-1 border-t border-slate-800/80">
+                          ℹ️ El dinero devuelto se descuenta automáticamente del arqueo de caja al
+                          anular. No registre un egreso manual para evitar doble resta.
+                        </p>
+                      )}
                     </div>
 
                     <div>

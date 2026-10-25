@@ -308,5 +308,56 @@ describe('CashShiftsService', () => {
       expect(result.difference).toBe(5);
       expect(result.discrepancyType).toBe('SOBRANTE');
     });
+
+    it('debe excluir ventas anuladas (isVoided: false) al calcular cashFromSales, garantizando cuadre exacto tras devolución de efectivo', async () => {
+      const shiftData = {
+        id: 'shift-1',
+        userId: 'user-1',
+        initialBalance: 100, // S/ 100 inicial
+        status: ShiftStatus.OPEN,
+        cashMovements: [],
+        cashRegister: { name: 'Caja 1', identifier: 'POS-01' },
+        user: { name: 'Carlos Cajero' },
+      };
+      mockPrisma.cashShift.findUnique.mockResolvedValue(shiftData);
+
+      // Simular que findMany fue invocado con { cashShiftId: shift.id, isVoided: false }
+      // Venta 1 activa (S/ 50), Venta 2 anulada (S/ 30 - no se retorna en la query porque isVoided: false)
+      mockPrisma.sale.findMany.mockImplementation(async (args: any) => {
+        expect(args.where.isVoided).toBe(false);
+        return [
+          {
+            id: 's1',
+            saleNumber: 1,
+            paymentMethod: 'CASH',
+            cashPaid: 50,
+            changeAmount: 0,
+            digitalPaid: 0,
+            totalAmount: 50,
+            createdAt: new Date(),
+            items: [],
+          },
+        ];
+      });
+
+      // El cajero tenía S/ 100 iniciales, cobró S/ 50 de s1, cobró S/ 30 de s2 pero los devolvió al anular s2.
+      // Total físico en gaveta: 100 + 50 = S/ 150.
+      mockPrisma.cashShift.update.mockResolvedValue({
+        ...shiftData,
+        status: ShiftStatus.CLOSED,
+        closedAt: new Date(),
+      });
+
+      const result = await service.closeShift('admin-1', Role.ADMIN, {
+        shiftId: 'shift-1',
+        actualBalance: 150,
+      });
+
+      // Saldo esperado debe ser exactamente 150 (100 inicial + 50 venta activa)
+      expect(result.expectedBalance).toBe(150);
+      expect(result.actualBalance).toBe(150);
+      expect(result.difference).toBe(0);
+      expect(result.discrepancyType).toBe('EXACTO');
+    });
   });
 });
