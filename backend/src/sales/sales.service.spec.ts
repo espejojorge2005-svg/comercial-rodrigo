@@ -5,7 +5,13 @@ import {
   getSunatCompliantEmissionDate,
   getSunatCreditNoteDeadline,
 } from './sales.service.js';
-import { ReceiptType, EmissionStatus, PaymentMethod } from '@prisma/client';
+import {
+  ReceiptType,
+  EmissionStatus,
+  PaymentMethod,
+  ShiftStatus,
+  CashMovementType,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
@@ -1466,7 +1472,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
         salesService.voidSale('sale-old-fiscal', {
           adminPin: '1234',
           reason: 'Cliente devolvió mercadería meses después',
-          sunatReasonCode: '01',
+          reasonCode: '01',
         }),
       ).rejects.toThrow(
         'No es posible anular este comprobante electrónico ante SUNAT. El plazo legal reglamentario',

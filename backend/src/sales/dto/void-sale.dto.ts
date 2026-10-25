@@ -16,6 +16,10 @@ export class VoidSaleDto {
 
   @IsOptional()
   @IsString()
+  sunatReasonCode?: string; // Alias de compatibilidad para catálogo 09
+
+  @IsOptional()
+  @IsString()
   reasonDescription?: string;
 }
 
