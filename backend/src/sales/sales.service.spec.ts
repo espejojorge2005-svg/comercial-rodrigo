@@ -1211,5 +1211,196 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       expect(series).toBe('B002');
     });
   });
+
+  describe('Zero-Trust Pricing (Prevención de Manipulación de Precios)', () => {
+    const mockProductP1 = {
+      id: 'prod-priced-1',
+      name: 'Arroz Extra Costeño 5kg',
+      isActive: true,
+      currentStock: 50,
+      costPrice: 20.0,
+      retailPrice: 25.0,
+      wholesalePrice: 22.0,
+      wholesaleMinQty: 5,
+    };
+
+    beforeEach(() => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockImplementation(({ where }) => {
+              if (where.id === 'prod-priced-1') return Promise.resolve(mockProductP1);
+              return Promise.resolve(null);
+            }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 101 }),
+          },
+          sale: {
+            create: vi.fn().mockImplementation(({ data }) =>
+              Promise.resolve({
+                id: 'sale-ztp-1',
+                saleNumber: 101,
+                ...data,
+                items: [],
+              }),
+            ),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+          user: {
+            findMany: vi.fn().mockResolvedValue([
+              { id: 'admin-1', name: 'Admin Rodrigo', pin: '5555' },
+            ]),
+          },
+        };
+        return callback(tx);
+      });
+    });
+
+    it('debe rechazar la venta si el unitPrice enviado es menor al precio oficial (retailPrice) y no se envía adminPin', async () => {
+      // Precio catálogo es S/ 25.00, pero payload envía S/ 15.00
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.NOTA_VENTA,
+          paymentMethod: PaymentMethod.CASH,
+          cashPaid: 15,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [
+            {
+              productId: 'prod-priced-1',
+              quantity: 1,
+              unitPrice: 15, // Manipulado o descuento no autorizado
+              isWholesaleApplied: false,
+            },
+          ],
+        }),
+      ).rejects.toThrow('Se requiere autorización con PIN de Administrador');
+    });
+
+    it('debe rechazar la venta si el unitPrice es menor al catálogo y el adminPin es inválido', async () => {
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.NOTA_VENTA,
+          paymentMethod: PaymentMethod.CASH,
+          cashPaid: 15,
+          digitalPaid: 0,
+          changeAmount: 0,
+          adminPin: '9999', // PIN incorrecto
+          items: [
+            {
+              productId: 'prod-priced-1',
+              quantity: 1,
+              unitPrice: 15,
+              isWholesaleApplied: false,
+            },
+          ],
+        }),
+      ).rejects.toThrow('PIN de Administrador inválido');
+    });
+
+    it('debe autorizar la venta con precio rebajado si se envía un adminPin válido', async () => {
+      const res = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.NOTA_VENTA,
+        paymentMethod: PaymentMethod.CASH,
+        cashPaid: 18,
+        digitalPaid: 0,
+        changeAmount: 0,
+        adminPin: '5555', // PIN correcto de admin
+        items: [
+          {
+            productId: 'prod-priced-1',
+            quantity: 1,
+            unitPrice: 18,
+            isWholesaleApplied: false,
+          },
+        ],
+      });
+
+      expect(res.sale).toBeDefined();
+      expect(res.sale.totalAmount).toBe(18);
+    });
+
+    it('debe permitir la venta sin adminPin si se cobra el precio mayorista oficial y califica para mayorista', async () => {
+      // wholesalePrice es 22.00, cantidad 5 >= wholesaleMinQty 5
+      const res = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.NOTA_VENTA,
+        paymentMethod: PaymentMethod.CASH,
+        cashPaid: 110,
+        digitalPaid: 0,
+        changeAmount: 0,
+        items: [
+          {
+            productId: 'prod-priced-1',
+            quantity: 5,
+            unitPrice: 22, // Precio mayorista oficial
+            isWholesaleApplied: true,
+          },
+        ],
+      });
+
+      expect(res.sale).toBeDefined();
+      expect(res.sale.totalAmount).toBe(110);
+    });
+
+    it('debe exigir adminPin si el unitPrice es menor al precio mayorista oficial incluso aplicando mayorista', async () => {
+      // wholesalePrice es 22.00, pero envían 20.00 sin adminPin
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.NOTA_VENTA,
+          paymentMethod: PaymentMethod.CASH,
+          cashPaid: 100,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [
+            {
+              productId: 'prod-priced-1',
+              quantity: 5,
+              unitPrice: 20, // Menor a wholesalePrice (22.00)
+              isWholesaleApplied: true,
+            },
+          ],
+        }),
+      ).rejects.toThrow('Se requiere autorización con PIN de Administrador');
+    });
+
+    it('debe permitir venta estándar sin adminPin cuando unitPrice es igual o mayor a retailPrice', async () => {
+      const res = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.NOTA_VENTA,
+        paymentMethod: PaymentMethod.CASH,
+        cashPaid: 50,
+        digitalPaid: 0,
+        changeAmount: 0,
+        items: [
+          {
+            productId: 'prod-priced-1',
+            quantity: 2,
+            unitPrice: 25, // Precio oficial retail
+            isWholesaleApplied: false,
+          },
+        ],
+      });
+
+      expect(res.sale).toBeDefined();
+      expect(res.sale.totalAmount).toBe(50);
+    });
+  });
 });
 

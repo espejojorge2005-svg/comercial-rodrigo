@@ -27,7 +27,8 @@ export class SaleItemDto {
   unitPrice: number;
 
   @IsBoolean()
-  isWholesaleApplied: boolean;
+  @IsOptional()
+  isWholesaleApplied?: boolean;
 }
 
 export class CreateSaleDto {
@@ -73,6 +74,10 @@ export class CreateSaleDto {
   @IsNumber()
   @Min(0)
   changeAmount: number;
+
+  @IsOptional()
+  @IsString({ message: 'El PIN de administrador debe ser una cadena de texto' })
+  adminPin?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

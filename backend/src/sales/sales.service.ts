@@ -306,6 +306,7 @@ export class SalesService {
             productId: string;
             quantity: number;
             unitPrice: number;
+            isWholesaleApplied: boolean;
           }
         >();
 
@@ -327,11 +328,14 @@ export class SalesService {
             const combinedPrice = Number(((prevTotal + currentTotal) / newQty).toFixed(2));
             existing.quantity = newQty;
             existing.unitPrice = combinedPrice;
+            existing.isWholesaleApplied =
+              existing.isWholesaleApplied || Boolean(item.isWholesaleApplied);
           } else {
             consolidatedMap.set(item.productId, {
               productId: item.productId,
               quantity: qty,
               unitPrice: price,
+              isWholesaleApplied: Boolean(item.isWholesaleApplied),
             });
           }
         }
@@ -339,6 +343,8 @@ export class SalesService {
         const consolidatedItems = Array.from(consolidatedMap.values()).sort((a, b) =>
           a.productId.localeCompare(b.productId),
         );
+
+        let authorizedAdmin: { id: string; name: string } | null = null;
 
         for (const item of consolidatedItems) {
           const product = await tx.product.findUnique({
@@ -356,6 +362,54 @@ export class SalesService {
             throw new BadRequestException(
               `Stock insuficiente para "${product.name}". Solicitado: ${item.quantity}, Disponible en tienda: ${currentStockNum}`,
             );
+          }
+
+          // 🛡️ ZERO-TRUST PRICING: Prevención de Manipulación de Precios en Terminales POS
+          const retailPriceNum =
+            product.retailPrice !== undefined && product.retailPrice !== null
+              ? Number(product.retailPrice)
+              : null;
+
+          if (retailPriceNum !== null) {
+            const wholesalePriceNum =
+              product.wholesalePrice !== undefined && product.wholesalePrice !== null
+                ? Number(product.wholesalePrice)
+                : null;
+            const wholesaleMinQtyNum =
+              product.wholesaleMinQty !== undefined && product.wholesaleMinQty !== null
+                ? Number(product.wholesaleMinQty)
+                : 3;
+
+            let officialPrice = retailPriceNum;
+            if (
+              wholesalePriceNum !== null &&
+              wholesalePriceNum > 0 &&
+              (item.isWholesaleApplied || item.quantity >= wholesaleMinQtyNum)
+            ) {
+              officialPrice = wholesalePriceNum;
+            }
+
+            // Si el precio unitario enviado es menor al precio oficial (descuento manual, rebaja o alteración)
+            if (item.unitPrice < officialPrice - 0.01) {
+              if (!dto.adminPin || !dto.adminPin.trim()) {
+                throw new BadRequestException(
+                  `Se requiere autorización con PIN de Administrador para vender "${product.name}" a un precio menor al catálogo (Precio oficial: S/ ${officialPrice.toFixed(2)}, Precio enviado: S/ ${item.unitPrice.toFixed(2)}).`,
+                );
+              }
+
+              if (!authorizedAdmin) {
+                authorizedAdmin = await this.verifyAdminPin(dto.adminPin, tx);
+                if (!authorizedAdmin) {
+                  throw new UnauthorizedException(
+                    'PIN de Administrador inválido para autorizar el descuento o rebaja de precio.',
+                  );
+                }
+              }
+
+              this.logger.warn(
+                `🛡️ Precio con descuento autorizado por Administrador (${authorizedAdmin.name}) para "${product.name}": S/ ${item.unitPrice.toFixed(2)} vs oficial S/ ${officialPrice.toFixed(2)}`,
+              );
+            }
           }
 
           const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
@@ -769,19 +823,24 @@ export class SalesService {
   }
 
   /**
-   * Anulación de venta protegida con PIN de Administrador.
-   * Si es Boleta o Factura electrónica, emite automáticamente la Nota de Crédito Oficial SUNAT
-   * y revierte el stock atómicamente a Kardex.
+   * 🛡️ Validador centralizado de PIN de Administrador (compatible con bcrypt y auto-migración)
    */
-  async voidSale(saleId: string, dto: VoidSaleDto) {
-    // 1. Validar PIN del administrador con bcrypt y auto-migración de PINs legacy
-    const adminList = this.prisma.user.findMany
-      ? await this.prisma.user.findMany({
+  async verifyAdminPin(
+    pin?: string,
+    client: any = this.prisma,
+  ): Promise<{ id: string; name: string } | null> {
+    if (!pin || !pin.trim()) return null;
+    const cleanPin = pin.trim();
+
+    const userClient = client?.user || this.prisma?.user;
+    if (!userClient) return null;
+
+    const adminList = userClient.findMany
+      ? await userClient.findMany({
           where: { role: Role.ADMIN, isActive: true, pin: { not: null } },
         })
       : [];
 
-    let admin: any = null;
     if (adminList && adminList.length > 0) {
       for (const a of adminList) {
         if (!a.pin) continue;
@@ -791,12 +850,12 @@ export class SalesService {
           a.pin.startsWith('$2y$');
         let matches = false;
         if (isBcrypt) {
-          matches = await bcrypt.compare(dto.adminPin, a.pin);
+          matches = await bcrypt.compare(cleanPin, a.pin);
         } else {
-          matches = a.pin === dto.adminPin;
+          matches = a.pin === cleanPin;
           if (matches) {
-            const hashedPin = await bcrypt.hash(dto.adminPin, 10);
-            await this.prisma.user
+            const hashedPin = await bcrypt.hash(cleanPin, 10);
+            await userClient
               .update({
                 where: { id: a.id },
                 data: { pin: hashedPin },
@@ -805,12 +864,11 @@ export class SalesService {
           }
         }
         if (matches) {
-          admin = a;
-          break;
+          return { id: a.id, name: a.name };
         }
       }
-    } else if (this.prisma.user.findFirst) {
-      const found = await this.prisma.user.findFirst({
+    } else if (userClient.findFirst) {
+      const found = await userClient.findFirst({
         where: { role: Role.ADMIN, isActive: true },
       });
       if (found && found.pin) {
@@ -819,13 +877,25 @@ export class SalesService {
           found.pin.startsWith('$2b$') ||
           found.pin.startsWith('$2y$');
         const matches = isBcrypt
-          ? await bcrypt.compare(dto.adminPin, found.pin)
-          : found.pin === dto.adminPin;
+          ? await bcrypt.compare(cleanPin, found.pin)
+          : found.pin === cleanPin;
         if (matches) {
-          admin = found;
+          return { id: found.id, name: found.name };
         }
       }
     }
+
+    return null;
+  }
+
+  /**
+   * Anulación de venta protegida con PIN de Administrador.
+   * Si es Boleta o Factura electrónica, emite automáticamente la Nota de Crédito Oficial SUNAT
+   * y revierte el stock atómicamente a Kardex.
+   */
+  async voidSale(saleId: string, dto: VoidSaleDto) {
+    // 1. Validar PIN del administrador con bcrypt y auto-migración de PINs legacy
+    const admin = await this.verifyAdminPin(dto.adminPin);
 
     if (!admin) {
       throw new UnauthorizedException('PIN de administrador inválido para autorizar la anulación');
