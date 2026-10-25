@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SalesService, isValidPeruvianRuc, getSunatCompliantEmissionDate } from './sales.service.js';
+import {
+  SalesService,
+  isValidPeruvianRuc,
+  getSunatCompliantEmissionDate,
+  getSunatCreditNoteDeadline,
+} from './sales.service.js';
 import { ReceiptType, EmissionStatus, PaymentMethod } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -1400,6 +1405,123 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
 
       expect(res.sale).toBeDefined();
       expect(res.sale.totalAmount).toBe(50);
+    });
+  });
+
+  describe('Control de Anulaciones y Plazo Legal SUNAT en Notas de Crédito (R.S. 193-2020)', () => {
+    it('debe calcular correctamente el 15° día hábil del mes siguiente a la emisión', () => {
+      // Venta emitida el 15 de enero de 2026
+      // Mes siguiente: Febrero 2026.
+      // Días hábiles de Feb 2026 (excluyendo sábados y domingos):
+      // Feb 2(1), 3(2), 4(3), 5(4), 6(5), 9(6), 10(7), 11(8), 12(9), 13(10), 16(11), 17(12), 18(13), 19(14), 20(15)
+      // Plazo límite: 2026-02-20
+      const emissionJan = new Date('2026-01-15T10:00:00Z');
+      const info1 = getSunatCreditNoteDeadline(emissionJan, new Date('2026-02-10T12:00:00Z'));
+      expect(info1.formattedDeadline).toBe('2026-02-20');
+      expect(info1.isExpired).toBe(false);
+
+      const infoExpired = getSunatCreditNoteDeadline(emissionJan, new Date('2026-02-21T08:00:00Z'));
+      expect(infoExpired.isExpired).toBe(true);
+    });
+
+    it('debe rechazar anulación de Factura con plazo SUNAT vencido', async () => {
+      mockPrisma.user = {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'admin-1', role: 'ADMIN', isActive: true, pin: '1234' },
+        ]),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-old-fiscal',
+          receiptType: ReceiptType.FACTURA,
+          fullReceiptNumber: 'F001-00000123',
+          isVoided: false,
+          createdAt: new Date('2025-10-01T15:00:00Z'),
+          items: [],
+          cashShift: { cashRegister: { identifier: 'POS-01', name: 'Caja 1' } },
+        }),
+      };
+
+      await expect(
+        salesService.voidSale('sale-old-fiscal', {
+          adminPin: '1234',
+          reason: 'Cliente devolvió mercadería meses después',
+          sunatReasonCode: '01',
+        }),
+      ).rejects.toThrow(
+        'No es posible anular este comprobante electrónico ante SUNAT. El plazo legal reglamentario',
+      );
+    });
+
+    it('debe rechazar anulación de Boleta con plazo SUNAT vencido', async () => {
+      mockPrisma.user = {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'admin-1', role: 'ADMIN', isActive: true, pin: '1234' },
+        ]),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-old-boleta',
+          receiptType: ReceiptType.BOLETA,
+          fullReceiptNumber: 'B001-00000456',
+          isVoided: false,
+          createdAt: new Date('2025-11-05T12:00:00Z'),
+          items: [],
+          cashShift: { cashRegister: { identifier: 'POS-01', name: 'Caja 1' } },
+        }),
+      };
+
+      await expect(
+        salesService.voidSale('sale-old-boleta', {
+          adminPin: '1234',
+          reason: 'Error de digitación meses después',
+        }),
+      ).rejects.toThrow('No es posible anular este comprobante electrónico ante SUNAT');
+    });
+
+    it('no debe bloquear por plazo SUNAT las Notas de Venta internas (NOTA_VENTA)', async () => {
+      mockPrisma.user = {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'admin-1', role: 'ADMIN', isActive: true, pin: '1234' },
+        ]),
+      };
+
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-old-nv',
+          receiptType: ReceiptType.NOTA_VENTA,
+          saleNumber: 'NV01-00000999',
+          isVoided: false,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+          totalAmount: 100,
+          cashShiftId: 'shift-1',
+          cashShift: {
+            cashRegisterId: 'reg-1',
+            cashRegister: { identifier: 'POS-01', name: 'Caja 1' },
+          },
+          items: [],
+        }),
+      };
+
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (cb) => {
+        return cb({
+          sale: { update: vi.fn().mockResolvedValue({ id: 'sale-old-nv', isVoided: true }) },
+          cashShift: { update: vi.fn().mockResolvedValue({}) },
+          kardexMovement: { create: vi.fn().mockResolvedValue({}) },
+          product: { update: vi.fn().mockResolvedValue({}) },
+          cashMovement: { create: vi.fn().mockResolvedValue({}) },
+        });
+      });
+
+      const result = await salesService.voidSale('sale-old-nv', {
+        adminPin: '1234',
+        reason: 'Ajuste interno',
+      });
+
+      expect(result).toBeDefined();
+      expect(result.message).toContain('anulada');
     });
   });
 });

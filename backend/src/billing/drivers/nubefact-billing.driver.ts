@@ -405,12 +405,22 @@ export class NubefactBillingDriver implements IBillingDriver {
     if (!response.ok || data.errors) {
       const errorMsg = data.errors || data.message || 'Error en respuesta de Nubefact';
       this.logger.error(`Error de emisión en Nubefact para Nota de Crédito: ${errorMsg}`);
+      const isDeadlineError =
+        String(errorMsg).includes('2119') ||
+        String(errorMsg).includes('2223') ||
+        String(errorMsg).toLowerCase().includes('plazo') ||
+        String(errorMsg).toLowerCase().includes('fuera de fecha');
+
+      const friendlyMessage = isDeadlineError
+        ? `Rechazado por SUNAT: Plazo legal de emisión de Nota de Crédito vencido (R.S. 193-2020/SUNAT). Detalle: ${errorMsg}`
+        : `Rechazado por PSE Nubefact: ${errorMsg}`;
+
       return {
         success: false,
         hash: '',
         qrString: '',
         emissionStatus: 'REJECTED',
-        message: `Rechazado por PSE Nubefact: ${errorMsg}`,
+        message: friendlyMessage,
         rawResponse: data,
       };
     }

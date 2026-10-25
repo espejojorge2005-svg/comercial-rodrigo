@@ -10,6 +10,7 @@ import {
   Search,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   ShieldAlert,
   ChevronDown,
   ChevronUp,
@@ -23,6 +24,52 @@ import {
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { ConvertReceiptModal } from './ConvertReceiptModal.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
+
+/**
+ * 🛡️ Verifica si el plazo legal de SUNAT (15° día hábil del mes siguiente)
+ * para emitir Nota de Crédito Electrónica ya venció (R.S. 193-2020/SUNAT).
+ */
+export function checkSunatVoidDeadline(createdAt: string | Date): {
+  isExpired: boolean;
+  formattedDeadline: string;
+} {
+  const date = new Date(createdAt);
+  const peruTime = new Date(date.getTime() - 5 * 3600000);
+  const year = peruTime.getUTCFullYear();
+  const month = peruTime.getUTCMonth(); // 0 a 11
+
+  let nextMonth = month + 1;
+  let nextYear = year;
+  if (nextMonth > 11) {
+    nextMonth = 0;
+    nextYear = year + 1;
+  }
+
+  let businessDaysCount = 0;
+  let checkDay = 1;
+  let deadlineDay = 1;
+
+  while (businessDaysCount < 15 && checkDay <= 31) {
+    const d = new Date(Date.UTC(nextYear, nextMonth, checkDay, 12, 0, 0));
+    if (d.getUTCMonth() !== nextMonth) break;
+    const dayOfWeek = d.getUTCDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      businessDaysCount++;
+      if (businessDaysCount === 15) {
+        deadlineDay = checkDay;
+        break;
+      }
+    }
+    checkDay++;
+  }
+
+  const deadlineUtc = new Date(Date.UTC(nextYear, nextMonth, deadlineDay, 23 + 5, 59, 59, 999));
+  const isExpired = Date.now() > deadlineUtc.getTime();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const formattedDeadline = `${pad(deadlineDay)}/${pad(nextMonth + 1)}/${nextYear}`;
+
+  return { isExpired, formattedDeadline };
+}
 
 interface RecentSalesModalProps {
   isOpen: boolean;
@@ -535,6 +582,9 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                   sale.receiptType === 'NOTA_VENTA' &&
                   !sale.voidedReason?.startsWith('CANJE_TICKET:');
                 const wasCanjeada = sale.voidedReason?.startsWith('CANJE_TICKET:');
+                const isFiscal = sale.receiptType === 'BOLETA' || sale.receiptType === 'FACTURA';
+                const sunatDeadline = isFiscal ? checkSunatVoidDeadline(sale.createdAt) : null;
+                const isVoidDisabledBySunat = Boolean(isFiscal && sunatDeadline?.isExpired);
 
                 return (
                   <div
@@ -615,6 +665,14 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                     Canjeable a Boleta/Factura
                                   </span>
                                 )}
+                                {!sale.isVoided && isVoidDisabledBySunat && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-[10px] font-semibold border border-amber-500/30 flex items-center gap-1"
+                                    title={`El plazo reglamentario SUNAT para anular con Nota de Crédito venció el ${sunatDeadline?.formattedDeadline} (R.S. 193-2020/SUNAT)`}
+                                  >
+                                    <Clock className="w-3 h-3 text-amber-400" /> Plazo SUNAT Vencido
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -682,23 +740,33 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
 
                           {/* Botón Anular Venta (solo si no está anulada) */}
                           {!sale.isVoided && (
-                            <button
-                              onClick={() => {
-                                setSaleToVoid(sale);
-                                setAdminPin('');
-                                setVoidReason('');
-                                setSunatReasonCode('01');
-                                setVoidError(null);
-                              }}
-                              className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer"
-                              title={
-                                sale.receiptType === 'NOTA_VENTA'
-                                  ? 'Anular nota interna con PIN'
-                                  : 'Emitir Nota de Crédito Electrónica'
-                              }
-                            >
-                              <Ban className="w-4 h-4" />
-                            </button>
+                            isVoidDisabledBySunat ? (
+                              <button
+                                disabled
+                                className="p-2 rounded-xl bg-slate-800/40 text-slate-600 border border-slate-800 transition-all cursor-not-allowed opacity-50"
+                                title={`No es posible anular: El plazo reglamentario SUNAT para emitir Nota de Crédito venció el ${sunatDeadline?.formattedDeadline} (R.S. 193-2020/SUNAT)`}
+                              >
+                                <Ban className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setSaleToVoid(sale);
+                                  setAdminPin('');
+                                  setVoidReason('');
+                                  setSunatReasonCode('01');
+                                  setVoidError(null);
+                                }}
+                                className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer"
+                                title={
+                                  sale.receiptType === 'NOTA_VENTA'
+                                    ? 'Anular nota interna con PIN'
+                                    : 'Emitir Nota de Crédito Electrónica'
+                                }
+                              >
+                                <Ban className="w-4 h-4" />
+                              </button>
+                            )
                           )}
 
                           {/* Toggle Detalle */}
@@ -826,6 +894,10 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
             {(() => {
               const isFiscalToVoid =
                 saleToVoid.receiptType === 'BOLETA' || saleToVoid.receiptType === 'FACTURA';
+              const voidDeadline = isFiscalToVoid
+                ? checkSunatVoidDeadline(saleToVoid.createdAt)
+                : null;
+              const isSunatExpired = Boolean(isFiscalToVoid && voidDeadline?.isExpired);
               return (
                 <>
                   <div className="text-center mb-4">
@@ -870,6 +942,28 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {isFiscalToVoid && isSunatExpired && (
+                    <div className="mb-3.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 text-left">
+                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold text-amber-200">
+                          Plazo legal de anulación SUNAT vencido
+                        </p>
+                        <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                          Conforme a la <strong>R.S. 193-2020/SUNAT</strong>, las Notas de Crédito
+                          electrónicas por anulación directa solo pueden emitirse hasta el 15° día
+                          hábil del mes siguiente a la emisión (venció el{' '}
+                          <strong>{voidDeadline?.formattedDeadline}</strong>).
+                        </p>
+                        <p className="text-[10px] text-amber-400 font-medium">
+                          SUNAT rechazará la anulación de este comprobante por período fiscal
+                          cerrado. Para regularizarlo, consulte con su contador para realizar los
+                          ajustes o rectificatorias correspondientes en libros contables.
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {voidError && (
                     <div className="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
@@ -962,14 +1056,16 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                       </button>
                       <button
                         type="submit"
-                        disabled={isVoiding}
-                        className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition-all cursor-pointer disabled:opacity-50"
+                        disabled={isVoiding || isSunatExpired}
+                        className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {isVoiding
                           ? 'Emitiendo...'
-                          : isFiscalToVoid
-                            ? 'Emitir Nota de Crédito'
-                            : 'Confirmar Anulación'}
+                          : isSunatExpired
+                            ? 'Plazo SUNAT Vencido'
+                            : isFiscalToVoid
+                              ? 'Emitir Nota de Crédito'
+                              : 'Confirmar Anulación'}
                       </button>
                     </div>
                   </form>

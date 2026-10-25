@@ -94,6 +94,68 @@ export function getSunatCompliantEmissionDate(originalDate: Date = new Date()): 
   };
 }
 
+/**
+ * 🛡️ CONTROL TRIBUTARIO DE PLAZO LEGAL SUNAT PARA NOTAS DE CRÉDITO (R.S. 193-2020/SUNAT)
+ * La emisión de Notas de Crédito Electrónicas (motivo 01: anulación de la operación o 02: error en RUC)
+ * debe realizarse a más tardar hasta el décimo quinto (15°) día hábil del mes siguiente
+ * a aquel en que se emitió el comprobante de pago electrónico respectivo (Boleta o Factura).
+ */
+export function getSunatCreditNoteDeadline(
+  emissionDate: Date | string,
+  currentDate: Date = new Date(),
+): {
+  deadline: Date;
+  isExpired: boolean;
+  formattedDeadline: string;
+  formattedEmissionDate: string;
+} {
+  const date = new Date(emissionDate);
+  const peruEmissionTime = new Date(date.getTime() - 5 * 3600000);
+  const emissionYear = peruEmissionTime.getUTCFullYear();
+  const emissionMonth = peruEmissionTime.getUTCMonth(); // 0-11
+
+  let nextMonth = emissionMonth + 1;
+  let nextYear = emissionYear;
+  if (nextMonth > 11) {
+    nextMonth = 0;
+    nextYear = emissionYear + 1;
+  }
+
+  let businessDaysCount = 0;
+  let checkDay = 1;
+  let deadlineDay = 1;
+
+  while (businessDaysCount < 15 && checkDay <= 31) {
+    const d = new Date(Date.UTC(nextYear, nextMonth, checkDay, 12, 0, 0));
+    if (d.getUTCMonth() !== nextMonth) break;
+
+    const dayOfWeek = d.getUTCDay(); // 0: Domingo, 6: Sábado
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      businessDaysCount++;
+      if (businessDaysCount === 15) {
+        deadlineDay = checkDay;
+        break;
+      }
+    }
+    checkDay++;
+  }
+
+  // Límite final: 23:59:59.999 en hora de Perú (UTC-5) del día 15 hábil
+  const deadlineUtc = new Date(Date.UTC(nextYear, nextMonth, deadlineDay, 23 + 5, 59, 59, 999));
+  const isExpired = currentDate.getTime() > deadlineUtc.getTime();
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const formattedDeadline = `${pad(deadlineDay)}/${pad(nextMonth + 1)}/${nextYear}`;
+  const formattedEmissionDate = `${pad(peruEmissionTime.getUTCDate())}/${pad(emissionMonth + 1)}/${emissionYear}`;
+
+  return {
+    deadline: deadlineUtc,
+    isExpired,
+    formattedDeadline,
+    formattedEmissionDate,
+  };
+}
+
 @Injectable()
 export class SalesService {
   private readonly logger = new Logger(SalesService.name);
@@ -919,6 +981,18 @@ export class SalesService {
 
     const isFiscal =
       sale.receiptType === ReceiptType.BOLETA || sale.receiptType === ReceiptType.FACTURA;
+
+    // 🛡️ CONTROL TRIBUTARIO: Plazo legal SUNAT para emisión de Notas de Crédito Electrónicas (R.S. 193-2020/SUNAT)
+    if (isFiscal) {
+      const deadlineInfo = getSunatCreditNoteDeadline(sale.createdAt || new Date());
+      if (deadlineInfo.isExpired) {
+        const docName =
+          sale.receiptType === ReceiptType.FACTURA ? 'Factura Electrónica' : 'Boleta Electrónica';
+        throw new BadRequestException(
+          `No es posible anular este comprobante electrónico ante SUNAT. El plazo legal reglamentario (15° día hábil del mes siguiente: ${deadlineInfo.formattedDeadline}) ha vencido para esta ${docName} emitida el ${deadlineInfo.formattedEmissionDate}. Para regularizar comprobantes de períodos fiscales cerrados, consulte con su contador.`,
+        );
+      }
+    }
 
     // =========================================================================
     // ETAPA 1: TRANSACCIÓN DB LOCAL (Atómica y Rápida: Reingreso de stock y anulación)
