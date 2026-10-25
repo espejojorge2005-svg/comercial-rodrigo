@@ -166,11 +166,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       safeName.trim().toLowerCase() !== 'cliente varios' &&
       safeName.trim().toLowerCase() !== 'clientes varios');
 
-  const validRucPrefixes = ['10', '20', '15', '17'];
+  const rucRegex = /^(10|15|17|20)\d{9}$/;
   const isRucValidForFactura =
-    receiptType !== 'FACTURA' ||
-    (rucDigitsOnly.length === 11 &&
-      validRucPrefixes.some((p) => rucDigitsOnly.startsWith(p)));
+    receiptType !== 'FACTURA' || rucRegex.test(cleanCustDoc);
 
   const forbiddenCompanyNames = [
     'EMPRESA',
@@ -199,7 +197,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   if (receiptType === 'BOLETA' && isBoletaOver700) {
     if (!isDocValidForBoleta) {
       isFormValid = false;
-      validationMessage = 'SUNAT exige DNI, Carnet de Extranjería o RUC (8 a 12 car.) para boletas ≥ S/ 700.00';
+      validationMessage =
+        'SUNAT exige DNI, Carnet de Extranjería o RUC (8 a 12 car.) para boletas ≥ S/ 700.00';
     } else if (!isNameValidForBoleta) {
       isFormValid = false;
       validationMessage = 'Ingrese los nombres y apellidos completos del cliente';
@@ -207,7 +206,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   } else if (receiptType === 'FACTURA') {
     if (!isRucValidForFactura) {
       isFormValid = false;
-      validationMessage = 'El RUC debe tener 11 dígitos e iniciar con 10, 20, 15 o 17';
+      validationMessage =
+        'El RUC debe tener exactamente 11 dígitos numéricos e iniciar con 10, 20, 15 o 17';
     } else if (!isNameValidForFactura) {
       isFormValid = false;
       validationMessage =

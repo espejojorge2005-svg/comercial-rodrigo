@@ -55,6 +55,25 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       ).rejects.toThrow('RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17');
     });
 
+    it('debe rechazar Factura si el RUC tiene 10 dígitos o contiene caracteres no numéricos', async () => {
+      for (const invalidRuc of ['2012345678', '2060123456A', '201234567890', '']) {
+        await expect(
+          salesService.createSale('user-1', {
+            cashShiftId: 'shift-1',
+            receiptType: ReceiptType.FACTURA,
+            customerDocument: invalidRuc,
+            customerName: 'DISTRIBUIDORA NORTE S.A.C.',
+            customerAddress: 'Av. Industrial 123',
+            paymentMethod: 'CASH',
+            cashPaid: 100,
+            digitalPaid: 0,
+            changeAmount: 0,
+            items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
+          }),
+        ).rejects.toThrow('RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17');
+      }
+    });
+
     it('debe rechazar Factura con Razón Social ficticia o genérica (EMPRESA, EMPRESA SAC, Cliente Varios)', async () => {
       for (const fakeName of ['EMPRESA', 'EMPRESA SAC', 'EMPRESA S.A.C.', 'Cliente Varios', 'CLIENTES VARIOS']) {
         await expect(

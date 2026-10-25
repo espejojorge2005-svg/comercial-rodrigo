@@ -108,13 +108,11 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
     const nameTrimmed = custName.trim();
 
     if (targetType === 'FACTURA') {
-      if (!docTrimmed || docTrimmed.length !== 11) {
-        setError('Para Factura Electrónica es obligatorio un RUC válido de 11 dígitos.');
-        return;
-      }
-      const validPrefixes = ['10', '20', '15', '17'];
-      if (!validPrefixes.some((p) => docTrimmed.startsWith(p))) {
-        setError('El RUC debe comenzar con 10, 20, 15 o 17.');
+      const rucRegex = /^(10|15|17|20)\d{9}$/;
+      if (!rucRegex.test(docTrimmed)) {
+        setError(
+          'Para Factura Electrónica se exige un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
+        );
         return;
       }
       if (!nameTrimmed) {

@@ -289,10 +289,9 @@ export class SalesService {
     // Validación preliminar estricta para Factura Electrónica
     if (receiptType === ReceiptType.FACTURA) {
       const ruc = (dto.customerDocument || '').trim();
-      const validRucPrefixes = ['10', '20', '15', '17'];
-      const hasValidPrefix = validRucPrefixes.some((prefix) => ruc.startsWith(prefix));
+      const rucRegex = /^(10|15|17|20)\d{9}$/;
 
-      if (!/^\d{11}$/.test(ruc) || !hasValidPrefix) {
+      if (!rucRegex.test(ruc)) {
         throw new BadRequestException(
           'Para emitir Factura Electrónica se exige un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
         );
@@ -1334,9 +1333,8 @@ export class SalesService {
     const trimmedName = customerName ? customerName.trim() : '';
 
     if (targetReceiptType === ReceiptType.FACTURA) {
-      const validRucPrefixes = ['10', '20', '15', '17'];
-      const hasValidPrefix = validRucPrefixes.some((prefix) => trimmedDoc.startsWith(prefix));
-      if (!/^\d{11}$/.test(trimmedDoc) || !hasValidPrefix) {
+      const rucRegex = /^(10|15|17|20)\d{9}$/;
+      if (!rucRegex.test(trimmedDoc)) {
         throw new BadRequestException(
           'Para emitir una Factura Electrónica se requiere un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
         );
