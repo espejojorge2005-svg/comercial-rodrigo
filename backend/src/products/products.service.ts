@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
 import { BulkImportProductsDto } from './dto/bulk-import-product.dto.js';
+import { buildPeruDateTimeFilter } from '../reports/reports.service.js';
 
 @Injectable()
 export class ProductsService {
@@ -585,29 +586,9 @@ export class ProductsService {
       where.productId = productId;
     }
 
-    if (filter?.startDate || filter?.endDate) {
-      const dateFilter: Prisma.DateTimeFilter = {};
-      if (filter.startDate) {
-        const sStr = filter.startDate.trim();
-        const start = sStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(sStr)
-          ? new Date(sStr)
-          : sStr.includes('T')
-            ? new Date(`${sStr}-05:00`)
-            : new Date(`${sStr}T00:00:00.000-05:00`);
-        if (!isNaN(start.getTime())) dateFilter.gte = start;
-      }
-      if (filter.endDate) {
-        const eStr = filter.endDate.trim();
-        const end = eStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(eStr)
-          ? new Date(eStr)
-          : eStr.includes('T')
-            ? new Date(`${eStr}-05:00`)
-            : new Date(`${eStr}T23:59:59.999-05:00`);
-        if (!isNaN(end.getTime())) dateFilter.lte = end;
-      }
-      if (dateFilter.gte || dateFilter.lte) {
-        where.createdAt = dateFilter;
-      }
+    const dateFilter = buildPeruDateTimeFilter(filter?.startDate, filter?.endDate);
+    if (dateFilter) {
+      where.createdAt = dateFilter;
     }
 
     const take = filter?.limit

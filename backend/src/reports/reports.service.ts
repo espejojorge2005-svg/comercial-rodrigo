@@ -5,6 +5,62 @@ import { ReportQueryDto } from './dto/report-query.dto.js';
 import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
 import ExcelJS from 'exceljs';
 
+/**
+ * 🇵🇪 Construye filtros de fecha asegurando la zona horaria oficial de Perú (America/Lima, UTC-5).
+ *
+ * Consideraciones críticas de negocio y tributarias:
+ * 1. Para fechas en formato YYYY-MM-DD:
+ *    - startDate: inicio exacto del día en Perú (00:00:00.000-05:00 = 05:00:00.000Z).
+ *    - endDate: final exacto de la jornada en Perú (23:59:59.999-05:00 = 04:59:59.999Z del día siguiente).
+ * 2. Si endDate viene con medianoche explícita (T00:00:00), se extiende automáticamente a fin de jornada (23:59:59.999)
+ *    para evitar omitir transacciones realizadas a lo largo de ese día.
+ * 3. ⚠️ IMPORTANTE: No usar 'end.setUTCHours(23, 59, 59, 999)', ya que 23:59:59 UTC equivale a las 18:59:59 (6:59 PM)
+ *    en Perú (UTC-5), excluyendo todas las ventas nocturnas (7:00 PM a 11:59 PM).
+ */
+export function buildPeruDateTimeFilter(
+  startDate?: string,
+  endDate?: string,
+): Prisma.DateTimeFilter | undefined {
+  if (!startDate && !endDate) return undefined;
+
+  const filter: Prisma.DateTimeFilter = {};
+
+  if (startDate) {
+    const s = startDate.trim();
+    let start: Date;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      start = new Date(`${s}T00:00:00.000-05:00`);
+    } else if (s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)) {
+      start = new Date(s);
+    } else if (s.includes('T')) {
+      start = new Date(`${s}-05:00`);
+    } else {
+      start = new Date(`${s}T00:00:00.000-05:00`);
+    }
+    if (!isNaN(start.getTime())) filter.gte = start;
+  }
+
+  if (endDate) {
+    const e = endDate.trim();
+    let end: Date;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(e)) {
+      end = new Date(`${e}T23:59:59.999-05:00`);
+    } else if (/^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?(Z|([+-]\d{2}:\d{2}))?$/.test(e)) {
+      const ymd = e.substring(0, 10);
+      end = new Date(`${ymd}T23:59:59.999-05:00`);
+    } else if (e.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(e)) {
+      end = new Date(e);
+    } else if (e.includes('T')) {
+      end = new Date(`${e}-05:00`);
+    } else {
+      end = new Date(`${e}T23:59:59.999-05:00`);
+    }
+    if (!isNaN(end.getTime())) filter.lte = end;
+  }
+
+  return filter.gte || filter.lte ? filter : undefined;
+}
+
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
@@ -14,32 +70,8 @@ export class ReportsService {
   /**
    * Construye los filtros de fecha asegurando zona horaria de Perú (UTC-5)
    */
-  private buildDateFilter(startDate?: string, endDate?: string): Prisma.DateTimeFilter | undefined {
-    if (!startDate && !endDate) return undefined;
-
-    const filter: Prisma.DateTimeFilter = {};
-
-    if (startDate) {
-      const s = startDate.trim();
-      const start = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)
-        ? new Date(s)
-        : s.includes('T')
-          ? new Date(`${s}-05:00`)
-          : new Date(`${s}T00:00:00.000-05:00`);
-      if (!isNaN(start.getTime())) filter.gte = start;
-    }
-
-    if (endDate) {
-      const e = endDate.trim();
-      const end = e.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(e)
-        ? new Date(e)
-        : e.includes('T')
-          ? new Date(`${e}-05:00`)
-          : new Date(`${e}T23:59:59.999-05:00`);
-      if (!isNaN(end.getTime())) filter.lte = end;
-    }
-
-    return filter.gte || filter.lte ? filter : undefined;
+  buildDateFilter(startDate?: string, endDate?: string): Prisma.DateTimeFilter | undefined {
+    return buildPeruDateTimeFilter(startDate, endDate);
   }
 
   // =========================================================================

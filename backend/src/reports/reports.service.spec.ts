@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ExcelJS from 'exceljs';
-import { ReportsService } from './reports.service.js';
+import { ReportsService, buildPeruDateTimeFilter } from './reports.service.js';
 import { ReceiptType, CashMovementType } from '@prisma/client';
 
 describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () => {
@@ -295,6 +295,74 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       expect(buffer).toBeDefined();
       expect(Buffer.isBuffer(buffer)).toBe(true);
       expect(buffer.length).toBeGreaterThan(1000);
+    });
+  });
+
+  describe('Filtros por Fecha y Zona Horaria Perú (America/Lima, UTC-5)', () => {
+    it('debe generar el rango exacto de 24 horas en hora peruana (UTC-5) para formato YYYY-MM-DD', () => {
+      const filter = buildPeruDateTimeFilter('2026-10-24', '2026-10-24');
+
+      expect(filter).toBeDefined();
+      expect(filter?.gte).toBeInstanceOf(Date);
+      expect(filter?.lte).toBeInstanceOf(Date);
+
+      // Inicio: 2026-10-24 00:00:00.000 en Perú (-05:00) -> 2026-10-24T05:00:00.000Z en UTC
+      expect(filter?.gte?.toISOString()).toBe('2026-10-24T05:00:00.000Z');
+
+      // Fin: 2026-10-24 23:59:59.999 en Perú (-05:00) -> 2026-10-25T04:59:59.999Z en UTC
+      expect(filter?.lte?.toISOString()).toBe('2026-10-25T04:59:59.999Z');
+    });
+
+    it('demuestra por qué la propuesta setUTCHours(23, 59, 59, 999) es errónea y excluye ventas nocturnas', () => {
+      // Venta realizada a las 20:30 (8:30 PM) hora peruana del 24 de octubre
+      // En UTC (Perú es UTC-5), esta venta se almacena como 25 de octubre a las 01:30:00 UTC
+      const eveningSaleTimestamp = new Date('2026-10-25T01:30:00.000Z');
+
+      // 1. Solución ingenua/errónea propuesta con setUTCHours:
+      const flawedEnd = new Date('2026-10-24');
+      flawedEnd.setUTCHours(23, 59, 59, 999); // 2026-10-24T23:59:59.999Z (18:59:59 hora peruana)
+
+      // La venta de las 8:30 PM queda EXCLUIDA con setUTCHours (corte a las 6:59 PM Perú)
+      expect(eveningSaleTimestamp.getTime() <= flawedEnd.getTime()).toBe(false);
+
+      // 2. Solución oficial del sistema con buildPeruDateTimeFilter:
+      const peruFilter = buildPeruDateTimeFilter('2026-10-24', '2026-10-24');
+      expect(peruFilter?.lte).toBeDefined();
+
+      // La venta de las 8:30 PM queda CORRECTAMENTE INCLUIDA en la jornada del 24 de octubre
+      expect(eveningSaleTimestamp.getTime() <= peruFilter!.lte!.getTime()).toBe(true);
+      expect(eveningSaleTimestamp.getTime() >= peruFilter!.gte!.getTime()).toBe(true);
+    });
+
+    it('debe extender fechas con medianoche T00:00:00 en endDate hasta fin de jornada en Perú', () => {
+      const filter = buildPeruDateTimeFilter(
+        '2026-10-24T00:00:00.000Z',
+        '2026-10-24T00:00:00.000Z',
+      );
+
+      // El endDate con medianoche se extiende a 23:59:59.999 hora de Perú
+      expect(filter?.lte?.toISOString()).toBe('2026-10-25T04:59:59.999Z');
+    });
+
+    it('getTaxBookData aplica el rango horario de Perú al filtrar ventas', async () => {
+      mockPrisma.sale.findMany.mockResolvedValue([]);
+      mockPrisma.creditNote.findMany.mockResolvedValue([]);
+
+      await reportsService.getTaxBookData({
+        startDate: '2026-10-24',
+        endDate: '2026-10-24',
+      });
+
+      expect(mockPrisma.sale.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: {
+              gte: new Date('2026-10-24T05:00:00.000Z'),
+              lte: new Date('2026-10-25T04:59:59.999Z'),
+            },
+          }),
+        }),
+      );
     });
   });
 });
