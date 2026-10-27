@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
+import { formatCurrency, formatPeruDateTime, isValidPeruvianRuc } from '../../lib/utils.js';
 import {
   X,
   Building2,
@@ -108,10 +108,9 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
     const nameTrimmed = custName.trim();
 
     if (targetType === 'FACTURA') {
-      const rucRegex = /^(10|15|17|20)\d{9}$/;
-      if (!rucRegex.test(docTrimmed)) {
+      if (!isValidPeruvianRuc(docTrimmed)) {
         setError(
-          'Para Factura Electrónica se exige un RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17.',
+          'Para Factura Electrónica se exige un RUC auténtico de 11 dígitos con dígito verificador válido ante SUNAT.',
         );
         return;
       }
@@ -120,6 +119,10 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
         return;
       }
     } else if (targetType === 'BOLETA') {
+      if (docTrimmed.length === 11 && !isValidPeruvianRuc(docTrimmed)) {
+        setError('El RUC de 11 dígitos no tiene un dígito verificador válido ante SUNAT.');
+        return;
+      }
       if (isHighValueBoleta) {
         if (!docTrimmed || (docTrimmed.length !== 8 && docTrimmed.length !== 11)) {
           setError('Por normativa SUNAT, Boletas de S/ 700.00 a más requieren DNI o RUC obligatorio.');

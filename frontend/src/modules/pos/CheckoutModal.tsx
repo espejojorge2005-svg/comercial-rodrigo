@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useCartStore } from '../../store/useCartStore.js';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency } from '../../lib/utils.js';
+import { formatCurrency, isValidPeruvianRuc } from '../../lib/utils.js';
 import {
   X,
   CreditCard,
@@ -165,9 +165,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       safeName.trim().toLowerCase() !== 'cliente varios' &&
       safeName.trim().toLowerCase() !== 'clientes varios');
 
-  const rucRegex = /^(10|15|17|20)\d{9}$/;
   const isRucValidForFactura =
-    receiptType !== 'FACTURA' || rucRegex.test(cleanCustDoc);
+    receiptType !== 'FACTURA' || isValidPeruvianRuc(cleanCustDoc);
 
   const forbiddenCompanyNames = [
     'EMPRESA',
@@ -203,10 +202,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       validationMessage = 'Ingrese los nombres y apellidos completos del cliente';
     }
   } else if (receiptType === 'FACTURA') {
-    if (!isRucValidForFactura) {
+    if (cleanCustDoc.length !== 11) {
       isFormValid = false;
       validationMessage =
         'El RUC debe tener exactamente 11 dígitos numéricos e iniciar con 10, 20, 15 o 17';
+    } else if (!isRucValidForFactura) {
+      isFormValid = false;
+      validationMessage =
+        'El RUC ingresado no es válido (dígito verificador de SUNAT incorrecto)';
     } else if (!isNameValidForFactura) {
       isFormValid = false;
       validationMessage =

@@ -1103,6 +1103,44 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       );
     });
 
+    it('createSale debe rechazar Facturas con RUC cuyo dígito verificador sea inválido', async () => {
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.FACTURA,
+          customerDocument: '20100107489', // RUC con dígito verificador alterado
+          customerName: 'EMPRESA REAL S.A.C.',
+          customerAddress: 'Av. Las Gardenias 123',
+          paymentMethod: 'CASH',
+          cashPaid: 100,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 1, unitPrice: 100 }],
+        }),
+      ).rejects.toThrow('dígito verificador válido ante SUNAT');
+    });
+
+    it('convertSaleReceipt debe rechazar canje a Factura con RUC cuyo dígito verificador sea inválido', async () => {
+      mockPrisma.sale = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'sale-nv-ruc-err',
+          receiptType: ReceiptType.NOTA_VENTA,
+          isVoided: false,
+          totalAmount: 100,
+          items: [],
+          cashShift: { cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' } },
+        }),
+      };
+
+      await expect(
+        salesService.convertSaleReceipt('sale-nv-ruc-err', 'user-1', {
+          targetReceiptType: ReceiptType.FACTURA,
+          customerDocument: '20100107489', // RUC con dígito verificador alterado
+          customerName: 'EMPRESA REAL S.A.C.',
+        }),
+      ).rejects.toThrow('dígito verificador válido ante SUNAT');
+    });
+
     it('debe retornar NOT_FOUND sin inventar empresas ficticias si no existe en API ni en BD', async () => {
       mockPrisma.sale = {
         findFirst: vi.fn().mockResolvedValue(null),
