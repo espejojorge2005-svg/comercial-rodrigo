@@ -58,7 +58,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
           changeAmount: 0,
           items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
         }),
-      ).rejects.toThrow('RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17');
+      ).rejects.toThrow('RUC auténtico de 11 dígitos');
     });
 
     it('debe rechazar Factura si el RUC tiene 10 dígitos o contiene caracteres no numéricos', async () => {
@@ -76,7 +76,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
             changeAmount: 0,
             items: [{ productId: 'p1', quantity: 1, unitPrice: 100, isWholesaleApplied: false }],
           }),
-        ).rejects.toThrow('RUC válido de 11 dígitos que inicie con 10, 20, 15 o 17');
+        ).rejects.toThrow('RUC auténtico de 11 dígitos');
       }
     });
 
@@ -599,7 +599,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
           customerDocument: '71234567', // DNI en vez de RUC
           customerName: 'EMPRESA SAC',
         }),
-      ).rejects.toThrow('RUC válido de 11 dígitos');
+      ).rejects.toThrow('RUC auténtico de 11 dígitos');
     });
 
     it('debe canjear exitosamente Nota de Venta a Boleta Electrónica sin duplicar stock ni caja', async () => {
@@ -1480,7 +1480,7 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       // Plazo límite: 2026-02-20
       const emissionJan = new Date('2026-01-15T10:00:00Z');
       const info1 = getSunatCreditNoteDeadline(emissionJan, new Date('2026-02-10T12:00:00Z'));
-      expect(info1.formattedDeadline).toBe('2026-02-20');
+      expect(info1.formattedDeadline).toBe('20/02/2026');
       expect(info1.isExpired).toBe(false);
 
       const infoExpired = getSunatCreditNoteDeadline(emissionJan, new Date('2026-02-21T08:00:00Z'));

@@ -27,193 +27,51 @@ import { SyncOfflineSalesBatchDto } from './dto/sync-offline-sales.dto.js';
 import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
 import { buildPeruDateTimeFilter } from '../reports/reports.service.js';
 import * as bcrypt from 'bcrypt';
+import { SalesSequenceService } from './services/sales-sequence.service.js';
+import { SalesOfflineService } from './services/sales-offline.service.js';
+import {
+  isValidPeruvianRuc,
+  getSunatCompliantEmissionDate,
+  getSunatCreditNoteDeadline,
+} from './utils/sales-fiscal.util.js';
 
-/**
- * 🛡️ VALIDADOR OFICIAL DE RUC PERUANO (ALGORITMO MÓDULO 11 DE SUNAT)
- * El RUC consta de 11 dígitos, comienza con 10, 15, 17 o 20 y cumple con la
- * ponderación matemática oficial de comprobación: [5, 4, 3, 2, 7, 6, 5, 4, 3, 2].
- */
-export function isValidPeruvianRuc(ruc: string, allowKnownDemoRucs = true): boolean {
-  const clean = (ruc || '').trim();
-  if (!/^\d{11}$/.test(clean)) return false;
-  const validPrefixes = ['10', '15', '17', '20'];
-  if (!validPrefixes.some((p) => clean.startsWith(p))) return false;
-
-  // Permitir RUCs de prueba / simulación de Comercial Rodrigo en entornos no estrictos
-  if (allowKnownDemoRucs && (clean === '10458923011' || clean === '20601234567')) {
-    return true;
-  }
-
-  const weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
-  let sum = 0;
-  for (let i = 0; i < 10; i++) {
-    sum += parseInt(clean[i], 10) * weights[i];
-  }
-  const remainder = sum % 11;
-  let checkDigit = 11 - remainder;
-  if (checkDigit === 10) checkDigit = 0;
-  if (checkDigit === 11) checkDigit = 1;
-
-  return checkDigit === parseInt(clean[10], 10);
-}
-
-/**
- * 🛡️ CONTROL TRIBUTARIO DE PLAZO DE ENVÍO SUNAT (R.S. N° 000003-2023/SUNAT)
- * Plazo máximo de envío: hasta el día calendario siguiente a la fecha de emisión.
- * Si la fecha original es anterior a ayer (en zona horaria de Perú UTC-5), se
- * ajusta a la fecha actual para evitar el Error 2324 de SUNAT ("Fecha no permitida").
- */
-export function getSunatCompliantEmissionDate(originalDate: Date = new Date()): {
-  emissionDate: Date;
-  wasAdjusted: boolean;
-  originalDateString: string;
-} {
-  const now = new Date();
-
-  // Medianoche en hora oficial de Perú (UTC-5) para comparar días calendario exactos
-  const getPeruCalendarDay = (d: Date) => {
-    const utc = d.getTime() + d.getTimezoneOffset() * 60000;
-    const peru = new Date(utc - 5 * 3600000);
-    return new Date(peru.getFullYear(), peru.getMonth(), peru.getDate()).getTime();
-  };
-
-  const todayPeruDay = getPeruCalendarDay(now);
-  const emissionPeruDay = getPeruCalendarDay(originalDate);
-
-  // Diferencia en días calendario (días transcurridos)
-  const diffDays = Math.floor((todayPeruDay - emissionPeruDay) / (24 * 3600000));
-
-  // SUNAT permite hoy (0 días) y ayer (1 día calendario)
-  if (diffDays <= 1 && diffDays >= 0) {
-    return {
-      emissionDate: originalDate,
-      wasAdjusted: false,
-      originalDateString: originalDate.toISOString(),
-    };
-  }
-
-  // Si tiene 2 o más días de antigüedad o es fecha futura, se emite con fecha actual
-  return {
-    emissionDate: now,
-    wasAdjusted: true,
-    originalDateString: originalDate.toISOString(),
-  };
-}
-
-/**
- * 🛡️ CONTROL TRIBUTARIO DE PLAZO LEGAL SUNAT PARA NOTAS DE CRÉDITO (R.S. 193-2020/SUNAT)
- * La emisión de Notas de Crédito Electrónicas (motivo 01: anulación de la operación o 02: error en RUC)
- * debe realizarse a más tardar hasta el décimo quinto (15°) día hábil del mes siguiente
- * a aquel en que se emitió el comprobante de pago electrónico respectivo (Boleta o Factura).
- */
-export function getSunatCreditNoteDeadline(
-  emissionDate: Date | string,
-  currentDate: Date = new Date(),
-): {
-  deadline: Date;
-  isExpired: boolean;
-  formattedDeadline: string;
-  formattedEmissionDate: string;
-} {
-  const date = new Date(emissionDate);
-  const peruEmissionTime = new Date(date.getTime() - 5 * 3600000);
-  const emissionYear = peruEmissionTime.getUTCFullYear();
-  const emissionMonth = peruEmissionTime.getUTCMonth(); // 0-11
-
-  let nextMonth = emissionMonth + 1;
-  let nextYear = emissionYear;
-  if (nextMonth > 11) {
-    nextMonth = 0;
-    nextYear = emissionYear + 1;
-  }
-
-  let businessDaysCount = 0;
-  let checkDay = 1;
-  let deadlineDay = 1;
-
-  while (businessDaysCount < 15 && checkDay <= 31) {
-    const d = new Date(Date.UTC(nextYear, nextMonth, checkDay, 12, 0, 0));
-    if (d.getUTCMonth() !== nextMonth) break;
-
-    const dayOfWeek = d.getUTCDay(); // 0: Domingo, 6: Sábado
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      businessDaysCount++;
-      if (businessDaysCount === 15) {
-        deadlineDay = checkDay;
-        break;
-      }
-    }
-    checkDay++;
-  }
-
-  // Límite final: 23:59:59.999 en hora de Perú (UTC-5) del día 15 hábil
-  const deadlineUtc = new Date(Date.UTC(nextYear, nextMonth, deadlineDay, 23 + 5, 59, 59, 999));
-  const isExpired = currentDate.getTime() > deadlineUtc.getTime();
-
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const formattedDeadline = `${pad(deadlineDay)}/${pad(nextMonth + 1)}/${nextYear}`;
-  const formattedEmissionDate = `${pad(peruEmissionTime.getUTCDate())}/${pad(emissionMonth + 1)}/${emissionYear}`;
-
-  return {
-    deadline: deadlineUtc,
-    isExpired,
-    formattedDeadline,
-    formattedEmissionDate,
-  };
-}
+export {
+  isValidPeruvianRuc,
+  getSunatCompliantEmissionDate,
+  getSunatCreditNoteDeadline,
+};
 
 @Injectable()
 export class SalesService {
   private readonly logger = new Logger(SalesService.name);
+  private sequenceService: SalesSequenceService;
+  private offlineService: SalesOfflineService;
 
   constructor(
     private prisma: PrismaService,
     private billingService: BillingService,
-  ) {}
+    sequenceService?: SalesSequenceService,
+    offlineService?: SalesOfflineService,
+  ) {
+    this.sequenceService = sequenceService || new SalesSequenceService();
+    this.offlineService =
+      offlineService ||
+      new SalesOfflineService(this.prisma, this.billingService, this.sequenceService);
+  }
 
   /**
-   * Helper base para derivar formato de serie estándar según identificador/nombre de caja:
-   * Caja 1 (POS-01): NV01, B001, F001, BC01, FC01
-   * Caja 2 (POS-02): NV02, B002, F002, BC02, FC02
+   * Helper base para derivar formato de serie estándar según identificador/nombre de caja
    */
-  private getSeriesForRegister(
+  getSeriesForRegister(
     identifier: string,
     name: string,
     receiptType: ReceiptType,
   ): string {
-    let boxNum = '01';
-    const match = (identifier || '').match(/\d+/) || (name || '').match(/\d+/);
-    if (match) {
-      boxNum = match[0].padStart(2, '0');
-    } else {
-      // Determinista por hash de identificador si no incluye números
-      const sum = (identifier || name || 'POS-01')
-        .split('')
-        .reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const mod = (sum % 90) + 1;
-      boxNum = String(mod).padStart(2, '0');
-    }
-
-    if (receiptType === ReceiptType.NOTA_VENTA) {
-      return `NV${boxNum}`;
-    } else if (receiptType === ReceiptType.BOLETA) {
-      return `B${boxNum.padStart(3, '0')}`;
-    } else if (receiptType === ReceiptType.FACTURA) {
-      return `F${boxNum.padStart(3, '0')}`;
-    } else if (receiptType === ReceiptType.NOTA_CREDITO_BOLETA) {
-      return `BC${boxNum}`;
-    } else if (receiptType === ReceiptType.NOTA_CREDITO_FACTURA) {
-      return `FC${boxNum}`;
-    }
-    return `NV${boxNum}`;
+    return this.sequenceService.getSeriesForRegister(identifier, name, receiptType);
   }
 
   /**
    * 🛡️ ASIGNACIÓN SEGURA DE SERIES POR CAJA FÍSICA (PREVENCIÓN TOTAL DE COLISIONES)
-   * Garantiza que cada caja física posea una serie única e inmutable para cada tipo de comprobante.
-   * 1. Si la caja ya tiene una serie registrada en ReceiptSequence, la reutiliza.
-   * 2. Si es una serie nueva, verifica contra la base de datos que ninguna otra caja la tenga asignada.
-   *    Si otra caja ya la tiene, busca el siguiente número disponible (B001 -> B002 -> B003...).
    */
   async getOrAllocateSeries(
     tx: any,
@@ -222,62 +80,13 @@ export class SalesService {
     name: string,
     receiptType: ReceiptType,
   ): Promise<string> {
-    // 1. Si la caja ya tiene serie asignada para este tipo de comprobante en ReceiptSequence, respetarla
-    if (tx.receiptSequence?.findUnique) {
-      try {
-        const existingForRegister = await tx.receiptSequence.findUnique({
-          where: {
-            cashRegisterId_receiptType: {
-              cashRegisterId,
-              receiptType,
-            },
-          },
-        });
-        if (existingForRegister?.series) {
-          return existingForRegister.series;
-        }
-      } catch (err) {
-        // En tests unitarios con mocks parciales
-      }
-    }
-
-    // 2. Determinar la serie candidata preferida
-    let candidate = this.getSeriesForRegister(identifier, name, receiptType);
-
-    // 3. Si tx soporta findUnique, verificar que la serie no pertenezca a OTRA caja física
-    if (tx.receiptSequence?.findUnique) {
-      try {
-        let isTaken = true;
-        let counter = 1;
-        const match = (identifier || '').match(/\d+/) || (name || '').match(/\d+/);
-        if (match) {
-          counter = parseInt(match[0], 10) || 1;
-        }
-
-        while (isTaken && counter <= 99) {
-          const takenSeq = await tx.receiptSequence.findUnique({
-            where: { series: candidate },
-          });
-
-          if (!takenSeq || takenSeq.cashRegisterId === cashRegisterId) {
-            isTaken = false;
-          } else {
-            // Colisión detectada: esta serie ya pertenece a otra caja. Avanzar al siguiente número.
-            counter++;
-            const boxPad = String(counter).padStart(2, '0');
-            if (receiptType === ReceiptType.NOTA_VENTA) candidate = `NV${boxPad}`;
-            else if (receiptType === ReceiptType.BOLETA) candidate = `B${boxPad.padStart(3, '0')}`;
-            else if (receiptType === ReceiptType.FACTURA) candidate = `F${boxPad.padStart(3, '0')}`;
-            else if (receiptType === ReceiptType.NOTA_CREDITO_BOLETA) candidate = `BC${boxPad}`;
-            else if (receiptType === ReceiptType.NOTA_CREDITO_FACTURA) candidate = `FC${boxPad}`;
-          }
-        }
-      } catch (err) {
-        // Fallback seguro a la serie candidata
-      }
-    }
-
-    return candidate;
+    return this.sequenceService.getOrAllocateSeries(
+      tx,
+      cashRegisterId,
+      identifier,
+      name,
+      receiptType,
+    );
   }
 
   /**
@@ -932,13 +741,15 @@ export class SalesService {
         } else {
           matches = a.pin === cleanPin;
           if (matches) {
-            const hashedPin = await bcrypt.hash(cleanPin, 10);
-            await userClient
-              .update({
-                where: { id: a.id },
-                data: { pin: hashedPin },
-              })
-              .catch(() => {});
+            if (userClient && typeof userClient.update === 'function') {
+              const hashedPin = await bcrypt.hash(cleanPin, 10);
+              await userClient
+                .update({
+                  where: { id: a.id },
+                  data: { pin: hashedPin },
+                })
+                .catch(() => {});
+            }
           }
         }
         if (matches) {
@@ -2063,644 +1874,23 @@ export class SalesService {
 
   /**
    * Sincronización en lote de ventas procesadas offline (modo sin conexión)
-   * Garantiza idempotencia, trazabilidad de Kardex con fecha real y tolerancia a turnos cerrados
    */
   async syncOfflineSales(userId: string, batchDto: SyncOfflineSalesBatchDto) {
-    if (!batchDto.sales || batchDto.sales.length === 0) {
-      return {
-        message: 'No hay ventas offline para sincronizar',
-        total: 0,
-        syncedCount: 0,
-        failedCount: 0,
-        results: [],
-      };
-    }
-
-    const results: {
-      offlineId: string;
-      success: boolean;
-      sale?: any;
-      error?: string;
-    }[] = [];
-
-    for (const offlineSale of batchDto.sales) {
-      try {
-        // 1. Idempotencia: Verificar si ya fue procesada anteriormente para no duplicar ventas
-        const existingKardex = await this.prisma.kardexMovement.findFirst({
-          where: {
-            reason: { contains: `[OFFLINE:${offlineSale.offlineId}]` },
-          },
-        });
-
-        if (existingKardex && existingKardex.referenceId) {
-          const existingSale = await this.prisma.sale.findUnique({
-            where: { id: existingKardex.referenceId },
-            include: {
-              items: {
-                include: {
-                  product: {
-                    select: { id: true, name: true, barcode: true, unitType: true },
-                  },
-                },
-              },
-              cashShift: {
-                include: { cashRegister: true },
-              },
-              user: {
-                select: { id: true, name: true, username: true },
-              },
-            },
-          });
-
-          if (existingSale) {
-            results.push({
-              offlineId: offlineSale.offlineId,
-              success: true,
-              sale: {
-                ...existingSale,
-                totalAmount: Number(existingSale.totalAmount),
-                cashPaid: Number(existingSale.cashPaid),
-                digitalPaid: Number(existingSale.digitalPaid),
-                changeAmount: Number(existingSale.changeAmount),
-                items: existingSale.items.map((i) => ({
-                  ...i,
-                  quantity: Number(i.quantity),
-                  unitPrice: Number(i.unitPrice),
-                  subtotal: Number(i.subtotal),
-                })),
-              },
-            });
-            continue;
-          }
-        }
-
-        // 2. Asociar al turno de caja (incluso si ya fue cerrado posteriormente)
-        let targetShift = await this.prisma.cashShift.findUnique({
-          where: { id: offlineSale.cashShiftId },
-          include: { cashRegister: true },
-        });
-
-        if (!targetShift) {
-          targetShift = await this.prisma.cashShift.findFirst({
-            where: { userId },
-            orderBy: { createdAt: 'desc' },
-            include: { cashRegister: true },
-          });
-        }
-
-        if (!targetShift) {
-          throw new BadRequestException('No se encontró un turno de caja para asociar la venta offline');
-        }
-
-        // 3. Crear venta y movimientos de Kardex
-        const txResult = await this.prisma.$transaction(
-          async (tx) => {
-            let totalCalculated = 0;
-            let totalTaxableBase = 0;
-            let totalIgv = 0;
-            const detailsToCreate: {
-              productId: string;
-              quantity: Prisma.Decimal;
-              unitPrice: Prisma.Decimal;
-              subtotal: Prisma.Decimal;
-              costPriceSnapshot: Prisma.Decimal;
-            }[] = [];
-
-            const validatedItems: {
-              product: Product;
-              quantity: number;
-              unitPrice: number;
-              subtotalItem: number;
-            }[] = [];
-
-            // 🛡️ CONSOLIDACIÓN DE PRODUCTOS DUPLICADOS & PREVENCIÓN DE DEADLOCKS (Hallazgo Medio 2.3)
-            const consolidatedMap = new Map<
-              string,
-              { productId: string; quantity: number; unitPrice: number }
-            >();
-
-            for (const item of offlineSale.items) {
-              const qty = Number(item.quantity);
-              const price = Number(item.unitPrice);
-              if (consolidatedMap.has(item.productId)) {
-                const existing = consolidatedMap.get(item.productId)!;
-                const newQty = Number((existing.quantity + qty).toFixed(4));
-                const prevTotal = existing.quantity * existing.unitPrice;
-                const currentTotal = qty * price;
-                existing.quantity = newQty;
-                existing.unitPrice = Number(((prevTotal + currentTotal) / newQty).toFixed(2));
-              } else {
-                consolidatedMap.set(item.productId, {
-                  productId: item.productId,
-                  quantity: qty,
-                  unitPrice: price,
-                });
-              }
-            }
-
-            const consolidatedOfflineItems = Array.from(consolidatedMap.values()).sort((a, b) =>
-              a.productId.localeCompare(b.productId),
-            );
-
-            for (const item of consolidatedOfflineItems) {
-              const product = await tx.product.findUnique({
-                where: { id: item.productId },
-              });
-
-              if (!product) {
-                throw new BadRequestException(`Producto ID ${item.productId} no encontrado`);
-              }
-
-              const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
-              const itemValorTotal = Number((subtotalItem / 1.18).toFixed(2));
-              const itemIgv = Number((subtotalItem - itemValorTotal).toFixed(2));
-
-              totalCalculated += subtotalItem;
-              totalTaxableBase += itemValorTotal;
-              totalIgv += itemIgv;
-
-              detailsToCreate.push({
-                productId: product.id,
-                quantity: new Prisma.Decimal(item.quantity),
-                unitPrice: new Prisma.Decimal(item.unitPrice),
-                subtotal: new Prisma.Decimal(subtotalItem),
-                costPriceSnapshot: product.costPrice,
-              });
-
-              validatedItems.push({
-                product,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                subtotalItem,
-              });
-            }
-
-            totalCalculated = Number(totalCalculated.toFixed(2));
-            totalTaxableBase = Number(totalTaxableBase.toFixed(2));
-            totalIgv = Number(totalIgv.toFixed(2));
-            const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
-
-            // Validar cuadre financiero con tolerancia de redondeo BCRP (S/ 0.10) también en sincronización offline
-            const offCash = Number(offlineSale.cashPaid ?? 0);
-            const offDigital = Number(offlineSale.digitalPaid ?? 0);
-            const offChange = Number(offlineSale.changeAmount ?? 0);
-            const offNetPaid = Number(((offCash + offDigital) - offChange).toFixed(2));
-
-            if (Math.abs(offNetPaid - totalCalculated) > 0.10) {
-              throw new BadRequestException(
-                `Venta offline [${offlineSale.offlineId}] rechazada por descuadre financiero: Importe neto pagado S/ ${offNetPaid.toFixed(2)} difiere del total S/ ${totalCalculated.toFixed(2)} por más de S/ 0.10`,
-              );
-            }
-
-            const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
-
-            // Si la venta offline solicitó emisión a Boleta o Factura al reconectar, se respeta el tipo destino
-            const receiptType =
-              offlineSale.targetReceiptType ||
-              offlineSale.receiptType ||
-              ReceiptType.NOTA_VENTA;
-
-            if (receiptType === ReceiptType.FACTURA) {
-              const ruc = (offlineSale.customerDocument || '').trim();
-              if (!isValidPeruvianRuc(ruc)) {
-                throw new BadRequestException(
-                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: RUC "${ruc}" inválido ante SUNAT (dígito verificador incorrecto).`,
-                );
-              }
-            }
-
-            const isFiscal = receiptType !== ReceiptType.NOTA_VENTA;
-            const taxableBase = totalTaxableBase;
-            const igvAmount = isFiscal ? totalIgv : 0;
-
-            const series = await this.getOrAllocateSeries(
-              tx,
-              targetShift.cashRegisterId,
-              targetShift.cashRegister.identifier,
-              targetShift.cashRegister.name,
-              receiptType,
-            );
-
-            const sequence = await tx.receiptSequence.upsert({
-              where: { series },
-              create: {
-                cashRegisterId: targetShift.cashRegisterId,
-                receiptType,
-                series,
-                currentNumber: 1,
-              },
-              update: {
-                currentNumber: { increment: 1 },
-              },
-            });
-
-            const correlativeNumber = sequence.currentNumber;
-            const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
-
-            // Trazabilidad de origen offline para auditoría cruzada sin duplicidad
-            const offlineTrace = offlineSale.offlineTicketNumber || offlineSale.offlineId;
-            const originReason = offlineTrace ? `ORIGEN_OFFLINE:${offlineTrace}` : null;
-
-            // 1. Guardar la venta en base de datos local de forma inmediata (con emisión PENDING si es fiscal)
-            const sale = await tx.sale.create({
-              data: {
-                cashShiftId: targetShift.id,
-                userId,
-                receiptType,
-                series,
-                correlativeNumber,
-                fullReceiptNumber,
-                isFiscal,
-                taxableBase: new Prisma.Decimal(taxableBase),
-                igvAmount: new Prisma.Decimal(igvAmount),
-                customerAddress: offlineSale.customerAddress || null,
-                customerEmail: offlineSale.customerEmail?.trim() || null,
-                hash: null,
-                qrString: null,
-                emissionStatus: isFiscal ? EmissionStatus.PENDING : null,
-                voidedReason: originReason,
-                customerName: offlineSale.customerName || 'Cliente Varios',
-                customerDocument: offlineSale.customerDocument || null,
-                paymentMethod: offlineSale.paymentMethod,
-                cashPaid: new Prisma.Decimal(offlineSale.cashPaid),
-                digitalPaid: new Prisma.Decimal(offlineSale.digitalPaid),
-                totalAmount: totalAmountDecimal,
-                changeAmount: new Prisma.Decimal(offlineSale.changeAmount),
-                createdAt: saleDate,
-                items: {
-                  create: detailsToCreate,
-                },
-              },
-              include: {
-                items: {
-                  include: {
-                    product: {
-                      select: { id: true, name: true, barcode: true, unitType: true },
-                    },
-                  },
-                },
-                cashShift: {
-                  include: { cashRegister: true },
-                },
-                user: {
-                  select: { id: true, name: true, username: true },
-                },
-              },
-            });
-
-            // 2. Actualizar stock atómicamente y registrar en Kardex con fecha original
-            for (const item of validatedItems) {
-              const updatedProduct = await tx.product.update({
-                where: { id: item.product.id },
-                data: {
-                  currentStock: { decrement: new Prisma.Decimal(item.quantity) },
-                },
-              });
-
-              await tx.kardexMovement.create({
-                data: {
-                  productId: item.product.id,
-                  movementType: MovementType.SALE,
-                  quantity: new Prisma.Decimal(item.quantity),
-                  previousStock: new Prisma.Decimal(Number(updatedProduct.currentStock) + item.quantity),
-                  newStock: updatedProduct.currentStock,
-                  unitCost: item.product.costPrice,
-                  referenceId: sale.id,
-                  reason: `Venta POS Offline #${sale.saleNumber} [OFFLINE:${offlineSale.offlineId}] - ${targetShift.cashRegister.name}`,
-                  userId,
-                  createdAt: saleDate,
-                },
-              });
-            }
-
-            // 3. Si el turno ya fue cerrado previamente, reconciliar retroactivamente el arqueo físico
-            if (targetShift.status === ShiftStatus.CLOSED) {
-              // Calculamos el efectivo neto aquí mismo para no depender de funciones externas
-              const netCash =
-                sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
-                  ? 0
-                  : Math.max(0, Number(sale.cashPaid) - Number(sale.changeAmount || 0));
-
-              if (netCash > 0) {
-                await tx.cashShift.update({
-                  where: { id: targetShift.id },
-                  data: {
-                    expectedBalance: { increment: new Prisma.Decimal(netCash) },
-                    ...(targetShift.difference !== null
-                      ? { difference: { decrement: new Prisma.Decimal(netCash) } }
-                      : {}),
-                  },
-                });
-              }
-            }
-
-            return {
-              sale,
-              isFiscal,
-              receiptType,
-              series,
-              correlativeNumber,
-              totalCalculated,
-              taxableBase,
-              igvAmount,
-              validatedItems,
-              saleDate,
-            };
-          },
-          { timeout: 10000 },
-        );
-
-        // =========================================================================
-        // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
-        // =========================================================================
-        let finalSale: any = txResult.sale;
-
-        if (txResult.isFiscal) {
-          const storeConfig = await this.prisma.storeConfig.findFirst();
-          try {
-              // 🛡️ REGLA TRIBUTARIA SUNAT (R.S. 000003-2023): Plazo de envío máx. 1 día calendario.
-              // Si la venta offline tiene más de 1 día calendario de antigüedad, se ajusta a la fecha actual
-              // para evitar el rechazo con Error 2324 ("Fecha no permitida").
-              const sunatDateCheck = getSunatCompliantEmissionDate(txResult.saleDate);
-              const effectiveCreatedAt = sunatDateCheck.emissionDate;
-
-              if (sunatDateCheck.wasAdjusted) {
-                await this.prisma.sale.update({
-                  where: { id: txResult.sale.id },
-                  data: {
-                    createdAt: effectiveCreatedAt,
-                    voidedReason: `CONTINGENCIA_OFFLINE: Fecha ajustada de ${sunatDateCheck.originalDateString} a actual por superar plazo de 1 día calendario SUNAT (R.S. 000003-2023)`,
-                  },
-                });
-              }
-
-              const billingRes = await this.billingService.issueReceipt({
-                receiptType: txResult.receiptType as 'BOLETA' | 'FACTURA',
-                series: txResult.series,
-                correlativeNumber: txResult.correlativeNumber,
-                totalAmount: txResult.totalCalculated,
-                taxableBase: txResult.taxableBase,
-                igvAmount: txResult.igvAmount,
-                customerName: offlineSale.customerName || 'CLIENTES VARIOS',
-                customerDocument: offlineSale.customerDocument,
-                customerAddress: offlineSale.customerAddress,
-                customerEmail: offlineSale.customerEmail?.trim() || null,
-                paymentMethod: offlineSale.paymentMethod,
-                companyRuc: storeConfig?.ruc || '10458923011',
-                items: txResult.validatedItems.map((vi: any) => ({
-                  name: vi.product.name,
-                  quantity: vi.quantity,
-                  unitPrice: vi.unitPrice,
-                  subtotal: vi.subtotalItem,
-                  unitType: vi.product.unitType,
-                })),
-                createdAt: effectiveCreatedAt,
-              });
-
-            if (billingRes.success) {
-              const finalEmissionStatus =
-                (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
-
-              finalSale = await this.prisma.sale.update({
-                where: { id: txResult.sale.id },
-                data: {
-                  hash: billingRes.hash,
-                  qrString: billingRes.qrString,
-                  emissionStatus: finalEmissionStatus,
-                  externalId: billingRes.externalId || null,
-                  pdfUrl: billingRes.pdfUrl || null,
-                  xmlUrl: billingRes.xmlUrl || null,
-                  cdrUrl: billingRes.cdrUrl || null,
-                } as any,
-                include: {
-                  items: {
-                    include: {
-                      product: {
-                        select: { id: true, name: true, barcode: true, unitType: true },
-                      },
-                    },
-                  },
-                  cashShift: {
-                    include: { cashRegister: true },
-                  },
-                  user: {
-                    select: { id: true, name: true, username: true },
-                  },
-                },
-              });
-            } else {
-              // El PSE reportó rechazo formal de SUNAT
-              finalSale = await this.prisma.sale.update({
-                where: { id: txResult.sale.id },
-                data: {
-                  emissionStatus: EmissionStatus.REJECTED,
-                },
-                include: {
-                  items: {
-                    include: {
-                      product: {
-                        select: { id: true, name: true, barcode: true, unitType: true },
-                      },
-                    },
-                  },
-                  cashShift: {
-                    include: { cashRegister: true },
-                  },
-                  user: {
-                    select: { id: true, name: true, username: true },
-                  },
-                },
-              });
-              this.logger.error(
-                `[syncOfflineSales] Rechazado por PSE: Boleta/Factura offline [${offlineSale.offlineId}] falló validación SUNAT: ${billingRes.message}`,
-              );
-            }
-          } catch (billingErr: any) {
-            this.logger.error(
-              `[syncOfflineSales] Error de facturación para venta offline [${offlineSale.offlineId}]: ${billingErr.message}. La venta se preserva localmente con estado PENDING.`,
-            );
-          }
-        }
-
-        results.push({
-          offlineId: offlineSale.offlineId,
-          success: true,
-          sale: {
-            ...finalSale,
-            totalAmount: Number(finalSale.totalAmount),
-            taxableBase: Number(finalSale.taxableBase),
-            igvAmount: Number(finalSale.igvAmount),
-            cashPaid: Number(finalSale.cashPaid),
-            digitalPaid: Number(finalSale.digitalPaid),
-            changeAmount: Number(finalSale.changeAmount),
-            items: finalSale.items.map((i: any) => ({
-              ...i,
-              quantity: Number(i.quantity),
-              unitPrice: Number(i.unitPrice),
-              subtotal: Number(i.subtotal),
-            })),
-          },
-        });
-      } catch (err: any) {
-        results.push({
-          offlineId: offlineSale.offlineId,
-          success: false,
-          error: err.message || 'Error al procesar venta offline',
-        });
-      }
-    }
-
-    return {
-      message: `Procesadas ${results.length} ventas offline`,
-      total: results.length,
-      syncedCount: results.filter((r) => r.success).length,
-      failedCount: results.filter((r) => !r.success).length,
-      results,
-    };
+    return this.offlineService.syncOfflineSales(userId, batchDto);
   }
 
   /**
    * 🛡️ REEMISIÓN SEGURA DE COMPROBANTES PENDING (RESIDUAL DE CONTINGENCIA O CORTE DE RED)
-   * Conforme a la R.S. N° 000003-2023/SUNAT: Si el comprobante supera 1 día calendario,
-   * se ajusta la fecha a la actual antes de emitir para evitar el Error 2324 de SUNAT.
    */
   async reemitPendingSale(saleId: string) {
-    const sale = await this.prisma.sale.findUnique({
-      where: { id: saleId },
-      include: {
-        items: {
-          include: {
-            product: {
-              select: { id: true, name: true, barcode: true, unitType: true },
-            },
-          },
-        },
-        cashShift: {
-          include: { cashRegister: true },
-        },
-      },
-    });
-
-    if (!sale) {
-      throw new NotFoundException(`Venta con ID ${saleId} no encontrada`);
-    }
-
-    if (!sale.isFiscal) {
-      throw new BadRequestException('Esta venta es una Nota de Venta interna; no requiere emisión ante SUNAT');
-    }
-
-    if (sale.emissionStatus === EmissionStatus.ACCEPTED) {
-      return { success: true, message: 'El comprobante ya fue emitido y aceptado por SUNAT previamente', sale };
-    }
-
-    // 🛡️ REGLA TRIBUTARIA SUNAT: Validar y ajustar fecha de emisión si supera el plazo legal
-    const sunatDateCheck = getSunatCompliantEmissionDate(sale.createdAt);
-    const effectiveDate = sunatDateCheck.emissionDate;
-
-    if (sunatDateCheck.wasAdjusted) {
-      await this.prisma.sale.update({
-        where: { id: sale.id },
-        data: {
-          createdAt: effectiveDate,
-          voidedReason: `REEMISION_PENDIENTE: Fecha ajustada de ${sunatDateCheck.originalDateString} a actual para evitar Error 2324 SUNAT`,
-        },
-      });
-    }
-
-    const storeConfig = await this.prisma.storeConfig.findFirst();
-
-    const billingRes = await this.billingService.issueReceipt({
-      receiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
-      series: sale.series,
-      correlativeNumber: sale.correlativeNumber,
-      totalAmount: Number(sale.totalAmount),
-      taxableBase: Number(sale.taxableBase),
-      igvAmount: Number(sale.igvAmount),
-      customerName: sale.customerName || 'CLIENTES VARIOS',
-      customerDocument: sale.customerDocument || undefined,
-      customerAddress: sale.customerAddress || undefined,
-      customerEmail: sale.customerEmail || undefined,
-      paymentMethod: sale.paymentMethod,
-      companyRuc: storeConfig?.ruc || '10458923011',
-      items: sale.items.map((item) => ({
-        name: item.product.name,
-        quantity: Number(item.quantity),
-        unitPrice: Number(item.unitPrice),
-        subtotal: Number(item.subtotal),
-        unitType: item.product.unitType,
-      })),
-      createdAt: effectiveDate,
-    });
-
-    if (billingRes.success) {
-      const finalStatus = (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
-      const updatedSale = await this.prisma.sale.update({
-        where: { id: sale.id },
-        data: {
-          hash: billingRes.hash,
-          qrString: billingRes.qrString,
-          emissionStatus: finalStatus,
-          externalId: billingRes.externalId || null,
-          pdfUrl: billingRes.pdfUrl || null,
-          xmlUrl: billingRes.xmlUrl || null,
-          cdrUrl: billingRes.cdrUrl || null,
-        } as any,
-        include: {
-          items: {
-            include: {
-              product: {
-                select: { id: true, name: true, barcode: true, unitType: true },
-              },
-            },
-          },
-          cashShift: {
-            include: { cashRegister: true },
-          },
-        },
-      });
-
-      return { success: true, message: 'Comprobante emitido exitosamente ante SUNAT', sale: updatedSale };
-    } else {
-      const finalStatus = billingRes.emissionStatus === 'PENDING' ? EmissionStatus.PENDING : EmissionStatus.REJECTED;
-      await this.prisma.sale.update({
-        where: { id: sale.id },
-        data: {
-          emissionStatus: finalStatus,
-        },
-      });
-      return { success: false, message: `Error en emisión: ${billingRes.message}`, error: billingRes.message };
-    }
+    return this.offlineService.reemitPendingSale(saleId);
   }
 
   /**
    * Reenvío en lote de todos los comprobantes PENDING con corte de plazo SUNAT
    */
   async reemitPendingBatch() {
-    const pendingSales = await this.prisma.sale.findMany({
-      where: {
-        isFiscal: true,
-        emissionStatus: EmissionStatus.PENDING,
-      },
-      select: { id: true, fullReceiptNumber: true },
-    });
-
-    const results = [];
-    for (const s of pendingSales) {
-      try {
-        const res = await this.reemitPendingSale(s.id);
-        results.push({ id: s.id, receiptNumber: s.fullReceiptNumber, success: res.success, message: res.message });
-      } catch (err: any) {
-        results.push({ id: s.id, receiptNumber: s.fullReceiptNumber, success: false, message: err.message });
-      }
-    }
-
-    return {
-      totalFound: pendingSales.length,
-      processed: results.length,
-      successful: results.filter((r) => r.success).length,
-      failed: results.filter((r) => !r.success).length,
-      details: results,
-    };
+    return this.offlineService.reemitPendingBatch();
   }
 }
 
