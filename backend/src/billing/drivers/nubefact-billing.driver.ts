@@ -122,6 +122,24 @@ export function mapUnitTypeToSunat(unitType?: string | null): string {
   return SUNAT_UNIT_MAP[clean] || 'NIU';
 }
 
+/**
+ * Normaliza la cabecera de autenticación requerida por la API REST de Nubefact.
+ * Formato oficial Nubefact: Authorization: Token token="TU_TOKEN"
+ * Soporta de manera transparente si el usuario ingresó solo el token o prefijado con Bearer/Token.
+ */
+export function buildNubefactAuthHeader(apiToken: string): string {
+  const clean = (apiToken || '').trim();
+  if (clean.startsWith('Token token=')) {
+    return clean;
+  }
+  const rawToken = clean
+    .replace(/^Bearer\s+/i, '')
+    .replace(/^Token\s+/i, '')
+    .replace(/^["']|["']$/g, '')
+    .trim();
+  return `Token token="${rawToken}"`;
+}
+
 @Injectable()
 export class NubefactBillingDriver implements IBillingDriver {
   readonly driverName = 'NUBEFACT';
@@ -144,9 +162,6 @@ export class NubefactBillingDriver implements IBillingDriver {
       receiptType,
       series,
       correlativeNumber,
-      totalAmount,
-      taxableBase,
-      igvAmount,
       customerName,
       customerDocument,
       customerAddress,
@@ -212,18 +227,20 @@ export class NubefactBillingDriver implements IBillingDriver {
     const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
     const finalTotal = Number(calculatedTotal.toFixed(2));
 
+    const cleanEmail = (customerEmail || '').trim();
+
     // Estructurar JSON estándar para el API de Nubefact / ApisPerú
     const payload = {
       operacion: 'generar_comprobante',
       tipo_de_comprobante: tipoDeComprobante,
       serie: series,
-      numero: correlativeNumber,
+      numero: Number(correlativeNumber),
       sunat_transaction: 1,
       cliente_tipo_de_documento: clienteTipoDoc,
       cliente_numero_de_documento: cleanDoc || '-',
       cliente_denominacion: customerName || 'CLIENTES VARIOS',
       cliente_direccion: customerAddress || '-',
-      cliente_email: (customerEmail || '').trim(),
+      cliente_email: cleanEmail,
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
       porcentaje_de_igv: 18.0,
@@ -231,6 +248,8 @@ export class NubefactBillingDriver implements IBillingDriver {
       total_igv: finalTotalIgv,
       total: finalTotal,
       detraccion: false,
+      enviar_automaticamente_a_la_sunat: true,
+      enviar_automaticamente_al_cliente: Boolean(cleanEmail && cleanEmail.includes('@')),
       items: formattedItems,
     };
 
@@ -240,22 +259,27 @@ export class NubefactBillingDriver implements IBillingDriver {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiToken}`,
+        Authorization: buildNubefactAuthHeader(apiToken),
       },
       body: JSON.stringify(payload),
     });
 
     const data: any = await response.json();
 
-    if (!response.ok || data.errors) {
-      const errorMsg = data.errors || data.message || 'Error en respuesta de Nubefact';
+    if (!response.ok || data.errors || data.aceptada_por_sunat === false) {
+      const errorMsg =
+        data.errors ||
+        data.sunat_description ||
+        data.sunat_soap_error ||
+        data.message ||
+        'Error en respuesta de Nubefact / SUNAT';
       this.logger.error(`Error de emisión en Nubefact: ${errorMsg}`);
       return {
         success: false,
-        hash: '',
-        qrString: '',
+        hash: data.codigo_hash || '',
+        qrString: data.cadena_para_codigo_qr || '',
         emissionStatus: 'REJECTED',
-        message: `Rechazado por PSE Nubefact: ${errorMsg}`,
+        message: `Rechazado por ${data.aceptada_por_sunat === false ? 'SUNAT' : 'PSE Nubefact'}: ${errorMsg}`,
         rawResponse: data,
       };
     }
@@ -295,9 +319,6 @@ export class NubefactBillingDriver implements IBillingDriver {
       modifiedCorrelative,
       reasonCode,
       reasonDescription,
-      totalAmount,
-      taxableBase,
-      igvAmount,
       customerName,
       customerDocument,
       customerAddress,
@@ -361,17 +382,19 @@ export class NubefactBillingDriver implements IBillingDriver {
     const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
     const finalTotal = Number(calculatedTotal.toFixed(2));
 
+    const cleanEmail = (customerEmail || '').trim();
+
     const payload = {
       operacion: 'generar_comprobante',
       tipo_de_comprobante: tipoDeComprobante,
       serie: creditNoteSeries,
-      numero: creditNoteCorrelative,
+      numero: Number(creditNoteCorrelative),
       sunat_transaction: 1,
       cliente_tipo_de_documento: clienteTipoDoc,
       cliente_numero_de_documento: cleanDoc || '-',
       cliente_denominacion: customerName || 'CLIENTES VARIOS',
       cliente_direccion: customerAddress || '-',
-      cliente_email: (customerEmail || '').trim(),
+      cliente_email: cleanEmail,
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
       porcentaje_de_igv: 18.0,
@@ -379,11 +402,13 @@ export class NubefactBillingDriver implements IBillingDriver {
       total_igv: finalTotalIgv,
       total: finalTotal,
       documento_que_se_modifica_tipo: docModificaTipo,
-      documento_que_se_modifica_serie: modifiedSeries,
-      documento_que_se_modifica_numero: modifiedCorrelative,
+      documento_que_se_modifica_serie: String(modifiedSeries).trim(),
+      documento_que_se_modifica_numero: Number(modifiedCorrelative),
       tipo_de_nota_de_credito: tipoNotaCreditoNum,
       motivo: reasonDescription || 'ANULACION DE LA OPERACION',
       detraccion: false,
+      enviar_automaticamente_a_la_sunat: true,
+      enviar_automaticamente_al_cliente: Boolean(cleanEmail && cleanEmail.includes('@')),
       items: formattedItems,
     };
 
@@ -395,15 +420,20 @@ export class NubefactBillingDriver implements IBillingDriver {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiToken}`,
+        Authorization: buildNubefactAuthHeader(apiToken),
       },
       body: JSON.stringify(payload),
     });
 
     const data: any = await response.json();
 
-    if (!response.ok || data.errors) {
-      const errorMsg = data.errors || data.message || 'Error en respuesta de Nubefact';
+    if (!response.ok || data.errors || data.aceptada_por_sunat === false) {
+      const errorMsg =
+        data.errors ||
+        data.sunat_description ||
+        data.sunat_soap_error ||
+        data.message ||
+        'Error en respuesta de Nubefact / SUNAT';
       this.logger.error(`Error de emisión en Nubefact para Nota de Crédito: ${errorMsg}`);
       const isDeadlineError =
         String(errorMsg).includes('2119') ||
@@ -413,12 +443,12 @@ export class NubefactBillingDriver implements IBillingDriver {
 
       const friendlyMessage = isDeadlineError
         ? `Rechazado por SUNAT: Plazo legal de emisión de Nota de Crédito vencido (R.S. 193-2020/SUNAT). Detalle: ${errorMsg}`
-        : `Rechazado por PSE Nubefact: ${errorMsg}`;
+        : `Rechazado por ${data.aceptada_por_sunat === false ? 'SUNAT' : 'PSE Nubefact'}: ${errorMsg}`;
 
       return {
         success: false,
-        hash: '',
-        qrString: '',
+        hash: data.codigo_hash || '',
+        qrString: data.cadena_para_codigo_qr || '',
         emissionStatus: 'REJECTED',
         message: friendlyMessage,
         rawResponse: data,

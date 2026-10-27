@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MockBillingDriver } from './drivers/mock-billing.driver.js';
-import { NubefactBillingDriver, mapUnitTypeToSunat } from './drivers/nubefact-billing.driver.js';
+import {
+  NubefactBillingDriver,
+  mapUnitTypeToSunat,
+  buildNubefactAuthHeader,
+} from './drivers/nubefact-billing.driver.js';
 import { BillingService } from './billing.service.js';
 
 describe('Billing Engine & Drivers (Triple Vía Fiscal)', () => {
@@ -125,6 +129,55 @@ describe('Billing Engine & Drivers (Triple Vía Fiscal)', () => {
         delete process.env.NUBEFACT_URL;
         delete process.env.NUBEFACT_TOKEN;
       }
+    });
+
+    it('debe rechazar formalmente si Nubefact responde HTTP 200 pero aceptada_por_sunat es false', async () => {
+      process.env.NUBEFACT_URL = 'https://api.nubefact.com/api/v1/mock-test';
+      process.env.NUBEFACT_TOKEN = 'test-token-123';
+
+      const originalFetch = global.fetch;
+      global.fetch = (async () => ({
+        ok: true,
+        json: async () => ({
+          aceptada_por_sunat: false,
+          sunat_description: 'El RUC del receptor no se encuentra activo o habido ante SUNAT',
+          sunat_responsecode: '2024',
+        }),
+      })) as any;
+
+      try {
+        const result = await nubefactDriver.issueReceipt({
+          receiptType: 'FACTURA',
+          series: 'F001',
+          correlativeNumber: 10,
+          totalAmount: 118,
+          taxableBase: 100,
+          igvAmount: 18,
+          customerName: 'EMPRESA INACTIVA SAC',
+          customerDocument: '20100070970',
+          customerAddress: 'Av. Test 123',
+          paymentMethod: 'CASH',
+          items: [{ name: 'Producto A', quantity: 1, unitPrice: 118, subtotal: 118 }],
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.emissionStatus).toBe('REJECTED');
+        expect(result.message).toContain('Rechazado por SUNAT');
+        expect(result.message).toContain('no se encuentra activo');
+      } finally {
+        global.fetch = originalFetch;
+        delete process.env.NUBEFACT_URL;
+        delete process.env.NUBEFACT_TOKEN;
+      }
+    });
+  });
+
+  describe('buildNubefactAuthHeader (Formato Oficial Token token="...")', () => {
+    it('debe estructurar cabecera requerida por Nubefact a partir de token crudo o prefijado', () => {
+      expect(buildNubefactAuthHeader('my-secret-token-123')).toBe('Token token="my-secret-token-123"');
+      expect(buildNubefactAuthHeader('Bearer my-secret-token-123')).toBe('Token token="my-secret-token-123"');
+      expect(buildNubefactAuthHeader('Token token="my-secret-token-123"')).toBe('Token token="my-secret-token-123"');
+      expect(buildNubefactAuthHeader('"my-secret-token-123"')).toBe('Token token="my-secret-token-123"');
     });
   });
 
