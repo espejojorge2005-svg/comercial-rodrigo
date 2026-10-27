@@ -104,10 +104,28 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const docToSearch = (overrideDoc !== undefined ? overrideDoc : (custDoc || '')).trim();
     if (docToSearch.length !== 8 && docToSearch.length !== 11) return;
 
+    // 🛡️ MODO OFFLINE INMEDIATO: Si no hay conexión activa, no colgar la UI con peticiones de red
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setIsSearchingDoc(false);
+      setLookupBadge('⚠️ Sin internet: Ingrese el nombre o Razón Social manualmente');
+      if (custName === 'Cliente Varios' || custName === 'Clientes Varios') {
+        setCustName('');
+      }
+      return;
+    }
+
     setIsSearchingDoc(true);
     setLookupBadge(null);
+
+    // Timeout de 4.5s con AbortController para no congelar la caja si la conexión es intermitente
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4500);
+
     try {
-      const data = await apiRequest<any>(`/sales/lookup-document/${docToSearch}`);
+      const data = await apiRequest<any>(`/sales/lookup-document/${docToSearch}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       if (data) {
         if (data.name) {
           setCustName(data.name);
@@ -124,8 +142,25 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         }
       }
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.warn('Document lookup error:', err);
-      setLookupBadge(`⚠️ ${err.message || 'Documento no válido'}`);
+      const isNetworkOrTimeout =
+        err.name === 'AbortError' ||
+        err.isNetworkError ||
+        (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        (err.message &&
+          (err.message.includes('servidor') ||
+            err.message.includes('fetch') ||
+            err.message.includes('NetworkError')));
+
+      if (isNetworkOrTimeout) {
+        setLookupBadge('⚠️ Sin internet: Ingrese el nombre o Razón Social manualmente');
+        if (custName === 'Cliente Varios' || custName === 'Clientes Varios') {
+          setCustName('');
+        }
+      } else {
+        setLookupBadge(`⚠️ ${err.message || 'Documento no válido'}`);
+      }
     } finally {
       setIsSearchingDoc(false);
     }
@@ -590,7 +625,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {/* Opción 3: FACTURA ELECTRÓNICA */}
               <button
                 type="button"
-                onClick={() => setReceiptType('FACTURA')}
+                onClick={() => {
+                  setReceiptType('FACTURA');
+                  if (custName === 'Cliente Varios' || custName === 'Clientes Varios') {
+                    setCustName('');
+                  }
+                }}
                 className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
                   receiptType === 'FACTURA'
                     ? 'bg-purple-600/20 border-purple-500 text-white ring-2 ring-purple-500/30'
@@ -749,7 +789,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   </button>
                 </div>
                 {lookupBadge && (
-                  <span className="text-[10px] text-emerald-400 mt-1 block font-semibold animate-in fade-in">
+                  <span
+                    className={`text-[10px] mt-1 block font-semibold animate-in fade-in ${
+                      lookupBadge.startsWith('⚠️') ? 'text-amber-400' : 'text-emerald-400'
+                    }`}
+                  >
                     {lookupBadge}
                   </span>
                 )}
