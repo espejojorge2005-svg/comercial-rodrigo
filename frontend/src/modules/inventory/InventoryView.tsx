@@ -34,6 +34,17 @@ import { exportKardexAndInventoryExcel } from '../../lib/excelExport.js';
 import { ImportExcelModal } from './ImportExcelModal.js';
 import { toast } from '../../store/useToastStore.js';
 
+let cachedInventorySummary: {
+  totalProducts: number;
+  totalStockUnits: number;
+  totalValuedCost: number;
+  totalValuedRetail: number;
+  lowStockCount: number;
+  expiredCount: number;
+  expiringSoonCount: number;
+  avgMarkupPercent: number;
+} | null = null;
+
 export const InventoryView: React.FC = () => {
   const { config } = useConfigStore();
   const [activeTab, setActiveTab] = useState<'catalog' | 'kardex'>('catalog');
@@ -48,6 +59,7 @@ export const InventoryView: React.FC = () => {
   const [sortBy, setSortBy] = useState<string>('name_asc');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(!cachedInventorySummary);
 
   // Estados de Paginación de Inventario
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -64,14 +76,19 @@ export const InventoryView: React.FC = () => {
     expiredCount: number;
     expiringSoonCount: number;
     avgMarkupPercent: number;
-  } | null>(null);
+  } | null>(cachedInventorySummary);
 
   const fetchSummary = useCallback(async () => {
     try {
       const data = await apiRequest<any>('/products/summary');
-      if (data) setSummary(data);
+      if (data) {
+        setSummary(data);
+        cachedInventorySummary = data;
+      }
     } catch (err) {
       console.error('Error fetching inventory summary:', err);
+    } finally {
+      setIsSummaryLoading(false);
     }
   }, []);
 
@@ -177,16 +194,14 @@ export const InventoryView: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'catalog') {
       fetchSummary();
-      const timer = setTimeout(() => {
-        fetchProducts();
-      }, 200);
-      return () => clearTimeout(timer);
+      fetchProducts();
     } else {
       fetchKardex();
     }
   }, [activeTab, fetchProducts, fetchKardex, fetchSummary, kardexProductFilter]);
 
   // Métricas de Almacén y Vencimiento (Integrando totales reales de almacén y subtotales locales)
+  const isMetricsLoading = (isLoading || isSummaryLoading) && !summary;
   const totalProducts = summary?.totalProducts ?? (paginationMeta ? paginationMeta.total : products.length);
   const lowStockCount = summary?.lowStockCount ?? products.filter((p) => p.currentStock <= p.minStock).length;
   const expiredCount = summary?.expiredCount ?? products.filter((p) => {
@@ -325,10 +340,19 @@ export const InventoryView: React.FC = () => {
             <span>Total Catálogo</span>
             <Package className="w-4 h-4 text-indigo-400" />
           </div>
-          <div className="text-xl font-extrabold text-white">{totalProducts}</div>
-          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-            {globalTotalStockUnits} unidades físicas
-          </div>
+          {isMetricsLoading ? (
+            <div className="py-1 space-y-1.5">
+              <div className="h-6 w-16 bg-slate-800/80 rounded animate-pulse" />
+              <div className="h-3 w-24 bg-slate-800/50 rounded animate-pulse" />
+            </div>
+          ) : (
+            <>
+              <div className="text-xl font-extrabold text-white">{totalProducts}</div>
+              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                {globalTotalStockUnits} unidades físicas
+              </div>
+            </>
+          )}
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
@@ -344,36 +368,45 @@ export const InventoryView: React.FC = () => {
               }`}
             />
           </div>
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span
-              className={`text-xl font-extrabold ${
-                expiredCount > 0
-                  ? 'text-rose-400'
-                  : lowStockCount > 0
-                  ? 'text-amber-400'
-                  : 'text-emerald-400'
-              }`}
-            >
-              {expiredCount > 0
-                ? `${expiredCount} vencido${expiredCount > 1 ? 's' : ''}`
-                : lowStockCount > 0
-                ? `${lowStockCount} stock bajo`
-                : 'Sin alertas'}
-            </span>
-            {lowStockCount > 0 && expiredCount > 0 && (
-              <span className="text-[10px] text-amber-300 font-medium">
-                • {lowStockCount} bajo stock
-              </span>
-            )}
-            {expiredCount === 0 && expiringSoonCount > 0 && (
-              <span className="text-[10px] text-amber-300 font-medium">
-                ({expiringSoonCount} por vencer)
-              </span>
-            )}
-          </div>
-          <div className="text-[10px] text-slate-500 font-medium mt-0.5">
-            Total almacén general
-          </div>
+          {isMetricsLoading ? (
+            <div className="py-1 space-y-1.5">
+              <div className="h-6 w-24 bg-slate-800/80 rounded animate-pulse" />
+              <div className="h-3 w-28 bg-slate-800/50 rounded animate-pulse" />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span
+                  className={`text-xl font-extrabold ${
+                    expiredCount > 0
+                      ? 'text-rose-400'
+                      : lowStockCount > 0
+                      ? 'text-amber-400'
+                      : 'text-emerald-400'
+                  }`}
+                >
+                  {expiredCount > 0
+                    ? `${expiredCount} vencido${expiredCount > 1 ? 's' : ''}`
+                    : lowStockCount > 0
+                    ? `${lowStockCount} stock bajo`
+                    : 'Sin alertas'}
+                </span>
+                {lowStockCount > 0 && expiredCount > 0 && (
+                  <span className="text-[10px] text-amber-300 font-medium">
+                    • {lowStockCount} bajo stock
+                  </span>
+                )}
+                {expiredCount === 0 && expiringSoonCount > 0 && (
+                  <span className="text-[10px] text-amber-300 font-medium">
+                    ({expiringSoonCount} por vencer)
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                Total almacén general
+              </div>
+            </>
+          )}
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Valorización monetaria de las existencias actuales a precio de costo de compra">
@@ -381,14 +414,23 @@ export const InventoryView: React.FC = () => {
             <span>Valorización (Costo)</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-xl font-extrabold text-emerald-400">
-            {formatCurrency(globalTotalStockValue)}
-          </div>
-          {summary?.totalValuedRetail ? (
-            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-              Venta est.: {formatCurrency(summary.totalValuedRetail)}
+          {isMetricsLoading ? (
+            <div className="py-1 space-y-1.5">
+              <div className="h-6 w-28 bg-slate-800/80 rounded animate-pulse" />
+              <div className="h-3 w-32 bg-slate-800/50 rounded animate-pulse" />
             </div>
-          ) : null}
+          ) : (
+            <>
+              <div className="text-xl font-extrabold text-emerald-400">
+                {formatCurrency(globalTotalStockValue)}
+              </div>
+              {summary?.totalValuedRetail ? (
+                <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                  Venta est.: {formatCurrency(summary.totalValuedRetail)}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800" title="Sobreprecio promedio aplicado sobre el costo de adquisición (Markup)">
@@ -396,10 +438,19 @@ export const InventoryView: React.FC = () => {
             <span>Markup Prom. s/ Costo</span>
             <TrendingUp className="w-4 h-4 text-blue-400" />
           </div>
-          <div className="text-xl font-extrabold text-blue-400">{avgMargin}%</div>
-          <div className="text-[10px] text-slate-400 font-medium mt-0.5">
-            Margen de marcación
-          </div>
+          {isMetricsLoading ? (
+            <div className="py-1 space-y-1.5">
+              <div className="h-6 w-16 bg-slate-800/80 rounded animate-pulse" />
+              <div className="h-3 w-24 bg-slate-800/50 rounded animate-pulse" />
+            </div>
+          ) : (
+            <>
+              <div className="text-xl font-extrabold text-blue-400">{avgMargin}%</div>
+              <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                Margen de marcación
+              </div>
+            </>
+          )}
         </div>
       </div>
 

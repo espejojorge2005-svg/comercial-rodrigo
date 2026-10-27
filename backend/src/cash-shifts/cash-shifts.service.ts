@@ -433,7 +433,7 @@ export class CashShiftsService {
    * Historial de turnos y arqueos (Solo Administrador)
    * Permite filtrar por rango de fechas (mes completo) sin limitación arbitraria de take: 50
    */
-  async getShiftHistory(filter?: { startDate?: string; endDate?: string; limit?: number }) {
+  async getShiftHistory(filter?: { startDate?: string; endDate?: string; limit?: number; minimal?: boolean }) {
     const where: Prisma.CashShiftWhereInput = {};
 
     const dateFilter = buildPeruDateTimeFilter(filter?.startDate, filter?.endDate);
@@ -444,8 +444,24 @@ export class CashShiftsService {
     const take = filter?.limit
       ? filter.limit
       : !filter?.startDate && !filter?.endDate
-        ? 100
+        ? 50
         : undefined;
+
+    if (filter?.minimal) {
+      return this.prisma.cashShift.findMany({
+        where,
+        orderBy: { openedAt: 'desc' },
+        ...(take !== undefined ? { take } : {}),
+        select: {
+          id: true,
+          openedAt: true,
+          closedAt: true,
+          status: true,
+          cashRegister: { select: { id: true, name: true, identifier: true } },
+          user: { select: { id: true, name: true, username: true } },
+        },
+      });
+    }
 
     const shifts = await this.prisma.cashShift.findMany({
       where,

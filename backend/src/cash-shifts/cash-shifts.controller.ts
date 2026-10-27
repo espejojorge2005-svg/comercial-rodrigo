@@ -57,11 +57,13 @@ export class CashShiftsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('limit') limit?: string,
+    @Query('minimal') minimal?: string,
   ) {
     return this.cashShiftsService.getShiftHistory({
       startDate,
       endDate,
       limit: limit ? parseInt(limit, 10) : undefined,
+      minimal: minimal === 'true',
     });
   }
 }

@@ -126,6 +126,8 @@ model CashShift {
 
   @@index([cashRegisterId])
   @@index([userId])
+  @@index([openedAt])
+  @@index([status])
 }
 
 model CashMovement {
@@ -138,6 +140,8 @@ model CashMovement {
   createdAt   DateTime         @default(now())
 
   @@index([cashShiftId])
+  @@index([createdAt])
+  @@index([type])
 }
 
 model Category {
@@ -169,6 +173,8 @@ model Product {
   updatedAt       DateTime         @updatedAt
 
   @@index([categoryId])
+  @@index([isActive])
+  @@index([expirationDate])
 }
 
 model Sale {
@@ -213,6 +219,9 @@ model Sale {
   @@index([cashShiftId])
   @@index([userId])
   @@index([voidedByAdminId])
+  @@index([createdAt])
+  @@index([receiptType])
+  @@index([isVoided])
 }
 
 model SaleDetail {
@@ -247,6 +256,7 @@ model KardexMovement {
 
   @@index([productId])
   @@index([userId])
+  @@index([createdAt])
 }
 
 model StoreConfig {

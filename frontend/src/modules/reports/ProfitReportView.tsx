@@ -30,6 +30,10 @@ import {
   Layers,
 } from 'lucide-react';
 
+let cachedManagementData: ManagementReportResponse | null = null;
+let cachedTaxData: TaxBookResponse | null = null;
+let cachedShiftsDropdown: any[] = [];
+
 export const ProfitReportView: React.FC = () => {
   // Segmentación Principal: 'management' (Dueña) vs 'tax' (Contador)
   const [reportMode, setReportMode] = useState<'management' | 'tax'>('management');
@@ -41,9 +45,9 @@ export const ProfitReportView: React.FC = () => {
   const [customEnd, setCustomEnd] = useState<string>(initialTodayYMD);
 
   // Estados de datos
-  const [managementData, setManagementData] = useState<ManagementReportResponse | null>(null);
-  const [taxData, setTaxData] = useState<TaxBookResponse | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [managementData, setManagementData] = useState<ManagementReportResponse | null>(cachedManagementData);
+  const [taxData, setTaxData] = useState<TaxBookResponse | null>(cachedTaxData);
+  const [isLoading, setIsLoading] = useState<boolean>(!cachedManagementData);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
 
   // Sub-pestañas para reporte gerencial
@@ -52,13 +56,19 @@ export const ProfitReportView: React.FC = () => {
   const [selectedSale, setSelectedSale] = useState<any | null>(null);
 
   // Turnos para filtrado específico
-  const [shiftsList, setShiftsList] = useState<any[]>([]);
+  const [shiftsList, setShiftsList] = useState<any[]>(cachedShiftsDropdown);
   const [selectedShiftId, setSelectedShiftId] = useState<string>('all');
 
   useEffect(() => {
-    apiRequest<any[]>('/cash-shifts/history')
-      .then((data) => setShiftsList(data || []))
-      .catch((err) => console.error('Error cargando historial de turnos:', err));
+    if (cachedShiftsDropdown.length === 0) {
+      apiRequest<any[]>('/cash-shifts/history?limit=15&minimal=true')
+        .then((data) => {
+          const list = data || [];
+          setShiftsList(list);
+          cachedShiftsDropdown = list;
+        })
+        .catch((err) => console.error('Error cargando historial de turnos:', err));
+    }
   }, []);
 
   // Calcula rango ISO con offset -05:00 de Perú
@@ -135,9 +145,11 @@ export const ProfitReportView: React.FC = () => {
       if (reportMode === 'management') {
         const res = await apiRequest<ManagementReportResponse>(`/reports/management?${params.toString()}`);
         setManagementData(res);
+        cachedManagementData = res;
       } else {
         const res = await apiRequest<TaxBookResponse>(`/reports/tax-book?${params.toString()}`);
         setTaxData(res);
+        cachedTaxData = res;
       }
     } catch (err) {
       console.error('Error al cargar reporte:', err);
@@ -431,12 +443,22 @@ export const ProfitReportView: React.FC = () => {
                   <span>Ingresos Totales (100%)</span>
                   <Receipt className="w-4 h-4 text-emerald-400" />
                 </div>
-                <div className="text-xl font-black text-white">
-                  {formatCurrency(managementData?.summary.totalGrossRevenue || 0)}
-                </div>
+                {isLoading && !managementData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-24 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-white">
+                    {formatCurrency(managementData?.summary.totalGrossRevenue || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-2 text-[11px] text-slate-400">
-                {managementData?.summary.salesCount || 0} ventas registradas
+                {isLoading && !managementData ? (
+                  <div className="h-3 w-28 bg-slate-800/50 rounded animate-pulse" />
+                ) : (
+                  `${managementData?.summary.salesCount || 0} ventas registradas`
+                )}
               </div>
             </div>
 
@@ -447,12 +469,22 @@ export const ProfitReportView: React.FC = () => {
                   <span>Costo Mercadería (COGS)</span>
                   <Package className="w-4 h-4 text-amber-400" />
                 </div>
-                <div className="text-xl font-black text-amber-400">
-                  {formatCurrency(managementData?.summary.totalCogs || 0)}
-                </div>
+                {isLoading && !managementData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-24 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-amber-400">
+                    {formatCurrency(managementData?.summary.totalCogs || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-2 text-[11px] text-slate-400">
-                {managementData?.summary.totalUnitsSold || 0} unidades vendidas
+                {isLoading && !managementData ? (
+                  <div className="h-3 w-28 bg-slate-800/50 rounded animate-pulse" />
+                ) : (
+                  `${managementData?.summary.totalUnitsSold || 0} unidades vendidas`
+                )}
               </div>
             </div>
 
@@ -463,12 +495,22 @@ export const ProfitReportView: React.FC = () => {
                   <span>Ganancia Bruta Real</span>
                   <TrendingUp className="w-4 h-4 text-emerald-400" />
                 </div>
-                <div className="text-xl font-black text-emerald-400">
-                  {formatCurrency(managementData?.summary.grossProfit || 0)}
-                </div>
+                {isLoading && !managementData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-24 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-emerald-400">
+                    {formatCurrency(managementData?.summary.grossProfit || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-2 text-[11px] text-emerald-400/90 font-medium">
-                Margen Bruto: {managementData?.summary.grossMarginPct || 0}%
+                {isLoading && !managementData ? (
+                  <div className="h-3 w-24 bg-slate-800/50 rounded animate-pulse" />
+                ) : (
+                  `Margen Bruto: ${managementData?.summary.grossMarginPct || 0}%`
+                )}
               </div>
             </div>
 
@@ -479,9 +521,15 @@ export const ProfitReportView: React.FC = () => {
                   <span>Gastos de Caja Chica</span>
                   <ArrowDownRight className="w-4 h-4 text-rose-400" />
                 </div>
-                <div className="text-xl font-black text-rose-400">
-                  -{formatCurrency(managementData?.summary.totalExpenses || 0)}
-                </div>
+                {isLoading && !managementData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-20 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-rose-400">
+                    -{formatCurrency(managementData?.summary.totalExpenses || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-2 text-[11px] text-slate-400">
                 Salidas directas de efectivo
@@ -495,12 +543,22 @@ export const ProfitReportView: React.FC = () => {
                   <span>Ganancia Neta Real</span>
                   <Wallet className="w-4 h-4 text-emerald-400" />
                 </div>
-                <div className="text-xl font-black text-emerald-300">
-                  {formatCurrency(managementData?.summary.netProfit || 0)}
-                </div>
+                {isLoading && !managementData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-24 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-emerald-300">
+                    {formatCurrency(managementData?.summary.netProfit || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-2 text-[11px] text-emerald-300/90 font-semibold">
-                Margen Neto: {managementData?.summary.netMarginPct || 0}%
+                {isLoading && !managementData ? (
+                  <div className="h-3 w-24 bg-slate-800/50 rounded animate-pulse" />
+                ) : (
+                  `Margen Neto: ${managementData?.summary.netMarginPct || 0}%`
+                )}
               </div>
             </div>
           </div>
@@ -849,9 +907,15 @@ export const ProfitReportView: React.FC = () => {
                   <span className="truncate">Op. Gravada Neta</span>
                   <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                 </div>
-                <div className="text-xl font-black text-white font-mono tabular-nums whitespace-nowrap">
-                  {formatCurrency(taxData?.summary.totalTaxableBase || 0)}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-20 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-white font-mono tabular-nums whitespace-nowrap">
+                    {formatCurrency(taxData?.summary.totalTaxableBase || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-slate-400 truncate">
                 Base imponible acumulada
@@ -865,9 +929,15 @@ export const ProfitReportView: React.FC = () => {
                   <span className="truncate">Total IGV Neto</span>
                   <Scale className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                 </div>
-                <div className="text-xl font-black text-indigo-400 font-mono tabular-nums whitespace-nowrap">
-                  {formatCurrency(taxData?.summary.totalIgv || 0)}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-20 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-indigo-400 font-mono tabular-nums whitespace-nowrap">
+                    {formatCurrency(taxData?.summary.totalIgv || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-slate-400 truncate">
                 Débito fiscal a declarar
@@ -881,12 +951,22 @@ export const ProfitReportView: React.FC = () => {
                   <span className="truncate">Total Neto SUNAT</span>
                   <Receipt className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                 </div>
-                <div className="text-xl font-black text-blue-300 font-mono tabular-nums whitespace-nowrap">
-                  {formatCurrency(taxData?.summary.totalAmount || 0)}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-20 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-blue-300 font-mono tabular-nums whitespace-nowrap">
+                    {formatCurrency(taxData?.summary.totalAmount || 0)}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-blue-300/80 font-medium truncate">
-                {taxData?.summary.totalFiscalSales || 0} registros oficiales
+                {isLoading && !taxData ? (
+                  <div className="h-3 w-20 bg-slate-800/50 rounded animate-pulse" />
+                ) : (
+                  `${taxData?.summary.totalFiscalSales || 0} registros oficiales`
+                )}
               </div>
             </div>
 
@@ -899,9 +979,15 @@ export const ProfitReportView: React.FC = () => {
                     1%
                   </span>
                 </div>
-                <div className="text-xl font-black text-amber-300 font-mono tabular-nums whitespace-nowrap">
-                  {formatCurrency(taxData?.summary.estimatedIncomeTax1Pct ?? Number(((taxData?.summary.totalTaxableBase || 0) * 0.01).toFixed(2)))}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-20 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-amber-300 font-mono tabular-nums whitespace-nowrap">
+                    {formatCurrency(taxData?.summary.estimatedIncomeTax1Pct ?? Number(((taxData?.summary.totalTaxableBase || 0) * 0.01).toFixed(2)))}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-amber-300/80 font-medium truncate">
                 Pago a Cta. MYPE Tributario
@@ -917,9 +1003,15 @@ export const ProfitReportView: React.FC = () => {
                     Tipo 03
                   </span>
                 </div>
-                <div className="text-xl font-black text-white font-mono tabular-nums">
-                  {taxData?.summary.receiptCount || 0}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-12 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-white font-mono tabular-nums">
+                    {taxData?.summary.receiptCount || 0}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-slate-400 truncate">
                 B001 / B002 · Clientes DNI
@@ -935,9 +1027,15 @@ export const ProfitReportView: React.FC = () => {
                     Tipo 01
                   </span>
                 </div>
-                <div className="text-xl font-black text-white font-mono tabular-nums">
-                  {taxData?.summary.invoiceCount || 0}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-12 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-white font-mono tabular-nums">
+                    {taxData?.summary.invoiceCount || 0}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-slate-400 truncate">
                 F001 / F002 · Empresas RUC
@@ -953,9 +1051,15 @@ export const ProfitReportView: React.FC = () => {
                     Tipo 07
                   </span>
                 </div>
-                <div className="text-xl font-black text-rose-400 font-mono tabular-nums">
-                  {taxData?.summary.creditNoteCount || 0}
-                </div>
+                {isLoading && !taxData ? (
+                  <div className="py-1">
+                    <div className="h-6 w-12 bg-slate-800/80 rounded animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-rose-400 font-mono tabular-nums">
+                    {taxData?.summary.creditNoteCount || 0}
+                  </div>
+                )}
               </div>
               <div className="mt-1.5 text-[10px] text-rose-300/80 font-medium truncate">
                 BC01 / FC01 · Restan ventas

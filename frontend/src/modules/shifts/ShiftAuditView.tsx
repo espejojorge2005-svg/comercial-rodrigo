@@ -33,10 +33,12 @@ import { toast } from '../../store/useToastStore.js';
 import { exportShiftAuditExcel } from '../../lib/excelExport.js';
 import { ShiftReceiptTicketModal } from './ShiftReceiptTicketModal.js';
 
+let cachedAuditShifts: any[] = [];
+
 export const ShiftAuditView: React.FC = () => {
   const { config } = useConfigStore();
-  const [shifts, setShifts] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [shifts, setShifts] = useState<any[]>(cachedAuditShifts);
+  const [isLoading, setIsLoading] = useState<boolean>(cachedAuditShifts.length === 0);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedShift, setSelectedShift] = useState<any | null>(null);
   const [ticketShift, setTicketShift] = useState<any | null>(null);
@@ -69,7 +71,9 @@ export const ShiftAuditView: React.FC = () => {
 
       const queryString = params.toString() ? `?${params.toString()}` : '';
       const data = await apiRequest(`/cash-shifts/history${queryString}`);
-      setShifts(data || []);
+      const list = data || [];
+      setShifts(list);
+      cachedAuditShifts = list;
     } catch (err) {
       console.error(err);
       toast.error('Error al cargar el historial de turnos de caja.');
@@ -159,7 +163,13 @@ export const ShiftAuditView: React.FC = () => {
             <span>Turnos Totales</span>
             <Lock className="w-4 h-4 text-slate-300" />
           </div>
-          <div className="text-xl font-extrabold text-white">{totalShifts}</div>
+          {isLoading && shifts.length === 0 ? (
+            <div className="py-1">
+              <div className="h-6 w-16 bg-slate-800/80 rounded animate-pulse" />
+            </div>
+          ) : (
+            <div className="text-xl font-extrabold text-white">{totalShifts}</div>
+          )}
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
@@ -167,9 +177,15 @@ export const ShiftAuditView: React.FC = () => {
             <span>Cajas Operando Ahora</span>
             <Clock className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-xl font-extrabold text-emerald-400">
-            {openShiftsCount} {openShiftsCount === 1 ? 'activa' : 'activas'}
-          </div>
+          {isLoading && shifts.length === 0 ? (
+            <div className="py-1">
+              <div className="h-6 w-24 bg-slate-800/80 rounded animate-pulse" />
+            </div>
+          ) : (
+            <div className="text-xl font-extrabold text-emerald-400">
+              {openShiftsCount} {openShiftsCount === 1 ? 'activa' : 'activas'}
+            </div>
+          )}
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
@@ -177,11 +193,17 @@ export const ShiftAuditView: React.FC = () => {
             <span>Turnos con Descuadre</span>
             <AlertTriangle className="w-4 h-4 text-rose-400" />
           </div>
-          <div
-            className={`text-xl font-extrabold ${discrepancyCount > 0 ? 'text-rose-400' : 'text-emerald-400'}`}
-          >
-            {discrepancyCount}
-          </div>
+          {isLoading && shifts.length === 0 ? (
+            <div className="py-1">
+              <div className="h-6 w-16 bg-slate-800/80 rounded animate-pulse" />
+            </div>
+          ) : (
+            <div
+              className={`text-xl font-extrabold ${discrepancyCount > 0 ? 'text-rose-400' : 'text-emerald-400'}`}
+            >
+              {discrepancyCount}
+            </div>
+          )}
         </div>
       </div>
 
