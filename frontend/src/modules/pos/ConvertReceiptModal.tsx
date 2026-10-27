@@ -56,8 +56,21 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
   if (!isOpen || !sale) return null;
 
   const totalNum = Number(sale.totalAmount);
-  const taxableBase = Math.round((totalNum / 1.18) * 100) / 100;
-  const igvAmount = Math.round((totalNum - taxableBase) * 100) / 100;
+  let computedBase = 0;
+  let computedIgv = 0;
+  if (sale.items && sale.items.length > 0) {
+    sale.items.forEach((item: any) => {
+      const sub = Number(item.subtotal ?? item.quantity * item.unitPrice);
+      const b = Number((sub / 1.18).toFixed(2));
+      computedBase += b;
+      computedIgv += Number((sub - b).toFixed(2));
+    });
+  } else {
+    computedBase = Number((totalNum / 1.18).toFixed(2));
+    computedIgv = Number((totalNum - computedBase).toFixed(2));
+  }
+  const taxableBase = Number(computedBase.toFixed(2));
+  const igvAmount = Number(computedIgv.toFixed(2));
   const isHighValueBoleta = totalNum >= 700;
 
   // Consultar RUC o DNI en SUNAT / RENIEC automáticamente
