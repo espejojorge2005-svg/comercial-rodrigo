@@ -1,9 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { ReceiptType, CashMovementType, Prisma } from '@prisma/client';
+import { ReceiptType, CashMovementType, EmissionStatus, Prisma } from '@prisma/client';
 import { ReportQueryDto } from './dto/report-query.dto.js';
 import { calculateNetCashFromSale } from '../cash-shifts/cash-shifts.service.js';
+import {
+  formatPeruYMD,
+  resolveSunatCustomerDocType,
+} from '../sales/utils/sales-fiscal.util.js';
 import ExcelJS from 'exceljs';
+
+function sanitizeExcelText(value?: string | null, fallback = '-'): string {
+  const raw = (value ?? '').trim();
+  if (!raw) return fallback;
+  if (raw.length > 1 && /^[=+@-]/.test(raw)) {
+    return `'${raw}`;
+  }
+  return raw;
+}
 
 /**
  * 🇵🇪 Construye filtros de fecha asegurando la zona horaria oficial de Perú (America/Lima, UTC-5).
@@ -85,8 +98,14 @@ export class ReportsService {
   async getTaxBookData(query: ReportQueryDto) {
     const dateFilter = this.buildDateFilter(query.startDate, query.endDate);
 
+    const validFiscalStatuses: EmissionStatus[] = [
+      EmissionStatus.ACCEPTED,
+      EmissionStatus.SIMULATED,
+    ];
+
     const salesWhere: Prisma.SaleWhereInput = {
       receiptType: { in: [ReceiptType.BOLETA, ReceiptType.FACTURA] },
+      emissionStatus: { in: validFiscalStatuses },
     };
 
     if (dateFilter) salesWhere.createdAt = dateFilter;
@@ -98,7 +117,9 @@ export class ReportsService {
       salesWhere.cashShift = { cashRegisterId: query.cashRegisterId };
     }
 
-    const cnWhere: Prisma.CreditNoteWhereInput = {};
+    const cnWhere: Prisma.CreditNoteWhereInput = {
+      emissionStatus: { in: validFiscalStatuses },
+    };
     if (dateFilter) cnWhere.createdAt = dateFilter;
     if (query.shiftId) {
       cnWhere.cashShiftId = query.shiftId;
@@ -133,27 +154,28 @@ export class ReportsService {
       }),
     ]);
 
-    // Mapear ventas (Boletas y Facturas)
+    // Mapear ventas (Boletas y Facturas válidas ante SUNAT o simuladas en práctica)
     const salesRecords = sales.map((sale) => {
       const isInvoice = sale.receiptType === ReceiptType.FACTURA;
       const sunatDocTypeCode = isInvoice ? '01' : '03';
-
-      let customerDocType = '0';
-      const doc = sale.customerDocument?.trim();
-      if (doc) {
-        if (doc.length === 11) customerDocType = '6';
-        else if (doc.length === 8) customerDocType = '1';
-        else if (doc.length >= 9 && doc.length <= 12) customerDocType = '4';
-        else customerDocType = '0';
-      }
+      const customerDocType = resolveSunatCustomerDocType(
+        sale.customerDocument,
+        isInvoice ? '6' : '0',
+      );
 
       const taxable = Number(sale.taxableBase || 0);
       const igv = Number(sale.igvAmount || 0);
       const total = Number(sale.totalAmount || 0);
 
+      const hasValidCreditNote =
+        sale.creditNote &&
+        validFiscalStatuses.includes(sale.creditNote.emissionStatus as EmissionStatus);
+
       const emissionStatus = sale.isVoided
-        ? (sale.creditNote ? 'ANULADO CON NC' : 'ANULADO')
-        : (sale.emissionStatus || 'ACEPTADO');
+        ? hasValidCreditNote
+          ? 'ANULADO CON NC'
+          : 'ANULADO'
+        : sale.emissionStatus || 'ACCEPTED';
 
       return {
         id: sale.id,
@@ -170,7 +192,9 @@ export class ReportsService {
         series: sale.series,
         correlativeNumber: sale.correlativeNumber,
         formattedCorrelative: String(sale.correlativeNumber).padStart(8, '0'),
-        fullReceiptNumber: sale.fullReceiptNumber || `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`,
+        fullReceiptNumber:
+          sale.fullReceiptNumber ||
+          `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`,
         customerDocType,
         customerDocument: sale.customerDocument || '-',
         customerName: sale.customerName || 'CLIENTES VARIOS',
@@ -181,7 +205,12 @@ export class ReportsService {
         emissionStatus,
         cashRegister: sale.cashShift?.cashRegister?.name || 'Caja 1',
         isCreditNote: false,
-        modifiedDocument: null,
+        isPriorPeriodModification: false,
+        modifiedDocument: null as string | null,
+        modifiedDocDate: null as string | null,
+        modifiedDocType: null as string | null,
+        modifiedDocSeries: null as string | null,
+        modifiedDocNumber: null as string | null,
         reasonDescription: sale.voidedReason || null,
         pdfUrl: (sale as any).pdfUrl || null,
         xmlUrl: (sale as any).xmlUrl || null,
@@ -193,15 +222,10 @@ export class ReportsService {
     const cnRecords = creditNotes.map((cn) => {
       const isInvoiceNc = cn.series.startsWith('FC');
       const sunatDocTypeCode = '07'; // Catálogo 01 SUNAT: 07 = Nota de Crédito
-
-      let customerDocType = '0';
-      const doc = cn.sale?.customerDocument?.trim();
-      if (doc) {
-        if (doc.length === 11) customerDocType = '6';
-        else if (doc.length === 8) customerDocType = '1';
-        else if (doc.length >= 9 && doc.length <= 12) customerDocType = '4';
-        else customerDocType = '0';
-      }
+      const customerDocType = resolveSunatCustomerDocType(
+        cn.sale?.customerDocument,
+        isInvoiceNc ? '6' : '0',
+      );
 
       // En el Registro de Ventas de SUNAT, las Notas de Crédito RESTAN (valores negativos)
       const taxable = -Math.abs(Number(cn.taxableBase || 0));
@@ -209,7 +233,21 @@ export class ReportsService {
       const total = -Math.abs(Number(cn.totalAmount || 0));
 
       const modifiedDocType = isInvoiceNc ? '01' : '03';
-      const modifiedFullNumber = cn.sale?.fullReceiptNumber || `${cn.sale?.series || 'B001'}-${String(cn.sale?.correlativeNumber || 1).padStart(8, '0')}`;
+      const modifiedDocSeries = cn.sale?.series || (isInvoiceNc ? 'F001' : 'B001');
+      const modifiedDocNumber = String(cn.sale?.correlativeNumber || 1).padStart(8, '0');
+      const modifiedFullNumber =
+        cn.sale?.fullReceiptNumber || `${modifiedDocSeries}-${modifiedDocNumber}`;
+      const origCreatedAt = cn.sale?.createdAt ? new Date(cn.sale.createdAt) : cn.createdAt;
+      const modifiedDocDate = origCreatedAt.toLocaleDateString('es-PE', {
+        timeZone: 'America/Lima',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+
+      const cnPeriodYm = formatPeruYMD(cn.createdAt).slice(0, 7);
+      const origPeriodYm = formatPeruYMD(origCreatedAt).slice(0, 7);
+      const isPriorPeriodModification = origPeriodYm < cnPeriodYm;
 
       return {
         id: cn.id,
@@ -220,7 +258,9 @@ export class ReportsService {
           month: '2-digit',
           year: 'numeric',
         }),
-        receiptType: isInvoiceNc ? ReceiptType.NOTA_CREDITO_FACTURA : ReceiptType.NOTA_CREDITO_BOLETA,
+        receiptType: isInvoiceNc
+          ? ReceiptType.NOTA_CREDITO_FACTURA
+          : ReceiptType.NOTA_CREDITO_BOLETA,
         sunatDocTypeCode,
         receiptTypeName: isInvoiceNc ? 'NOTA DE CRÉDITO FACTURA' : 'NOTA DE CRÉDITO BOLETA',
         series: cn.series,
@@ -234,10 +274,15 @@ export class ReportsService {
         taxableBase: Number(taxable.toFixed(2)),
         igvAmount: Number(igv.toFixed(2)),
         totalAmount: Number(total.toFixed(2)),
-        emissionStatus: cn.emissionStatus || 'ACEPTADO',
+        emissionStatus: cn.emissionStatus || 'ACCEPTED',
         cashRegister: cn.cashShift?.cashRegister?.name || 'Caja 1',
         isCreditNote: true,
+        isPriorPeriodModification,
         modifiedDocument: `${modifiedDocType} - ${modifiedFullNumber}`,
+        modifiedDocDate,
+        modifiedDocType,
+        modifiedDocSeries,
+        modifiedDocNumber,
         reasonDescription: cn.reasonDescription,
         pdfUrl: (cn as any).pdfUrl || null,
         xmlUrl: (cn as any).xmlUrl || null,
@@ -253,6 +298,8 @@ export class ReportsService {
     let totalTaxableBase = 0;
     let totalIgv = 0;
     let totalAmount = 0;
+    let priorPeriodCreditNoteBase = 0;
+    let priorPeriodCreditNoteIgv = 0;
     let invoiceCount = 0;
     let receiptCount = 0;
     let creditNoteCount = 0;
@@ -261,6 +308,11 @@ export class ReportsService {
       totalTaxableBase += record.taxableBase;
       totalIgv += record.igvAmount;
       totalAmount += record.totalAmount;
+
+      if (record.isCreditNote && record.isPriorPeriodModification) {
+        priorPeriodCreditNoteBase += record.taxableBase;
+        priorPeriodCreditNoteIgv += record.igvAmount;
+      }
 
       if (record.sunatDocTypeCode === '01') invoiceCount++;
       else if (record.sunatDocTypeCode === '03') receiptCount++;
@@ -273,7 +325,8 @@ export class ReportsService {
       };
     });
 
-    const estimatedIncomeTax1Pct = Number((totalTaxableBase * 0.01).toFixed(2));
+    const netTaxableForRenta = Math.max(0, totalTaxableBase);
+    const estimatedIncomeTax1Pct = Number((netTaxableForRenta * 0.01).toFixed(2));
 
     return {
       period: {
@@ -288,6 +341,8 @@ export class ReportsService {
         totalTaxableBase: Number(totalTaxableBase.toFixed(2)),
         totalIgv: Number(totalIgv.toFixed(2)),
         totalAmount: Number(totalAmount.toFixed(2)),
+        priorPeriodCreditNoteBase: Number(priorPeriodCreditNoteBase.toFixed(2)),
+        priorPeriodCreditNoteIgv: Number(priorPeriodCreditNoteIgv.toFixed(2)),
         estimatedIncomeTax1Pct,
       },
       records,
@@ -298,7 +353,13 @@ export class ReportsService {
    * Genera el libro tributario oficial de ventas en formato Excel con ExcelJS
    */
   async generateTaxBookExcel(query: ReportQueryDto): Promise<Buffer> {
-    const data = await this.getTaxBookData(query);
+    const [data, storeConfig] = await Promise.all([
+      this.getTaxBookData(query),
+      (this.prisma as any).storeConfig?.findFirst?.().catch(() => null),
+    ]);
+
+    const issuerName = sanitizeExcelText(storeConfig?.name, 'COMERCIAL RODRIGO').toUpperCase();
+    const issuerRuc = sanitizeExcelText(storeConfig?.ruc, '20600000000');
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Comercial Rodrigo - Sistema POS';
@@ -321,25 +382,25 @@ export class ReportsService {
     };
 
     // 1. TÍTULO Y ENCABEZADO FISCAL
-    sheet.mergeCells('A1:M1');
+    sheet.mergeCells('A1:Q1');
     const titleCell = sheet.getCell('A1');
-    titleCell.value = 'COMERCIAL RODRIGO - REGISTRO DE VENTAS E INGRESOS (SUNAT)';
+    titleCell.value = `${issuerName} - REGISTRO DE VENTAS E INGRESOS (SUNAT)`;
     titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: colors.headerText } };
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.headerBg } };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getRow(1).height = 34;
 
     // Subtítulo con metadatos tributarios
-    sheet.mergeCells('A2:M2');
+    sheet.mergeCells('A2:Q2');
     const subTitleCell = sheet.getCell('A2');
-    subTitleCell.value = `DOCUMENTO FISCAL CONTABLE OFICIAL | BOLETAS (03), FACTURAS (01) Y NOTAS DE CRÉDITO (07) | RUC: 20600000000 | FECHA: ${new Date().toLocaleDateString('es-PE', { timeZone: 'America/Lima' })}`;
+    subTitleCell.value = `DOCUMENTO FISCAL CONTABLE OFICIAL | BOLETAS (03), FACTURAS (01) Y NOTAS DE CRÉDITO (07) | RUC: ${issuerRuc} | FECHA: ${new Date().toLocaleDateString('es-PE', { timeZone: 'America/Lima' })}`;
     subTitleCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: '1E293B' } };
     subTitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.subHeaderBg } };
     subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getRow(2).height = 20;
 
     // 2. RESUMEN DE EMISIONES Y TARJETAS TRIBUTARIAS (KPIs para el Contador y SUNAT)
-    sheet.mergeCells('A3:M3');
+    sheet.mergeCells('A3:Q3');
     const countsCell = sheet.getCell('A3');
     countsCell.value = `RESUMEN DE EMISIONES:  Boletas (03): ${data.summary.receiptCount}   |   Facturas (01): ${data.summary.invoiceCount}   |   Notas de Crédito (07): ${data.summary.creditNoteCount}   |   Total Comprobantes: ${data.summary.totalFiscalSales}`;
     countsCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: '334155' } };
@@ -428,7 +489,7 @@ export class ReportsService {
     });
 
     // Tarjeta 4: PAGO A CTA. RENTA 1% (RMT)
-    renderSummaryCard('J', 'M', 10, 13, 'PAGO A CTA. RENTA 1% (RMT)', data.summary.estimatedIncomeTax1Pct, {
+    renderSummaryCard('J', 'Q', 10, 17, 'PAGO A CTA. RENTA 1% (RMT)', data.summary.estimatedIncomeTax1Pct, {
       headerBg: 'FEF3C7',
       headerText: '92400E',
       bodyBg: 'FFFBEB',
@@ -454,6 +515,10 @@ export class ReportsService {
       'IMPORTE TOTAL (S/)',
       'ESTADO SUNAT',
       'DOC. MODIFICADO (NC)',
+      'FEC. DOC. MOD.',
+      'TIPO DOC. MOD.',
+      'SERIE DOC. MOD.',
+      'N° DOC. MOD.',
     ];
 
     const headerRow = sheet.getRow(tableHeaderRowIndex);
@@ -481,14 +546,18 @@ export class ReportsService {
         record.sunatDocTypeCode, // 01 / 03 / 07
         record.series,
         record.formattedCorrelative,
-        record.customerDocType, // 1 / 6 / 0
-        record.customerDocument,
-        record.customerName,
+        record.customerDocType, // 1 / 4 / 6 / 7 / 0
+        sanitizeExcelText(record.customerDocument),
+        sanitizeExcelText(record.customerName, 'CLIENTES VARIOS'),
         record.taxableBase,
         record.igvAmount,
         record.totalAmount,
         record.emissionStatus,
-        record.modifiedDocument || '-',
+        sanitizeExcelText(record.modifiedDocument),
+        record.modifiedDocDate || '-',
+        record.modifiedDocType || '-',
+        record.modifiedDocSeries || '-',
+        record.modifiedDocNumber || '-',
       ];
       row.height = 20;
 
@@ -511,7 +580,7 @@ export class ReportsService {
         }
 
         // Alineaciones y formatos numéricos
-        if ([1, 2, 3, 4, 5, 6, 12, 13].includes(colNumber)) {
+        if ([1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 16, 17].includes(colNumber)) {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         } else if (colNumber === 7) {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -553,10 +622,11 @@ export class ReportsService {
       totalsRow.getCell(11).value = 0;
     }
 
-    totalsRow.getCell(12).value = '';
-    totalsRow.getCell(13).value = '';
+    for (let c = 12; c <= 17; c++) {
+      totalsRow.getCell(c).value = '';
+    }
 
-    for (let c = 1; c <= 13; c++) {
+    for (let c = 1; c <= 17; c++) {
       const cell = totalsRow.getCell(c);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.totalsBg } };
       cell.font = { name: 'Calibri', size: 11, bold: true };
@@ -587,10 +657,110 @@ export class ReportsService {
       { key: 'total', width: 18 },
       { key: 'status', width: 18 },
       { key: 'modifiedDoc', width: 22 },
+      { key: 'modDate', width: 14 },
+      { key: 'modType', width: 14 },
+      { key: 'modSeries', width: 14 },
+      { key: 'modNum', width: 15 },
     ];
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
+  }
+
+  /**
+   * Genera el archivo plano oficial SUNAT SIRE RVIE (Anexo N° 3 - R.S. N° 000112-2021/SUNAT)
+   * Nomenclatura oficial: LE + RUC(11) + YYYYMM(6) + 00 + 140400 + 02 + 1 + IndContenido(0/1) + 1 + 2.txt
+   */
+  async generateSireRvieTxt(query: ReportQueryDto): Promise<{
+    filename: string;
+    content: string;
+    buffer: Buffer;
+  }> {
+    const [data, storeConfig] = await Promise.all([
+      this.getTaxBookData(query),
+      (this.prisma as any).storeConfig?.findFirst?.().catch(() => null),
+    ]);
+
+    const rawRuc = String(storeConfig?.ruc || '20600000000').replace(/\D/g, '');
+    const issuerRuc = rawRuc.length === 11 ? rawRuc : '20600000000';
+    const issuerName = String(storeConfig?.name || 'COMERCIAL RODRIGO')
+      .replace(/\|/g, ' ')
+      .replace(/[\r\n]+/g, ' ')
+      .trim()
+      .slice(0, 100);
+
+    const refDateStr =
+      query.startDate && /^\d{4}-\d{2}/.test(query.startDate.trim())
+        ? query.startDate.trim().slice(0, 7)
+        : formatPeruYMD(new Date()).slice(0, 7);
+    const periodYm = refDateStr.replace('-', '');
+
+    const hasContentIndicator = data.records.length > 0 ? '1' : '0';
+    const filename = `LE${issuerRuc}${periodYm}00140400021${hasContentIndicator}12.txt`;
+
+    const lines = data.records.map((rec) => {
+      const cleanCustomerDoc =
+        rec.customerDocument && rec.customerDocument !== '-'
+          ? rec.customerDocument.replace(/\|/g, '').trim()
+          : '0';
+      const cleanCustomerName = String(rec.customerName || 'CLIENTES VARIOS')
+        .replace(/\|/g, ' ')
+        .replace(/[\r\n]+/g, ' ')
+        .trim()
+        .slice(0, 100);
+
+      const isPriorNc = Boolean(rec.isCreditNote && rec.isPriorPeriodModification);
+      const biGravada = isPriorNc ? '0.00' : rec.taxableBase.toFixed(2);
+      const descBiGravada = isPriorNc ? rec.taxableBase.toFixed(2) : '0.00';
+      const igv = isPriorNc ? '0.00' : rec.igvAmount.toFixed(2);
+      const descIgv = isPriorNc ? rec.igvAmount.toFixed(2) : '0.00';
+
+      const fields = [
+        issuerRuc, // 1. RUC del generador
+        issuerName, // 2. Razón Social del generador
+        periodYm, // 3. Periodo YYYYMM
+        '', // 4. CAR SUNAT (autocalculado por SUNAT en propuesta/reemplazo)
+        rec.issueDate, // 5. Fecha de emisión DD/MM/YYYY
+        '', // 6. Fecha de vencimiento
+        rec.sunatDocTypeCode, // 7. Tipo CP (01, 03, 07)
+        rec.series || '', // 8. Serie del CDP
+        rec.formattedCorrelative, // 9. Nro CP inicial
+        '', // 10. Nro CP final (solo consolidado diario)
+        rec.customerDocType, // 11. Tipo Doc Identidad cliente (Catálogo 06)
+        cleanCustomerDoc, // 12. Nro Doc Identidad cliente
+        cleanCustomerName, // 13. Apellidos y nombres / Razón Social cliente
+        '0.00', // 14. Valor Facturado Exportación
+        biGravada, // 15. BI Gravada
+        descBiGravada, // 16. Descuento BI Gravada (NC periodos anteriores)
+        igv, // 17. IGV / IPM
+        descIgv, // 18. Descuento IGV / IPM (NC periodos anteriores)
+        '0.00', // 19. Mto Exonerado
+        '0.00', // 20. Mto Inafecto
+        '0.00', // 21. ISC
+        '0.00', // 22. BI Grav IVAP
+        '0.00', // 23. IVAP
+        '0.00', // 24. ICBPER
+        '0.00', // 25. Otros tributos
+        rec.totalAmount.toFixed(2), // 26. Total CP
+        'PEN', // 27. Moneda (ISO 4217)
+        '1.000', // 28. Tipo de cambio
+        rec.isCreditNote ? rec.modifiedDocDate || '' : '', // 29. Fecha emisión Doc Modificado
+        rec.isCreditNote ? rec.modifiedDocType || '' : '', // 30. Tipo CP Modificado
+        rec.isCreditNote ? rec.modifiedDocSeries || '' : '', // 31. Serie CP Modificado
+        rec.isCreditNote ? rec.modifiedDocNumber || '' : '', // 32. Nro CP Modificado
+        '', // 33. ID Proyecto Operadores
+        '', // 34. Cierre de registro con pipe final
+      ];
+
+      return fields.join('|');
+    });
+
+    const content = lines.length > 0 ? `${lines.join('\r\n')}\r\n` : '';
+    return {
+      filename,
+      content,
+      buffer: Buffer.from(content, 'utf-8'),
+    };
   }
 
   // =========================================================================
@@ -775,14 +945,23 @@ export class ReportsService {
     const grossProfit = Number((totalGrossRevenue - totalCogs).toFixed(2));
     const grossMarginPct = totalGrossRevenue > 0 ? Number(((grossProfit / totalGrossRevenue) * 100).toFixed(2)) : 0;
 
-    // Movimientos de caja chica
+    // Movimientos de caja chica (separando devoluciones de ventas anuladas de turnos cerrados
+    // para no contabilizar una venta anulada como pérdida neta operativa, manteniendo intacto el cuadre físico de gaveta)
     let totalExpenses = 0;
+    let voidRefundExpenses = 0;
     let totalIncomes = 0;
 
     const cashMovementsDetail = cashMovements.map((m) => {
       const amount = Number(m.amount);
+      const isVoidRefund =
+        m.type === CashMovementType.EXPENSE &&
+        /^Devoluci[oó]n en efectivo por anulaci[oó]n/i.test(m.reason || '');
+
       if (m.type === CashMovementType.EXPENSE) {
         totalExpenses += amount;
+        if (isVoidRefund) {
+          voidRefundExpenses += amount;
+        }
       } else {
         totalIncomes += amount;
       }
@@ -792,6 +971,7 @@ export class ReportsService {
         type: m.type,
         amount,
         reason: m.reason,
+        isVoidRefund,
         createdAt: m.createdAt.toISOString(),
         cashRegister: m.cashShift.cashRegister.name,
         cashier: m.cashShift.user.name,
@@ -799,6 +979,8 @@ export class ReportsService {
     });
 
     totalExpenses = Number(totalExpenses.toFixed(2));
+    voidRefundExpenses = Number(voidRefundExpenses.toFixed(2));
+    const operatingExpenses = Number(Math.max(0, totalExpenses - voidRefundExpenses).toFixed(2));
     totalIncomes = Number(totalIncomes.toFixed(2));
 
     // Suma de fondos de caja iniciales (sencillo de apertura) de los turnos del periodo
@@ -806,12 +988,12 @@ export class ReportsService {
       shifts.reduce((acc, s) => acc + Number(s.initialBalance), 0).toFixed(2),
     );
 
-    // Ganancia Neta Real (Utilidad Bruta - Gastos Operativos de Caja Chica)
-    const netProfit = Number((grossProfit - totalExpenses).toFixed(2));
+    // Ganancia Neta Real (Utilidad Bruta - Gastos Operativos Reales de Caja Chica)
+    const netProfit = Number((grossProfit - operatingExpenses).toFixed(2));
     const netMarginPct = totalGrossRevenue > 0 ? Number(((netProfit / totalGrossRevenue) * 100).toFixed(2)) : 0;
 
     // Cuadre total de dinero físico en gaveta:
-    // Saldo Inicial de apertura + Efectivo en ventas + Ingresos varios en caja chica - Salidas de dinero de caja chica
+    // Saldo Inicial de apertura + Efectivo en ventas + Ingresos varios en caja chica - Todas las salidas físicas de gaveta
     const theoreticalDrawerCash = Number(
       (totalInitialBalances + cashPaidTotal + totalIncomes - totalExpenses).toFixed(2),
     );
@@ -826,7 +1008,9 @@ export class ReportsService {
         totalCogs, // Costo de mercadería
         grossProfit, // Ganancia Bruta Real
         grossMarginPct, // Margen Bruto %
-        totalExpenses, // Salidas de caja chica
+        totalExpenses, // Salidas físicas totales de caja chica
+        operatingExpenses, // Gastos operativos reales (excluyendo devoluciones de anulaciones)
+        voidRefundExpenses, // Devoluciones en efectivo de turnos anteriores cerrados
         totalIncomes, // Ingresos varios caja chica
         totalInitialBalances, // Fondo inicial de caja total (sencillo de apertura)
         netProfit, // Ganancia Neta Real
@@ -1116,7 +1300,7 @@ export class ReportsService {
         new Date(s.createdAt).toLocaleString('es-PE', { timeZone: 'America/Lima' }),
         s.receiptType,
         s.fullReceiptNumber,
-        s.customerName,
+        sanitizeExcelText(s.customerName, 'Cliente Varios'),
         s.paymentMethod,
         s.cashPaid,
         s.digitalPaid,
@@ -1228,8 +1412,8 @@ export class ReportsService {
         idx + 1,
         new Date(m.createdAt).toLocaleString('es-PE', { timeZone: 'America/Lima' }),
         isExpense ? 'SALIDA (GASTO)' : 'INGRESO',
-        m.reason,
-        `${m.cashier} (${m.cashRegister})`,
+        sanitizeExcelText(m.reason),
+        sanitizeExcelText(`${m.cashier} (${m.cashRegister})`),
         isExpense ? -m.amount : m.amount,
       ];
       row.height = 20;

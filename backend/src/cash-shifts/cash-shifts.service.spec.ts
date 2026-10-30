@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CashShiftsService, calculateNetCashFromSale } from './cash-shifts.service.js';
-import { BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { ShiftStatus, CashMovementType, Role } from '@prisma/client';
 
 describe('CashShiftsService', () => {

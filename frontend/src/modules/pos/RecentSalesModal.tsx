@@ -1,7 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency, formatPeruDateTime } from '../../lib/utils.js';
+import {
+  addPeruDaysYMD,
+  formatCurrency,
+  formatPeruDateTime,
+  getPeruYMD,
+  sanitizeExternalUrl,
+} from '../../lib/utils.js';
 import {
   X,
   History,
@@ -25,18 +31,33 @@ import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { ConvertReceiptModal } from './ConvertReceiptModal.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
 
+const PERU_FIXED_HOLIDAYS_MMDD = new Set([
+  '01-01',
+  '05-01',
+  '06-07',
+  '06-29',
+  '07-23',
+  '07-28',
+  '07-29',
+  '08-06',
+  '08-30',
+  '10-08',
+  '11-01',
+  '12-08',
+  '12-09',
+  '12-25',
+]);
+
 /**
  * 🛡️ Verifica si el plazo legal de SUNAT (15° día hábil del mes siguiente)
- * para emitir Nota de Crédito Electrónica ya venció (R.S. 193-2020/SUNAT).
+ * para emitir Nota de Crédito Electrónica por anulación (01/02) ya venció (R.S. 193-2020/SUNAT).
  */
 export function checkSunatVoidDeadline(createdAt: string | Date): {
   isExpired: boolean;
   formattedDeadline: string;
 } {
-  const date = new Date(createdAt);
-  const peruTime = new Date(date.getTime() - 5 * 3600000);
-  const year = peruTime.getUTCFullYear();
-  const month = peruTime.getUTCMonth(); // 0 a 11
+  const [year, monthOneBased] = getPeruYMD(createdAt).split('-').map(Number);
+  const month = monthOneBased - 1; // 0 a 11
 
   let nextMonth = month + 1;
   let nextYear = year;
@@ -45,6 +66,7 @@ export function checkSunatVoidDeadline(createdAt: string | Date): {
     nextYear = year + 1;
   }
 
+  const pad = (n: number) => String(n).padStart(2, '0');
   let businessDaysCount = 0;
   let checkDay = 1;
   let deadlineDay = 1;
@@ -53,7 +75,8 @@ export function checkSunatVoidDeadline(createdAt: string | Date): {
     const d = new Date(Date.UTC(nextYear, nextMonth, checkDay, 12, 0, 0));
     if (d.getUTCMonth() !== nextMonth) break;
     const dayOfWeek = d.getUTCDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+    const mmdd = `${pad(nextMonth + 1)}-${pad(checkDay)}`;
+    if (dayOfWeek !== 0 && dayOfWeek !== 6 && !PERU_FIXED_HOLIDAYS_MMDD.has(mmdd)) {
       businessDaysCount++;
       if (businessDaysCount === 15) {
         deadlineDay = checkDay;
@@ -65,7 +88,6 @@ export function checkSunatVoidDeadline(createdAt: string | Date): {
 
   const deadlineUtc = new Date(Date.UTC(nextYear, nextMonth, deadlineDay, 23 + 5, 59, 59, 999));
   const isExpired = Date.now() > deadlineUtc.getTime();
-  const pad = (n: number) => String(n).padStart(2, '0');
   const formattedDeadline = `${pad(deadlineDay)}/${pad(nextMonth + 1)}/${nextYear}`;
 
   return { isExpired, formattedDeadline };
@@ -127,28 +149,21 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
   const [saleToConvert, setSaleToConvert] = useState<any | null>(null);
   const [isSearchingExternalTicket, setIsSearchingExternalTicket] = useState<boolean>(false);
   const [searchTicketError, setSearchTicketError] = useState<string | null>(null);
+  const [reemittingNcId, setReemittingNcId] = useState<string | null>(null);
 
-  // Helper para calcular fechas en hora peruana (UTC-5)
+  // Helper para calcular fechas exactas en calendario peruano (America/Lima, UTC-5) sin desfase nocturno
   const getPeriodDates = (period: PeriodType) => {
-    const d = new Date();
-    const utc = d.getTime() + d.getTimezoneOffset() * 60000;
-    const peruNow = new Date(utc - 5 * 3600000);
-    const todayStr = peruNow.toISOString().split('T')[0];
-    const today = new Date(`${todayStr}T00:00:00.000-05:00`);
+    const todayStr = getPeruYMD();
 
     if (period === 'today') {
       return { startDate: todayStr, endDate: todayStr };
     }
     if (period === 'yesterday') {
-      const yest = new Date(today);
-      yest.setDate(yest.getDate() - 1);
-      const yestStr = yest.toISOString().split('T')[0];
+      const yestStr = addPeruDaysYMD(-1);
       return { startDate: yestStr, endDate: yestStr };
     }
     if (period === 'week') {
-      const weekAgo = new Date(today);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      return { startDate: weekAgo.toISOString().split('T')[0], endDate: todayStr };
+      return { startDate: addPeruDaysYMD(-7), endDate: todayStr };
     }
     if (period === 'month') {
       const monthStart = `${todayStr.substring(0, 7)}-01`;
@@ -243,9 +258,25 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
     }
   };
 
+  const handleReemitCreditNote = async (saleId: string) => {
+    if (reemittingNcId) return;
+    setReemittingNcId(saleId);
+    try {
+      const res = await apiRequest(`/sales/${saleId}/reemit-credit-note`, {
+        method: 'POST',
+      });
+      setSuccessToast(res?.message || 'Nota de Crédito reenviada a SUNAT correctamente.');
+      await fetchSales();
+    } catch (err: any) {
+      setSearchTicketError(err?.message || 'No se pudo reenviar la Nota de Crédito a SUNAT.');
+    } finally {
+      setReemittingNcId(null);
+    }
+  };
+
   const handleVoidSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!saleToVoid) return;
+    if (!saleToVoid || isVoiding || voidSuccess) return;
 
     if (!adminPin.trim()) {
       setVoidError('Ingrese el PIN de Administrador (ej: 1234)');
@@ -740,33 +771,25 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
 
                           {/* Botón Anular Venta (solo si no está anulada) */}
                           {!sale.isVoided && (
-                            isVoidDisabledBySunat ? (
-                              <button
-                                disabled
-                                className="p-2 rounded-xl bg-slate-800/40 text-slate-600 border border-slate-800 transition-all cursor-not-allowed opacity-50"
-                                title={`No es posible anular: El plazo reglamentario SUNAT para emitir Nota de Crédito venció el ${sunatDeadline?.formattedDeadline} (R.S. 193-2020/SUNAT)`}
-                              >
-                                <Ban className="w-4 h-4" />
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setSaleToVoid(sale);
-                                  setAdminPin('');
-                                  setVoidReason('');
-                                  setSunatReasonCode('01');
-                                  setVoidError(null);
-                                }}
-                                className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer"
-                                title={
-                                  sale.receiptType === 'NOTA_VENTA'
-                                    ? 'Anular nota interna con PIN'
+                            <button
+                              onClick={() => {
+                                setSaleToVoid(sale);
+                                setAdminPin('');
+                                setVoidReason('');
+                                setSunatReasonCode(isVoidDisabledBySunat ? '06' : '01');
+                                setVoidError(null);
+                              }}
+                              className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer"
+                              title={
+                                sale.receiptType === 'NOTA_VENTA'
+                                  ? 'Anular nota interna con PIN'
+                                  : isVoidDisabledBySunat
+                                    ? `Emitir Nota de Crédito por Devolución (06) — Plazo de anulación 01/02 venció el ${sunatDeadline?.formattedDeadline}`
                                     : 'Emitir Nota de Crédito Electrónica'
-                                }
-                              >
-                                <Ban className="w-4 h-4" />
-                              </button>
-                            )
+                              }
+                            >
+                              <Ban className="w-4 h-4" />
+                            </button>
                           )}
 
                           {/* Toggle Detalle */}
@@ -804,58 +827,92 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                           ))}
                         </div>
 
-                        {(sale.pdfUrl || (isAdmin && (sale.xmlUrl || sale.cdrUrl))) && (
-                          <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center gap-2 flex-wrap text-[10.5px]">
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase">
-                              {isAdmin ? 'Archivos Fiscales (Admin):' : 'Comprobante:'}
-                            </span>
-                            {sale.pdfUrl && (
-                              <a
-                                href={sale.pdfUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium transition-all"
-                              >
-                                Descargar PDF
-                              </a>
-                            )}
-                            {isAdmin && sale.xmlUrl && (
-                              <a
-                                href={sale.xmlUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-2 py-0.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] transition-all"
-                              >
-                                XML (UBL 2.1)
-                              </a>
-                            )}
-                            {isAdmin && sale.cdrUrl && (
-                              <a
-                                href={sale.cdrUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-2 py-0.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-[10px] transition-all"
-                              >
-                                CDR (SUNAT)
-                              </a>
-                            )}
-                          </div>
-                        )}
+                        {(() => {
+                          const safePdf = sanitizeExternalUrl(sale.pdfUrl);
+                          const safeXml = sanitizeExternalUrl(sale.xmlUrl);
+                          const safeCdr = sanitizeExternalUrl(sale.cdrUrl);
+                          if (!safePdf && !(isAdmin && (safeXml || safeCdr))) return null;
+                          return (
+                            <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center gap-2 flex-wrap text-[10.5px]">
+                              <span className="text-[10px] text-slate-400 font-semibold uppercase">
+                                {isAdmin ? 'Archivos Fiscales (Admin):' : 'Comprobante:'}
+                              </span>
+                              {safePdf && (
+                                <a
+                                  href={safePdf}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium transition-all"
+                                >
+                                  Descargar PDF
+                                </a>
+                              )}
+                              {isAdmin && safeXml && (
+                                <a
+                                  href={safeXml}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-0.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] transition-all"
+                                >
+                                  XML (UBL 2.1)
+                                </a>
+                              )}
+                              {isAdmin && safeCdr && (
+                                <a
+                                  href={safeCdr}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-0.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-[10px] transition-all"
+                                >
+                                  CDR (SUNAT)
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {sale.isVoided && (
                           <div className="mt-2 p-2.5 rounded-xl bg-rose-950/40 border border-rose-900/40 text-[11px] text-rose-200 space-y-1">
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between items-center gap-2 flex-wrap">
                               <span className="font-bold text-rose-300">
                                 {sale.creditNote
                                   ? `Nota de Crédito: ${sale.creditNote.fullNumber}`
                                   : 'Venta Anulada (Control Interno)'}
                               </span>
                               {sale.creditNote && (
-                                <span className="text-[9.5px] bg-rose-500/20 px-2 py-0.5 rounded text-rose-300 border border-rose-500/30 font-semibold font-mono">
-                                  {sale.creditNote.emissionStatus === 'SIMULATED'
-                                    ? 'MOCK SUNAT'
-                                    : 'ACEPTADO SUNAT'}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className={`text-[9.5px] px-2 py-0.5 rounded border font-semibold font-mono ${
+                                      sale.creditNote.emissionStatus === 'PENDING' ||
+                                      sale.creditNote.emissionStatus === 'REJECTED'
+                                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                        : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                    }`}
+                                  >
+                                    {sale.creditNote.emissionStatus === 'SIMULATED'
+                                      ? 'MOCK SUNAT'
+                                      : sale.creditNote.emissionStatus === 'ACCEPTED'
+                                        ? 'ACEPTADO SUNAT'
+                                        : sale.creditNote.emissionStatus === 'PENDING'
+                                          ? 'PENDIENTE SUNAT'
+                                          : 'RECHAZADO SUNAT'}
+                                  </span>
+                                  {(sale.creditNote.emissionStatus === 'PENDING' ||
+                                    sale.creditNote.emissionStatus === 'REJECTED') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleReemitCreditNote(sale.id)}
+                                      disabled={reemittingNcId === sale.id}
+                                      className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                      title="Reintentar envío de Nota de Crédito al PSE/SUNAT"
+                                    >
+                                      <RefreshCw
+                                        className={`w-3 h-3 ${reemittingNcId === sale.id ? 'animate-spin' : ''}`}
+                                      />
+                                      <span>Reintentar NC</span>
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
                             {sale.creditNote && (
@@ -898,6 +955,8 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                 ? checkSunatVoidDeadline(saleToVoid.createdAt)
                 : null;
               const isSunatExpired = Boolean(isFiscalToVoid && voidDeadline?.isExpired);
+              const isInvalidReasonForDeadline =
+                isSunatExpired && (sunatReasonCode === '01' || sunatReasonCode === '02');
               return (
                 <>
                   <div className="text-center mb-4">
@@ -937,8 +996,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                         Serie asignada:{' '}
                         <strong className="text-white">
                           {saleToVoid.receiptType === 'FACTURA' ? 'FC01' : 'BC01'}
-                        </strong>{' '}
-                        • Motor Simulador SUNAT Activo
+                        </strong>
                       </div>
                     )}
                   </div>
@@ -948,18 +1006,14 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                       <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                       <div className="space-y-1">
                         <p className="font-bold text-amber-200">
-                          Plazo legal de anulación SUNAT vencido
+                          Plazo de anulación directa (01/02) vencido
                         </p>
                         <p className="text-[11px] text-amber-300/90 leading-relaxed">
-                          Conforme a la <strong>R.S. 193-2020/SUNAT</strong>, las Notas de Crédito
-                          electrónicas por anulación directa solo pueden emitirse hasta el 15° día
-                          hábil del mes siguiente a la emisión (venció el{' '}
-                          <strong>{voidDeadline?.formattedDeadline}</strong>).
-                        </p>
-                        <p className="text-[10px] text-amber-400 font-medium">
-                          SUNAT rechazará la anulación de este comprobante por período fiscal
-                          cerrado. Para regularizarlo, consulte con su contador para realizar los
-                          ajustes o rectificatorias correspondientes en libros contables.
+                          Conforme a la <strong>R.S. 193-2020/SUNAT</strong>, la anulación directa
+                          (códigos 01 y 02) venció el{' '}
+                          <strong>{voidDeadline?.formattedDeadline}</strong>. Solo se permite emitir
+                          Nota de Crédito por{' '}
+                          <strong>06 - Devolución total de mercadería</strong>.
                         </p>
                       </div>
                     </div>
@@ -991,10 +1045,14 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                           onChange={(e) => setSunatReasonCode(e.target.value)}
                           className="w-full bg-slate-950 border border-slate-800 focus:border-rose-500 rounded-xl px-3 py-2 text-xs text-white outline-none"
                         >
-                          <option value="01">
+                          <option value="01" disabled={isSunatExpired}>
                             01 - Anulación de la operación (Anulación Total)
+                            {isSunatExpired ? ' (Plazo vencido)' : ''}
                           </option>
-                          <option value="02">02 - Anulación por error en el RUC / Datos</option>
+                          <option value="02" disabled={isSunatExpired}>
+                            02 - Anulación por error en el RUC / Datos
+                            {isSunatExpired ? ' (Plazo vencido)' : ''}
+                          </option>
                           <option value="06">06 - Devolución total de mercadería</option>
                         </select>
                       </div>
@@ -1030,7 +1088,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                         type="text"
                         value={voidReason}
                         onChange={(e) => setVoidReason(e.target.value)}
-                        placeholder="Ej: Cliente canceló la compra / Error de digitación"
+                        placeholder="Ej: Cliente canceló la compra / Devolución de producto"
                         className="w-full bg-slate-950 border border-slate-800 focus:border-rose-500 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 outline-none"
                         required
                       />
@@ -1056,19 +1114,20 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setSaleToVoid(null)}
-                        className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-all cursor-pointer"
+                        disabled={isVoiding || Boolean(voidSuccess)}
+                        className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-all cursor-pointer disabled:opacity-50"
                       >
                         Cancelar
                       </button>
                       <button
                         type="submit"
-                        disabled={isVoiding || isSunatExpired}
+                        disabled={isVoiding || Boolean(voidSuccess) || isInvalidReasonForDeadline}
                         className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {isVoiding
                           ? 'Emitiendo...'
-                          : isSunatExpired
-                            ? 'Plazo SUNAT Vencido'
+                          : voidSuccess
+                            ? 'Emitido ✓'
                             : isFiscalToVoid
                               ? 'Emitir Nota de Crédito'
                               : 'Confirmar Anulación'}

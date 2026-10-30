@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import type { UnitType } from '../types/index.js';
+import { isDiscreteUnitType } from './units.js';
 
 export interface ParsedProductRow {
   rowNumber: number;
@@ -31,17 +32,132 @@ function cleanKey(key: string): string {
 }
 
 /**
- * Mapeo inteligente de unidad de medida
+ * Mapeo inteligente de unidad de medida (evita confundir BOLSA con SA/Saco)
  */
-function parseUnitType(rawVal: any): UnitType {
+export function parseUnitType(rawVal: unknown): UnitType {
   if (!rawVal) return 'NIU';
   const val = String(rawVal).trim().toUpperCase();
+  if (val.includes('BOLSA') || val === 'BG') return 'NIU';
+  if (val === 'SA' || val.startsWith('SA ') || val.startsWith('SA(') || val.includes('SACO')) {
+    return 'SA';
+  }
+  if (val === 'BX' || val.startsWith('BX ') || val.startsWith('BX(') || val.includes('CAJA')) {
+    return 'BX';
+  }
+  if (val === 'PK' || val.startsWith('PK ') || val.startsWith('PK(') || val.includes('PAQUETE')) {
+    return 'PK';
+  }
   if (val.includes('KG') || val.includes('KILO')) return 'KG';
-  if (val.includes('LT') || val.includes('LITRO')) return 'LT';
-  if (val.includes('SA') || val.includes('SACO')) return 'SA';
-  if (val.includes('BX') || val.includes('CAJA')) return 'BX';
-  if (val.includes('PK') || val.includes('PAQUETE')) return 'PK';
+  if (val.includes('LT') || val.includes('LITRO') || val === 'LTR') return 'LT';
   return 'NIU';
+}
+
+/**
+ * Parsea números con decimales en coma o punto, preservando signos negativos y el valor 0
+ */
+export function parseFlexibleNumber(raw: unknown, fallback: number | null): number | null {
+  if (raw === null || raw === undefined) return fallback;
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? raw : Number.NaN;
+  }
+
+  const str = String(raw).trim();
+  if (str === '') return fallback;
+
+  let cleaned = str.replace(/\s+/g, '');
+  let isNegative = false;
+  if (cleaned.startsWith('-')) {
+    isNegative = true;
+    cleaned = cleaned.slice(1);
+  } else if (cleaned.startsWith('+')) {
+    cleaned = cleaned.slice(1);
+  }
+
+  cleaned = cleaned.replace(/^(S\/\.?|PEN|\$)/i, '');
+  if (cleaned.startsWith('-')) {
+    isNegative = true;
+    cleaned = cleaned.slice(1);
+  }
+
+  if (cleaned.includes(',') && cleaned.includes('.')) {
+    if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    } else {
+      cleaned = cleaned.replace(/,/g, '');
+    }
+  } else if (cleaned.includes(',')) {
+    cleaned = cleaned.replace(',', '.');
+  }
+
+  if (!/^\d+(\.\d+)?$/.test(cleaned)) {
+    return Number.NaN;
+  }
+
+  const num = Number(cleaned);
+  if (!Number.isFinite(num)) return Number.NaN;
+  if (num === 0) return 0;
+  return isNegative ? -num : num;
+}
+
+function pickFirstDefined(row: Record<string, unknown>, keys: string[]): unknown {
+  for (const k of keys) {
+    const val = row[k];
+    if (val !== undefined && val !== null && String(val).trim() !== '') {
+      return val;
+    }
+  }
+  return '';
+}
+
+export function parseFlexibleExpirationDate(
+  rawExp: unknown,
+): { date: string | null; invalid: boolean } {
+  if (rawExp === null || rawExp === undefined || String(rawExp).trim() === '') {
+    return { date: null, invalid: false };
+  }
+
+  if (rawExp instanceof Date) {
+    if (isNaN(rawExp.getTime())) {
+      return { date: null, invalid: true };
+    }
+    const yyyy = rawExp.getUTCFullYear();
+    const mm = String(rawExp.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(rawExp.getUTCDate()).padStart(2, '0');
+    return { date: `${yyyy}-${mm}-${dd}`, invalid: false };
+  }
+
+  const str = String(rawExp).trim();
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const [, yyyy, mm, dd] = isoMatch;
+    const check = new Date(Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)));
+    if (
+      check.getUTCFullYear() === Number(yyyy) &&
+      check.getUTCMonth() + 1 === Number(mm) &&
+      check.getUTCDate() === Number(dd)
+    ) {
+      return { date: `${yyyy}-${mm}-${dd}`, invalid: false };
+    }
+    return { date: null, invalid: true };
+  }
+
+  const dmyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmyMatch) {
+    const [, dStr, mStr, yyyy] = dmyMatch;
+    const dd = dStr.padStart(2, '0');
+    const mm = mStr.padStart(2, '0');
+    const check = new Date(Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)));
+    if (
+      check.getUTCFullYear() === Number(yyyy) &&
+      check.getUTCMonth() + 1 === Number(mm) &&
+      check.getUTCDate() === Number(dd)
+    ) {
+      return { date: `${yyyy}-${mm}-${dd}`, invalid: false };
+    }
+    return { date: null, invalid: true };
+  }
+
+  return { date: null, invalid: true };
 }
 
 /**
@@ -161,8 +277,11 @@ export async function parseProductsExcelFile(file: File): Promise<ParsedProductR
   }
 
   const parsedList: ParsedProductRow[] = [];
+  const seenBarcodes = new Map<string, number>();
 
   rawJson.forEach((row, index) => {
+    const rowNumber = index + 2; // Fila en el Excel (1-indexed + header)
+
     // Normalizar llaves
     const normalizedRow: Record<string, any> = {};
     Object.keys(row).forEach((k) => {
@@ -171,142 +290,151 @@ export async function parseProductsExcelFile(file: File): Promise<ParsedProductR
 
     // Detectar Nombre (obligatorio)
     const name = String(
-      normalizedRow['nombredelproducto'] ||
-        normalizedRow['nombreproducto'] ||
-        normalizedRow['producto'] ||
-        normalizedRow['nombre'] ||
-        '',
+      pickFirstDefined(normalizedRow, [
+        'nombredelproducto',
+        'nombreproducto',
+        'producto',
+        'nombre',
+      ]),
     ).trim();
 
-    // Si toda la fila está vacía o sin nombre, ignorarla
-    if (!name && Object.values(row).every((v) => v === '')) {
+    // Si toda la fila está vacía o sin nombre y sin valores, ignorarla
+    if (!name && Object.values(row).every((v) => v === '' || v === null || v === undefined)) {
       return;
     }
 
     // Detectar Código de barras (opcional)
     const rawBarcode = String(
-      normalizedRow['codigodebarras'] ||
-        normalizedRow['codigobarras'] ||
-        normalizedRow['codigo'] ||
-        normalizedRow['barcode'] ||
-        '',
+      pickFirstDefined(normalizedRow, [
+        'codigodebarras',
+        'codigobarras',
+        'codigo',
+        'barcode',
+      ]),
     ).trim();
 
     const isAutoBarcode = !rawBarcode;
     const barcode = rawBarcode;
 
     // Detectar Categoría (opcional)
-    const categoryName = String(
-      normalizedRow['categoria'] || normalizedRow['rubro'] || 'General',
-    ).trim() || 'General';
+    const categoryName =
+      String(pickFirstDefined(normalizedRow, ['categoria', 'rubro']) || 'General').trim() ||
+      'General';
 
     // Detectar Unidad de medida
-    const rawUnit =
-      normalizedRow['unidaddemedida'] ||
-      normalizedRow['unidad'] ||
-      normalizedRow['unid'] ||
-      normalizedRow['um'] ||
-      'NIU';
+    const rawUnit = pickFirstDefined(normalizedRow, ['unidaddemedida', 'unidad', 'unid', 'um']) || 'NIU';
     const unitType = parseUnitType(rawUnit);
 
-    // Detectar Costo de compra
-    const rawCost =
-      normalizedRow['costodecompra'] ||
-      normalizedRow['costocompra'] ||
-      normalizedRow['costo'] ||
-      normalizedRow['preciocompra'] ||
-      0;
-    const costPrice = parseFloat(String(rawCost).replace(/[^0-9.]/g, '')) || 0;
+    // Detectar Costo de compra (0 permitido, negativos o texto inválido rechazados)
+    const rawCost = pickFirstDefined(normalizedRow, [
+      'costodecompra',
+      'costocompra',
+      'costo',
+      'preciocompra',
+    ]);
+    const costPrice = parseFlexibleNumber(rawCost, 0) as number;
 
     // Detectar Precio Menor
-    const rawRetail =
-      normalizedRow['precioventamenor'] ||
-      normalizedRow['preciomenor'] ||
-      normalizedRow['precioventa'] ||
-      normalizedRow['precio'] ||
-      0;
-    const retailPrice = parseFloat(String(rawRetail).replace(/[^0-9.]/g, '')) || 0;
+    const rawRetail = pickFirstDefined(normalizedRow, [
+      'precioventamenor',
+      'preciomenor',
+      'precioventa',
+      'precio',
+    ]);
+    const retailPrice = parseFlexibleNumber(rawRetail, 0) as number;
 
     // Detectar Precio Mayorista
-    const rawWholesale =
-      normalizedRow['preciomayorista'] ||
-      normalizedRow['preciomayor'] ||
-      normalizedRow['mayorista'] ||
-      '';
-    const wholesalePrice = rawWholesale !== '' ? parseFloat(String(rawWholesale).replace(/[^0-9.]/g, '')) : null;
+    const rawWholesale = pickFirstDefined(normalizedRow, [
+      'preciomayorista',
+      'preciomayor',
+      'mayorista',
+    ]);
+    const wholesalePrice = parseFlexibleNumber(rawWholesale, null);
 
     // Cantidad mínima mayorista
-    const rawMinQty =
-      normalizedRow['cantminmayorista'] ||
-      normalizedRow['cantidadminimamayorista'] ||
-      normalizedRow['minmayorista'] ||
-      3;
-    const wholesaleMinQty = rawMinQty !== '' ? parseFloat(String(rawMinQty).replace(/[^0-9.]/g, '')) : 3;
+    const rawMinQty = pickFirstDefined(normalizedRow, [
+      'cantminmayorista',
+      'cantidadminimamayorista',
+      'minmayorista',
+    ]);
+    const wholesaleMinQty = parseFlexibleNumber(rawMinQty, 3) as number;
 
     // Stock Inicial
-    const rawStock =
-      normalizedRow['stockinicial'] ||
-      normalizedRow['stock'] ||
-      normalizedRow['cantidad'] ||
-      0;
-    const currentStock = parseFloat(String(rawStock).replace(/[^0-9.]/g, '')) || 0;
+    const rawStock = pickFirstDefined(normalizedRow, ['stockinicial', 'stock', 'cantidad']);
+    const currentStock = parseFlexibleNumber(rawStock, 0) as number;
 
-    // Stock Mínimo
-    const rawMinStock =
-      normalizedRow['stockminimoalerta'] ||
-      normalizedRow['stockminimo'] ||
-      normalizedRow['minstock'] ||
-      5;
-    const minStock = parseFloat(String(rawMinStock).replace(/[^0-9.]/g, '')) || 5;
+    // Stock Mínimo (preserva 0 cuando el usuario escribe 0 explícitamente)
+    const rawMinStock = pickFirstDefined(normalizedRow, [
+      'stockminimoalerta',
+      'stockminimo',
+      'minstock',
+    ]);
+    const minStock = parseFlexibleNumber(rawMinStock, 5) as number;
 
     // Fecha de Vencimiento
-    let expirationDate: string | null = null;
-    const rawExp =
-      normalizedRow['fechavencimiento'] ||
-      normalizedRow['vencimiento'] ||
-      normalizedRow['fechavenc'] ||
-      null;
-
-    if (rawExp instanceof Date) {
-      expirationDate = rawExp.toISOString().split('T')[0];
-    } else if (typeof rawExp === 'string' && rawExp.trim()) {
-      const parsedDate = new Date(rawExp.trim());
-      if (!isNaN(parsedDate.getTime())) {
-        expirationDate = parsedDate.toISOString().split('T')[0];
-      }
-    }
+    const rawExp = pickFirstDefined(normalizedRow, [
+      'fechavencimiento',
+      'vencimiento',
+      'fechavenc',
+    ]);
+    const { date: expirationDate, invalid: invalidExpDate } = parseFlexibleExpirationDate(rawExp);
 
     // Validaciones
     const errorMessages: string[] = [];
     if (!name) {
       errorMessages.push('Falta el nombre del producto');
     }
-    if (retailPrice <= 0) {
-      errorMessages.push('El precio menor debe ser mayor a 0');
+    if (barcode) {
+      const normalizedBarcode = barcode.toUpperCase();
+      const firstRow = seenBarcodes.get(normalizedBarcode);
+      if (firstRow !== undefined) {
+        errorMessages.push(`Código de barras duplicado en el archivo Excel (fila ${firstRow})`);
+      } else {
+        seenBarcodes.set(normalizedBarcode, rowNumber);
+      }
     }
-    if (costPrice < 0) {
-      errorMessages.push('El costo no puede ser negativo');
+    if (Number.isNaN(retailPrice) || retailPrice <= 0) {
+      errorMessages.push('El precio menor debe ser un número mayor a 0');
     }
-    if (currentStock < 0) {
-      errorMessages.push('El stock inicial no puede ser negativo');
+    if (Number.isNaN(costPrice) || costPrice < 0) {
+      errorMessages.push('El costo de compra debe ser un número mayor o igual a 0');
     }
-    if (minStock < 0) {
-      errorMessages.push('El stock mínimo no puede ser negativo');
+    if (wholesalePrice !== null && (Number.isNaN(wholesalePrice) || wholesalePrice <= 0)) {
+      errorMessages.push('El precio mayorista debe ser mayor a 0');
+    }
+    if (Number.isNaN(wholesaleMinQty) || wholesaleMinQty <= 0) {
+      errorMessages.push('La cantidad mínima mayorista debe ser mayor a 0');
+    }
+    if (Number.isNaN(currentStock) || currentStock < 0) {
+      errorMessages.push('El stock inicial no puede ser negativo ni inválido');
+    } else if (isDiscreteUnitType(unitType) && !Number.isInteger(currentStock)) {
+      errorMessages.push(
+        'Las unidades discretas (NIU, Caja, Paquete, Saco) no admiten decimales en el stock inicial',
+      );
+    }
+    if (Number.isNaN(minStock) || minStock < 0) {
+      errorMessages.push('El stock mínimo no puede ser negativo ni inválido');
+    }
+    if (invalidExpDate) {
+      errorMessages.push('Fecha de vencimiento inválida (use AAAA-MM-DD o DD/MM/AAAA)');
     }
 
     parsedList.push({
-      rowNumber: index + 2, // Fila en el Excel (1-indexed + header)
+      rowNumber,
       name,
       barcode,
       isAutoBarcode,
       categoryName,
       unitType,
-      costPrice,
-      retailPrice,
-      wholesalePrice: isNaN(wholesalePrice as any) ? null : wholesalePrice,
-      wholesaleMinQty: isNaN(wholesaleMinQty) ? 3 : wholesaleMinQty,
-      currentStock,
-      minStock,
+      costPrice: Number.isNaN(costPrice) ? 0 : Number(costPrice.toFixed(2)),
+      retailPrice: Number.isNaN(retailPrice) ? 0 : Number(retailPrice.toFixed(2)),
+      wholesalePrice:
+        wholesalePrice === null || Number.isNaN(wholesalePrice)
+          ? null
+          : Number(wholesalePrice.toFixed(2)),
+      wholesaleMinQty: Number.isNaN(wholesaleMinQty) ? 3 : wholesaleMinQty,
+      currentStock: Number.isNaN(currentStock) ? 0 : Number(currentStock.toFixed(3)),
+      minStock: Number.isNaN(minStock) ? 5 : Number(minStock.toFixed(3)),
       expirationDate,
       isValid: errorMessages.length === 0,
       errorMessages,

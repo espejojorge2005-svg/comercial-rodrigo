@@ -1,4 +1,10 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   Prisma,
   ShiftStatus,
@@ -6,7 +12,9 @@ import {
   Product,
   ReceiptType,
   EmissionStatus,
+  Role,
 } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BillingService } from '../../billing/billing.service.js';
 import { SalesSequenceService } from './sales-sequence.service.js';
@@ -14,7 +22,21 @@ import { SyncOfflineSalesBatchDto } from '../dto/sync-offline-sales.dto.js';
 import {
   isValidPeruvianRuc,
   getSunatCompliantEmissionDate,
+  isDiscreteUnit,
 } from '../utils/sales-fiscal.util.js';
+
+const FORBIDDEN_CUSTOMER_PLACEHOLDERS = [
+  'CLIENTE VARIOS',
+  'CLIENTES VARIOS',
+  'EMPRESA',
+  'EMPRESA SAC',
+  'EMPRESA S.A.C.',
+  'EMPRESA SRL',
+  'EMPRESA S.R.L.',
+  'RUC',
+  'SIN NOMBRE',
+  'VARIOS',
+];
 
 @Injectable()
 export class SalesOfflineService {
@@ -26,11 +48,35 @@ export class SalesOfflineService {
     private readonly sequenceService: SalesSequenceService,
   ) {}
 
+  private async verifyOfflineAdminPin(pin?: string): Promise<{ id: string; name: string } | null> {
+    if (!pin || !pin.trim() || !this.prisma?.user) return null;
+    const cleanPin = pin.trim();
+    const admins = this.prisma.user.findMany
+      ? await this.prisma.user.findMany({
+          where: { role: Role.ADMIN, isActive: true, pin: { not: null } },
+          select: { id: true, name: true, pin: true },
+        })
+      : [];
+
+    for (const a of admins) {
+      if (!a.pin) continue;
+      const isBcrypt =
+        a.pin.startsWith('$2a$') || a.pin.startsWith('$2b$') || a.pin.startsWith('$2y$');
+      const matches = isBcrypt ? await bcrypt.compare(cleanPin, a.pin) : a.pin === cleanPin;
+      if (matches) return { id: a.id, name: a.name };
+    }
+    return null;
+  }
+
   /**
    * Sincronización en lote de ventas procesadas offline (modo sin conexión)
-   * Garantiza idempotencia, trazabilidad de Kardex con fecha real y tolerancia a turnos cerrados
+   * Garantiza idempotencia transaccional, Zero-Trust Pricing, control ACID de stock y reglas SUNAT.
    */
-  async syncOfflineSales(userId: string, batchDto: SyncOfflineSalesBatchDto) {
+  async syncOfflineSales(
+    userId: string,
+    batchDto: SyncOfflineSalesBatchDto,
+    userRole?: Role,
+  ) {
     if (!batchDto.sales || batchDto.sales.length === 0) {
       return {
         message: 'No hay ventas offline para sincronizar',
@@ -50,8 +96,14 @@ export class SalesOfflineService {
 
     for (const offlineSale of batchDto.sales) {
       try {
-        // 1. Idempotencia: Verificar si ya fue procesada anteriormente para no duplicar ventas
-        const existingKardex = await this.prisma.kardexMovement.findFirst({
+        if (!offlineSale.items || offlineSale.items.length === 0) {
+          throw new BadRequestException(
+            `Venta offline [${offlineSale.offlineId}] rechazada: no contiene productos.`,
+          );
+        }
+
+        // 1. Idempotencia preliminar antes de abrir transacción
+        const existingKardex = await this.prisma.kardexMovement?.findFirst?.({
           where: {
             reason: { contains: `[OFFLINE:${offlineSale.offlineId}]` },
           },
@@ -99,11 +151,23 @@ export class SalesOfflineService {
           }
         }
 
-        // 2. Asociar al turno de caja (incluso si ya fue cerrado posteriormente)
+        // 2. Asociar al turno de caja verificando titularidad
         let targetShift = await this.prisma.cashShift.findUnique({
           where: { id: offlineSale.cashShiftId },
           include: { cashRegister: true },
         });
+
+        if (
+          targetShift &&
+          targetShift.userId &&
+          userRole &&
+          userRole !== Role.ADMIN &&
+          targetShift.userId !== userId
+        ) {
+          throw new ForbiddenException(
+            `Venta offline [${offlineSale.offlineId}] rechazada: el turno pertenece a otro usuario.`,
+          );
+        }
 
         if (!targetShift) {
           targetShift = await this.prisma.cashShift.findFirst({
@@ -114,12 +178,61 @@ export class SalesOfflineService {
         }
 
         if (!targetShift) {
-          throw new BadRequestException('No se encontró un turno de caja para asociar la venta offline');
+          throw new BadRequestException(
+            'No se encontró un turno de caja para asociar la venta offline',
+          );
         }
 
-        // 3. Crear venta y movimientos de Kardex
+        // Pre-validar PIN si viene incluido (fuera de tx para no contaminar transacción SQL)
+        const authorizedAdmin = offlineSale.adminPin
+          ? await this.verifyOfflineAdminPin(offlineSale.adminPin)
+          : null;
+
+        // 3. Crear venta y movimientos de Kardex en transacción ACID
         const txResult = await this.prisma.$transaction(
           async (tx) => {
+            // Bloqueo consultivo transaccional por offlineId contra doble envío paralelo al reconectar
+            if (typeof (tx as any).$executeRaw === 'function') {
+              await (tx as any).$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${offlineSale.offlineId}))`;
+            }
+
+            if (typeof tx.kardexMovement?.findFirst === 'function') {
+              const dupInTx = await tx.kardexMovement.findFirst({
+                where: { reason: { contains: `[OFFLINE:${offlineSale.offlineId}]` } },
+              });
+              if (dupInTx?.referenceId && typeof tx.sale?.findUnique === 'function') {
+                const dupSale = await tx.sale.findUnique({
+                  where: { id: dupInTx.referenceId },
+                  include: {
+                    items: {
+                      include: {
+                        product: {
+                          select: { id: true, name: true, barcode: true, unitType: true },
+                        },
+                      },
+                    },
+                    cashShift: { include: { cashRegister: true } },
+                    user: { select: { id: true, name: true, username: true } },
+                  },
+                });
+                if (dupSale) {
+                  return {
+                    sale: dupSale,
+                    alreadyExisted: true,
+                    isFiscal: false,
+                    receiptType: dupSale.receiptType,
+                    series: dupSale.series,
+                    correlativeNumber: dupSale.correlativeNumber,
+                    totalCalculated: Number(dupSale.totalAmount),
+                    taxableBase: Number(dupSale.taxableBase),
+                    igvAmount: Number(dupSale.igvAmount),
+                    validatedItems: [],
+                    saleDate: dupSale.createdAt,
+                  };
+                }
+              }
+            }
+
             let totalCalculated = 0;
             let totalTaxableBase = 0;
             let totalIgv = 0;
@@ -138,15 +251,27 @@ export class SalesOfflineService {
               subtotalItem: number;
             }[] = [];
 
-            // 🛡️ CONSOLIDACIÓN DE PRODUCTOS DUPLICADOS & PREVENCIÓN DE DEADLOCKS
+            // Consolidación de productos duplicados y orden determinista contra deadlocks
             const consolidatedMap = new Map<
               string,
-              { productId: string; quantity: number; unitPrice: number }
+              {
+                productId: string;
+                quantity: number;
+                unitPrice: number;
+                isWholesaleApplied: boolean;
+              }
             >();
 
             for (const item of offlineSale.items) {
               const qty = Number(item.quantity);
               const price = Number(item.unitPrice);
+              if (qty <= 0 || Number.isNaN(qty)) {
+                throw new BadRequestException('La cantidad de cada ítem offline debe ser mayor a 0');
+              }
+              if (price <= 0 || Number.isNaN(price)) {
+                throw new BadRequestException('El precio unitario offline debe ser mayor a 0');
+              }
+
               if (consolidatedMap.has(item.productId)) {
                 const existing = consolidatedMap.get(item.productId)!;
                 const newQty = Number((existing.quantity + qty).toFixed(4));
@@ -154,11 +279,14 @@ export class SalesOfflineService {
                 const currentTotal = qty * price;
                 existing.quantity = newQty;
                 existing.unitPrice = Number(((prevTotal + currentTotal) / newQty).toFixed(2));
+                existing.isWholesaleApplied =
+                  existing.isWholesaleApplied || Boolean(item.isWholesaleApplied);
               } else {
                 consolidatedMap.set(item.productId, {
                   productId: item.productId,
                   quantity: qty,
                   unitPrice: price,
+                  isWholesaleApplied: Boolean(item.isWholesaleApplied),
                 });
               }
             }
@@ -172,8 +300,62 @@ export class SalesOfflineService {
                 where: { id: item.productId },
               });
 
-              if (!product) {
-                throw new BadRequestException(`Producto ID ${item.productId} no encontrado`);
+              if (!product || !product.isActive) {
+                throw new BadRequestException(
+                  `Producto ID ${item.productId} no encontrado o se encuentra inactivo`,
+                );
+              }
+
+              if (product.unitType && isDiscreteUnit(product.unitType) && !Number.isInteger(item.quantity)) {
+                throw new BadRequestException(
+                  `El producto "${product.name}" se vende por unidad entera (${product.unitType}) y no admite cantidades decimales (${item.quantity}).`,
+                );
+              }
+
+              const availableStock = Number(product.currentStock);
+              if (availableStock < item.quantity) {
+                throw new BadRequestException(
+                  `Stock insuficiente en almacén para sincronizar "${product.name}". Solicitado: ${item.quantity}, Disponible: ${availableStock}`,
+                );
+              }
+
+              // 🛡️ ZERO-TRUST PRICING también en ventas offline
+              const retailPriceNum =
+                product.retailPrice !== undefined && product.retailPrice !== null
+                  ? Number(product.retailPrice)
+                  : null;
+
+              if (retailPriceNum !== null) {
+                const wholesalePriceNum =
+                  product.wholesalePrice !== undefined && product.wholesalePrice !== null
+                    ? Number(product.wholesalePrice)
+                    : null;
+                const wholesaleMinQtyNum =
+                  product.wholesaleMinQty !== undefined && product.wholesaleMinQty !== null
+                    ? Number(product.wholesaleMinQty)
+                    : 3;
+
+                let officialPrice = retailPriceNum;
+                if (
+                  wholesalePriceNum !== null &&
+                  wholesalePriceNum > 0 &&
+                  (item.isWholesaleApplied || item.quantity >= wholesaleMinQtyNum)
+                ) {
+                  officialPrice = wholesalePriceNum;
+                }
+
+                if (item.unitPrice < officialPrice - 0.01) {
+                  if (!offlineSale.adminPin || !offlineSale.adminPin.trim()) {
+                    throw new BadRequestException(
+                      `Venta offline [${offlineSale.offlineId}] rechazada: precio S/ ${item.unitPrice.toFixed(2)} menor al catálogo S/ ${officialPrice.toFixed(2)} en "${product.name}" sin PIN de Administrador.`,
+                    );
+                  }
+                  if (!authorizedAdmin) {
+                    throw new ForbiddenException(
+                      'PIN de Administrador inválido en venta offline con descuento.',
+                    );
+                  }
+                }
               }
 
               const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
@@ -205,32 +387,93 @@ export class SalesOfflineService {
             totalIgv = Number(totalIgv.toFixed(2));
             const totalAmountDecimal = new Prisma.Decimal(totalCalculated);
 
-            // Validar cuadre financiero con tolerancia de redondeo BCRP (S/ 0.10) también en sincronización offline
+            // Validar cuadre financiero y reglas antifraude de métodos de pago
             const offCash = Number(offlineSale.cashPaid ?? 0);
             const offDigital = Number(offlineSale.digitalPaid ?? 0);
             const offChange = Number(offlineSale.changeAmount ?? 0);
-            const offNetPaid = Number(((offCash + offDigital) - offChange).toFixed(2));
+            const offNetPaid = Number((offCash + offDigital - offChange).toFixed(2));
 
-            if (Math.abs(offNetPaid - totalCalculated) > 0.10) {
+            if (Math.abs(offNetPaid - totalCalculated) > 0.1) {
               throw new BadRequestException(
                 `Venta offline [${offlineSale.offlineId}] rechazada por descuadre financiero: Importe neto pagado S/ ${offNetPaid.toFixed(2)} difiere del total S/ ${totalCalculated.toFixed(2)} por más de S/ 0.10`,
               );
             }
 
-            const saleDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
+            if (offlineSale.paymentMethod === 'CASH' && offDigital > 0) {
+              throw new BadRequestException(
+                `Venta offline [${offlineSale.offlineId}] inválida: pago en EFECTIVO no admite monto digital.`,
+              );
+            } else if (
+              offlineSale.paymentMethod === 'TRANSFER' ||
+              offlineSale.paymentMethod === 'CARD'
+            ) {
+              if (offCash > 0 || offChange > 0 || Math.abs(offDigital - totalCalculated) > 0.01) {
+                throw new BadRequestException(
+                  `Venta offline [${offlineSale.offlineId}] inválida: pago digital debe coincidir exactamente con el total sin efectivo ni vuelto.`,
+                );
+              }
+            } else if (offlineSale.paymentMethod === 'MIXED') {
+              if (offChange > offCash || offDigital > totalCalculated) {
+                throw new BadRequestException(
+                  `Venta offline [${offlineSale.offlineId}] inválida: en pago MIXTO el vuelto no puede superar al efectivo ni el digital al total.`,
+                );
+              }
+            }
 
-            // Si la venta offline solicitó emisión a Boleta o Factura al reconectar, se respeta el tipo destino
+            const parsedDate = offlineSale.createdAt ? new Date(offlineSale.createdAt) : new Date();
+            const saleDate = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+
             const receiptType =
               offlineSale.targetReceiptType ||
               offlineSale.receiptType ||
               ReceiptType.NOTA_VENTA;
 
+            const cleanCustomerDoc = (offlineSale.customerDocument || '').trim();
+            const cleanCustomerName = (offlineSale.customerName || '').trim();
+            const cleanCustomerAddress = (offlineSale.customerAddress || '').trim();
+
             if (receiptType === ReceiptType.FACTURA) {
-              const ruc = (offlineSale.customerDocument || '').trim();
-              if (!isValidPeruvianRuc(ruc)) {
+              if (!isValidPeruvianRuc(cleanCustomerDoc)) {
                 throw new BadRequestException(
-                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: RUC "${ruc}" inválido ante SUNAT (dígito verificador incorrecto).`,
+                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: RUC "${cleanCustomerDoc}" inválido ante SUNAT (dígito verificador incorrecto).`,
                 );
+              }
+              if (
+                !cleanCustomerName ||
+                cleanCustomerName.length < 2 ||
+                FORBIDDEN_CUSTOMER_PLACEHOLDERS.includes(cleanCustomerName.toUpperCase())
+              ) {
+                throw new BadRequestException(
+                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: Razón Social inválida o genérica.`,
+                );
+              }
+              if (!cleanCustomerAddress || cleanCustomerAddress.length < 3) {
+                throw new BadRequestException(
+                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: Dirección Fiscal obligatoria.`,
+                );
+              }
+            } else if (receiptType === ReceiptType.BOLETA) {
+              if (cleanCustomerDoc.length === 11 && !isValidPeruvianRuc(cleanCustomerDoc)) {
+                throw new BadRequestException(
+                  `Venta offline [${offlineSale.offlineId}] rechazada: RUC de 11 dígitos en Boleta inválido.`,
+                );
+              }
+              if (totalCalculated >= 700) {
+                if (cleanCustomerDoc.length < 8 || cleanCustomerDoc.length > 12) {
+                  throw new BadRequestException(
+                    `Venta offline [${offlineSale.offlineId}] rechazada: Boleta >= S/ 700.00 requiere documento válido (8 a 12 caracteres).`,
+                  );
+                }
+                if (
+                  !cleanCustomerName ||
+                  cleanCustomerName.length < 3 ||
+                  cleanCustomerName.toUpperCase() === 'CLIENTE VARIOS' ||
+                  cleanCustomerName.toUpperCase() === 'CLIENTES VARIOS'
+                ) {
+                  throw new BadRequestException(
+                    `Venta offline [${offlineSale.offlineId}] rechazada: Boleta >= S/ 700.00 requiere nombre completo del cliente.`,
+                  );
+                }
               }
             }
 
@@ -262,11 +505,9 @@ export class SalesOfflineService {
             const correlativeNumber = sequence.currentNumber;
             const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
 
-            // Trazabilidad de origen offline para auditoría cruzada sin duplicidad
             const offlineTrace = offlineSale.offlineTicketNumber || offlineSale.offlineId;
             const originReason = offlineTrace ? `ORIGEN_OFFLINE:${offlineTrace}` : null;
 
-            // 1. Guardar la venta en base de datos local de forma inmediata (con emisión PENDING si es fiscal)
             const sale = await tx.sale.create({
               data: {
                 cashShiftId: targetShift.id,
@@ -278,14 +519,14 @@ export class SalesOfflineService {
                 isFiscal,
                 taxableBase: new Prisma.Decimal(taxableBase),
                 igvAmount: new Prisma.Decimal(igvAmount),
-                customerAddress: offlineSale.customerAddress || null,
+                customerAddress: cleanCustomerAddress || null,
                 customerEmail: offlineSale.customerEmail?.trim() || null,
                 hash: null,
                 qrString: null,
                 emissionStatus: isFiscal ? EmissionStatus.PENDING : null,
                 voidedReason: originReason,
-                customerName: offlineSale.customerName || 'Cliente Varios',
-                customerDocument: offlineSale.customerDocument || null,
+                customerName: cleanCustomerName || 'Cliente Varios',
+                customerDocument: cleanCustomerDoc || null,
                 paymentMethod: offlineSale.paymentMethod,
                 cashPaid: new Prisma.Decimal(offlineSale.cashPaid),
                 digitalPaid: new Prisma.Decimal(offlineSale.digitalPaid),
@@ -313,22 +554,49 @@ export class SalesOfflineService {
               },
             });
 
-            // 2. Actualizar stock atómicamente y registrar en Kardex con fecha original
+            // 2. Descontar stock de forma atómica verificando saldo >= cantidad
             for (const item of validatedItems) {
-              const updatedProduct = await tx.product.update({
-                where: { id: item.product.id },
-                data: {
-                  currentStock: { decrement: new Prisma.Decimal(item.quantity) },
-                },
-              });
+              const qtyDec = new Prisma.Decimal(item.quantity);
+              let newStockDecimal: Prisma.Decimal;
+
+              if (typeof tx.product.updateMany === 'function') {
+                const upd = await tx.product.updateMany({
+                  where: {
+                    id: item.product.id,
+                    currentStock: { gte: qtyDec },
+                  },
+                  data: {
+                    currentStock: { decrement: qtyDec },
+                  },
+                });
+                if (upd.count === 0) {
+                  throw new BadRequestException(
+                    `Stock insuficiente en concurrencia al sincronizar "${item.product.name}".`,
+                  );
+                }
+                const freshProd = await tx.product.findUnique({
+                  where: { id: item.product.id },
+                });
+                newStockDecimal = freshProd
+                  ? freshProd.currentStock
+                  : new Prisma.Decimal(Number(item.product.currentStock) - item.quantity);
+              } else {
+                const updatedProduct = await tx.product.update({
+                  where: { id: item.product.id },
+                  data: {
+                    currentStock: { decrement: qtyDec },
+                  },
+                });
+                newStockDecimal = updatedProduct.currentStock;
+              }
 
               await tx.kardexMovement.create({
                 data: {
                   productId: item.product.id,
                   movementType: MovementType.SALE,
-                  quantity: new Prisma.Decimal(item.quantity),
-                  previousStock: new Prisma.Decimal(Number(updatedProduct.currentStock) + item.quantity),
-                  newStock: updatedProduct.currentStock,
+                  quantity: qtyDec,
+                  previousStock: new Prisma.Decimal(Number(newStockDecimal) + item.quantity),
+                  newStock: newStockDecimal,
                   unitCost: item.product.costPrice,
                   referenceId: sale.id,
                   reason: `Venta POS Offline #${sale.saleNumber} [OFFLINE:${offlineSale.offlineId}] - ${targetShift.cashRegister.name}`,
@@ -338,21 +606,24 @@ export class SalesOfflineService {
               });
             }
 
-            // 3. Si el turno ya fue cerrado previamente, reconciliar retroactivamente el arqueo físico
-            if (targetShift.status === ShiftStatus.CLOSED) {
+            // 3. Si el turno ya fue cerrado, reconciliar dejando rastro explícito de auditoría en notes
+            if (targetShift.status === ShiftStatus.CLOSED && tx.cashShift?.update) {
               const netCash =
                 sale.paymentMethod === 'TRANSFER' || sale.paymentMethod === 'CARD'
                   ? 0
                   : Math.max(0, Number(sale.cashPaid) - Number(sale.changeAmount || 0));
 
               if (netCash > 0) {
+                const auditTag = `[SYNC_OFFLINE_POST_CIERRE ${fullReceiptNumber}: +S/ ${netCash.toFixed(2)}]`;
+                const prevNotes = targetShift.notes ? `${targetShift.notes} | ` : '';
                 await tx.cashShift.update({
                   where: { id: targetShift.id },
                   data: {
                     expectedBalance: { increment: new Prisma.Decimal(netCash) },
-                    ...(targetShift.difference !== null
+                    ...(targetShift.difference !== null && targetShift.difference !== undefined
                       ? { difference: { decrement: new Prisma.Decimal(netCash) } }
                       : {}),
+                    notes: `${prevNotes}${auditTag}`,
                   },
                 });
               }
@@ -360,6 +631,7 @@ export class SalesOfflineService {
 
             return {
               sale,
+              alreadyExisted: false,
               isFiscal,
               receiptType,
               series,
@@ -371,18 +643,28 @@ export class SalesOfflineService {
               saleDate,
             };
           },
-          { timeout: 10000 },
+          { timeout: 15000 },
         );
 
-        // =========================================================================
-        // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
-        // =========================================================================
         let finalSale: any = txResult.sale;
 
-        if (txResult.isFiscal) {
-          const storeConfig = await this.prisma.storeConfig.findFirst();
+        if (!txResult.alreadyExisted && txResult.isFiscal) {
+          const storeConfig = await this.prisma.storeConfig?.findFirst?.();
           try {
-            const sunatDateCheck = getSunatCompliantEmissionDate(txResult.saleDate);
+            // Respetar orden cronológico respecto al correlativo anterior de la misma serie
+            const previousInSeries = await this.prisma.sale?.findFirst?.({
+              where: {
+                series: txResult.series,
+                correlativeNumber: { lt: txResult.correlativeNumber },
+              },
+              orderBy: { correlativeNumber: 'desc' },
+              select: { createdAt: true },
+            });
+
+            const sunatDateCheck = getSunatCompliantEmissionDate(
+              txResult.saleDate,
+              previousInSeries?.createdAt || null,
+            );
             const effectiveCreatedAt = sunatDateCheck.emissionDate;
 
             if (sunatDateCheck.wasAdjusted) {
@@ -390,7 +672,7 @@ export class SalesOfflineService {
                 where: { id: txResult.sale.id },
                 data: {
                   createdAt: effectiveCreatedAt,
-                  voidedReason: `CONTINGENCIA_OFFLINE: Fecha ajustada de ${sunatDateCheck.originalDateString} a actual por superar plazo de 1 día calendario SUNAT (R.S. 000003-2023)`,
+                  voidedReason: `CONTINGENCIA_OFFLINE: Fecha ajustada de ${sunatDateCheck.originalDateString} a ${effectiveCreatedAt.toISOString()} por plazo/cronología SUNAT (R.S. 000003-2023)`,
                 },
               });
             }
@@ -450,10 +732,16 @@ export class SalesOfflineService {
                 },
               });
             } else {
+              // Preservar PENDING ante caídas temporales de red; marcar REJECTED solo ante rechazo formal del PSE/SUNAT
+              const targetStatus =
+                billingRes.emissionStatus === 'PENDING'
+                  ? EmissionStatus.PENDING
+                  : EmissionStatus.REJECTED;
+
               finalSale = await this.prisma.sale.update({
                 where: { id: txResult.sale.id },
                 data: {
-                  emissionStatus: EmissionStatus.REJECTED,
+                  emissionStatus: targetStatus,
                 },
                 include: {
                   items: {
@@ -472,7 +760,7 @@ export class SalesOfflineService {
                 },
               });
               this.logger.error(
-                `[syncOfflineSales] Rechazado por PSE: Boleta/Factura offline [${offlineSale.offlineId}] falló validación SUNAT: ${billingRes.message}`,
+                `[syncOfflineSales] ${targetStatus === EmissionStatus.PENDING ? 'Contingencia PSE' : 'Rechazado por PSE'}: Boleta/Factura offline [${offlineSale.offlineId}]: ${billingRes.message}`,
               );
             }
           } catch (billingErr: any) {
@@ -493,7 +781,7 @@ export class SalesOfflineService {
             cashPaid: Number(finalSale.cashPaid),
             digitalPaid: Number(finalSale.digitalPaid),
             changeAmount: Number(finalSale.changeAmount),
-            items: finalSale.items.map((i: any) => ({
+            items: (finalSale.items || []).map((i: any) => ({
               ...i,
               quantity: Number(i.quantity),
               unitPrice: Number(i.unitPrice),
@@ -544,14 +832,35 @@ export class SalesOfflineService {
     }
 
     if (!sale.isFiscal) {
-      throw new BadRequestException('Esta venta es una Nota de Venta interna; no requiere emisión ante SUNAT');
+      throw new BadRequestException(
+        'Esta venta es una Nota de Venta interna; no requiere emisión ante SUNAT',
+      );
     }
 
-    if (sale.emissionStatus === EmissionStatus.ACCEPTED) {
-      return { success: true, message: 'El comprobante ya fue emitido y aceptado por SUNAT previamente', sale };
+    if (
+      sale.emissionStatus === EmissionStatus.ACCEPTED ||
+      sale.emissionStatus === EmissionStatus.SIMULATED
+    ) {
+      return {
+        success: true,
+        message: 'El comprobante ya fue emitido previamente',
+        sale,
+      };
     }
 
-    const sunatDateCheck = getSunatCompliantEmissionDate(sale.createdAt);
+    const previousInSeries = await this.prisma.sale?.findFirst?.({
+      where: {
+        series: sale.series,
+        correlativeNumber: { lt: sale.correlativeNumber },
+      },
+      orderBy: { correlativeNumber: 'desc' },
+      select: { createdAt: true },
+    });
+
+    const sunatDateCheck = getSunatCompliantEmissionDate(
+      sale.createdAt,
+      previousInSeries?.createdAt || null,
+    );
     const effectiveDate = sunatDateCheck.emissionDate;
 
     if (sunatDateCheck.wasAdjusted) {
@@ -616,16 +925,27 @@ export class SalesOfflineService {
         },
       });
 
-      return { success: true, message: 'Comprobante emitido exitosamente ante SUNAT', sale: updatedSale };
+      return {
+        success: true,
+        message: 'Comprobante emitido exitosamente ante SUNAT',
+        sale: updatedSale,
+      };
     } else {
-      const finalStatus = billingRes.emissionStatus === 'PENDING' ? EmissionStatus.PENDING : EmissionStatus.REJECTED;
+      const finalStatus =
+        billingRes.emissionStatus === 'PENDING'
+          ? EmissionStatus.PENDING
+          : EmissionStatus.REJECTED;
       await this.prisma.sale.update({
         where: { id: sale.id },
         data: {
           emissionStatus: finalStatus,
         },
       });
-      return { success: false, message: `Error en emisión: ${billingRes.message}`, error: billingRes.message };
+      return {
+        success: false,
+        message: `Error en emisión: ${billingRes.message}`,
+        error: billingRes.message,
+      };
     }
   }
 
@@ -638,6 +958,7 @@ export class SalesOfflineService {
         isFiscal: true,
         emissionStatus: EmissionStatus.PENDING,
       },
+      orderBy: [{ series: 'asc' }, { correlativeNumber: 'asc' }],
       select: { id: true, fullReceiptNumber: true },
     });
 
@@ -645,9 +966,19 @@ export class SalesOfflineService {
     for (const s of pendingSales) {
       try {
         const res = await this.reemitPendingSale(s.id);
-        results.push({ id: s.id, receiptNumber: s.fullReceiptNumber, success: res.success, message: res.message });
+        results.push({
+          id: s.id,
+          receiptNumber: s.fullReceiptNumber,
+          success: res.success,
+          message: res.message,
+        });
       } catch (err: any) {
-        results.push({ id: s.id, receiptNumber: s.fullReceiptNumber, success: false, message: err.message });
+        results.push({
+          id: s.id,
+          receiptNumber: s.fullReceiptNumber,
+          success: false,
+          message: err.message,
+        });
       }
     }
 

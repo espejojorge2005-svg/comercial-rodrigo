@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
+import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
 import { formatCurrency, formatPeruTime } from '../../lib/utils.js';
-import { X, Lock, Coins, ShieldCheck, AlertTriangle, Printer } from 'lucide-react';
+import { X, Lock, Coins, ShieldCheck, AlertTriangle, Printer, RefreshCw } from 'lucide-react';
 import { ShiftReceiptTicketModal, type ShiftReceiptData } from './ShiftReceiptTicketModal.js';
 import { toast } from '../../store/useToastStore.js';
 
@@ -14,6 +15,13 @@ interface CloseShiftModalProps {
 export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClose }) => {
   const { user } = useAuthStore();
   const { activeShift, closeShift, isLoading, error } = useShiftStore();
+  const {
+    pendingCount,
+    quarantinedCount,
+    isOnline,
+    isSyncing,
+    syncPendingSales,
+  } = useOfflineSyncStore();
 
   const [actualBalance, setActualBalance] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
@@ -51,10 +59,14 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift) return;
+    const numericAmount = parseFloat(actualBalance);
+    if (isNaN(numericAmount) || numericAmount < 0) {
+      toast.warning('Ingrese un monto válido mayor o igual a S/ 0.00.');
+      return;
+    }
     try {
       setClosedShiftSnapshot(activeShift);
-      const numericAmount = parseFloat(actualBalance) || 0;
-      const res = await closeShift(numericAmount, notes);
+      const res = await closeShift(Number(numericAmount.toFixed(2)), notes);
       setCloseResult(res);
       toast.success(res?.message || '¡Turno de caja cerrado exitosamente!');
       setShowTicketModal(true); // Abre la vista previa del ticket de inmediato
@@ -230,6 +242,34 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
               </div>
             )}
 
+            {/* Alerta de ventas offline sin sincronizar antes de cerrar turno */}
+            {(pendingCount > 0 || quarantinedCount > 0) && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-rose-200 text-xs flex flex-col gap-2">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                  <div>
+                    <strong className="text-white block">
+                      Hay {pendingCount + quarantinedCount} venta(s) offline pendientes de subir
+                    </strong>
+                    <span className="text-[11px] text-rose-200/90">
+                      Sincronice primero sus ventas offline para que el sistema contabilice el efectivo exacto del turno y evite descuadres en el arqueo.
+                    </span>
+                  </div>
+                </div>
+                {isOnline && (
+                  <button
+                    type="button"
+                    onClick={() => syncPendingSales(true)}
+                    disabled={isSyncing}
+                    className="self-end px-3 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-[11px] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar ventas ahora'}</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {error && (
               <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
                 {error}
@@ -253,7 +293,8 @@ export const CloseShiftModal: React.FC<CloseShiftModalProps> = ({ isOpen, onClos
                   </span>
                   <input
                     type="number"
-                    step="any"
+                    min="0"
+                    step="0.01"
                     value={actualBalance}
                     onChange={(e) => setActualBalance(e.target.value)}
                     onFocus={(e) => e.target.select()}

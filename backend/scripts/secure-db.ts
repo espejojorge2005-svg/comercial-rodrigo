@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function secureDatabase() {
-  console.log('🛡️ Asegurando base de datos en Supabase...');
+  console.log('🛡️ Asegurando base de datos PostgreSQL / Supabase...');
 
   const tables = [
     'User',
@@ -20,49 +20,77 @@ async function secureDatabase() {
     'CreditNote',
   ];
 
-  // 1. Habilitar Row Level Security (RLS) y crear política explícita en todas las tablas
+  // 1. Habilitar Row Level Security (RLS) compatible tanto con Supabase (service_role)
+  //    como con roles PostgreSQL estándar de producción (CURRENT_USER).
   for (const table of tables) {
     await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
     await prisma.$executeRawUnsafe(`DROP POLICY IF EXISTS "Backend service access only" ON "${table}";`);
-    await prisma.$executeRawUnsafe(`CREATE POLICY "Backend service access only" ON "${table}" FOR ALL TO service_role USING (true) WITH CHECK (true);`);
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+          EXECUTE 'CREATE POLICY "Backend service access only" ON "${table}" FOR ALL TO service_role, CURRENT_USER USING (true) WITH CHECK (true)';
+        ELSE
+          EXECUTE 'CREATE POLICY "Backend service access only" ON "${table}" FOR ALL TO CURRENT_USER USING (true) WITH CHECK (true)';
+        END IF;
+      END
+      $$;
+    `);
     console.log(`✅ RLS y política de protección activados en tabla "${table}"`);
   }
 
-  // 2. Revocar permisos de lectura/escritura a los roles públicos anónimos de Supabase (anon y authenticated)
-  await prisma.$executeRawUnsafe(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;`);
-  console.log('✅ Permisos en tablas revocados para anon y authenticated');
+  // 2. Si existen los roles públicos de PostgREST en Supabase (anon / authenticated), revocar su acceso directo
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+        REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+        REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon;
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON ALL TABLES IN SCHEMA public FROM authenticated;
+        REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated;
+        REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM authenticated;
+      END IF;
+    END
+    $$;
+  `);
+  console.log('✅ Permisos públicos revocados para roles externos (si aplican)');
 
-  await prisma.$executeRawUnsafe(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;`);
-  console.log('✅ Permisos en secuencias revocados para anon y authenticated');
-
-  await prisma.$executeRawUnsafe(`REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon, authenticated;`);
-  console.log('✅ Permisos en funciones revocados para anon y authenticated');
-
-  // 3. Crear índices en claves foráneas para resolver advertencias de rendimiento
-  const indexQueries = [
-    `CREATE INDEX IF NOT EXISTS "idx_cashmovement_cashshiftid" ON "CashMovement"("cashShiftId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_cashshift_cashregisterid" ON "CashShift"("cashRegisterId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_cashshift_userid" ON "CashShift"("userId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_receiptsequence_cashregisterid" ON "ReceiptSequence"("cashRegisterId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_product_categoryid" ON "Product"("categoryId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_sale_cashshiftid" ON "Sale"("cashShiftId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_sale_userid" ON "Sale"("userId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_sale_voidedbyadminid" ON "Sale"("voidedByAdminId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_saledetail_saleid" ON "SaleDetail"("saleId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_saledetail_productid" ON "SaleDetail"("productId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_kardex_productid" ON "KardexMovement"("productId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_kardex_userid" ON "KardexMovement"("userId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_creditnote_cashshiftid" ON "CreditNote"("cashShiftId");`,
-    `CREATE INDEX IF NOT EXISTS "idx_creditnote_adminid" ON "CreditNote"("adminId");`,
+  // 3. Limpiar índices duplicados antiguos (idx_*) que duplicaban los índices administrados por Prisma (*_idx)
+  const legacyDuplicateIndexes = [
+    'idx_cashmovement_cashshiftid',
+    'idx_cashshift_cashregisterid',
+    'idx_cashshift_userid',
+    'idx_receiptsequence_cashregisterid',
+    'idx_product_categoryid',
+    'idx_sale_cashshiftid',
+    'idx_sale_userid',
+    'idx_sale_voidedbyadminid',
+    'idx_saledetail_saleid',
+    'idx_saledetail_productid',
+    'idx_kardex_productid',
+    'idx_kardex_userid',
+    'idx_creditnote_cashshiftid',
+    'idx_creditnote_adminid',
   ];
 
-  for (const q of indexQueries) {
-    await prisma.$executeRawUnsafe(q);
+  for (const idx of legacyDuplicateIndexes) {
+    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "${idx}";`);
   }
-  console.log('✅ Índices de claves foráneas creados con éxito');
+  console.log('✅ Índices duplicados legacy limpiados');
 
-  console.log('🔒 Acceso público a la API REST de Supabase revocado por completo.');
-  console.log('🎉 Tu base de datos ahora está 100% blindada y optimizada. Solo tu backend de NestJS tiene acceso.');
+  // 4. Asegurar índices únicos parciales de concurrencia en turnos abiertos
+  await prisma.$executeRawUnsafe(
+    `CREATE UNIQUE INDEX IF NOT EXISTS "CashShift_open_register_unique" ON "CashShift"("cashRegisterId") WHERE "status" = 'OPEN';`,
+  );
+  await prisma.$executeRawUnsafe(
+    `CREATE UNIQUE INDEX IF NOT EXISTS "CashShift_open_user_unique" ON "CashShift"("userId") WHERE "status" = 'OPEN';`,
+  );
+  console.log('✅ Índices únicos parciales de turnos abiertos verificados');
+
+  console.log('🎉 Base de datos asegurada y optimizada correctamente.');
 }
 
 secureDatabase()

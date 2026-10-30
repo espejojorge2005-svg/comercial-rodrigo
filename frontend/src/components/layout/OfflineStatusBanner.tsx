@@ -1,18 +1,21 @@
 import React from 'react';
 import { useOfflineSyncStore } from '../../store/useOfflineSyncStore.js';
-import { Wifi, WifiOff, RefreshCw, CheckCircle } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCw, CheckCircle, AlertTriangle, Download } from 'lucide-react';
 
 export const OfflineStatusBanner: React.FC = () => {
   const {
     isOnline,
     pendingCount,
+    quarantinedCount,
     isSyncing,
     syncFeedbackMessage,
+    syncFeedbackType,
     syncPendingSales,
+    exportQuarantinedSales,
   } = useOfflineSyncStore();
 
-  // Si está online, no hay ventas pendientes y no hay mensaje, no estorba
-  if (isOnline && pendingCount === 0 && !syncFeedbackMessage) {
+  // Si está online, no hay ventas pendientes ni en cuarentena y no hay mensaje, no estorba
+  if (isOnline && pendingCount === 0 && quarantinedCount === 0 && !syncFeedbackMessage) {
     return null;
   }
 
@@ -54,7 +57,7 @@ export const OfflineStatusBanner: React.FC = () => {
             </span>
           </div>
           <button
-            onClick={() => syncPendingSales()}
+            onClick={() => syncPendingSales(true)}
             disabled={isSyncing}
             className="px-3 py-1 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50"
           >
@@ -64,11 +67,51 @@ export const OfflineStatusBanner: React.FC = () => {
         </div>
       )}
 
-      {/* 3. Notificación de sincronización exitosa */}
-      {syncFeedbackMessage && (
-        <div className="bg-emerald-500/15 border-b border-emerald-500/30 px-3 sm:px-6 py-2 text-emerald-300 text-xs flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-200">
+      {/* 2b. Ventas en cuarentena tras múltiples rechazos de validación o falta de stock */}
+      {isOnline && quarantinedCount > 0 && (
+        <div className="bg-rose-500/15 border-b border-rose-500/30 px-3 sm:px-6 py-2 text-rose-200 text-xs flex flex-wrap items-center justify-between gap-2 shadow-sm">
           <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>
+              <strong className="font-semibold text-white">{quarantinedCount} venta(s) offline en revisión:</strong>{' '}
+              requieren ajuste de stock o verificación antes de sincronizar.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => exportQuarantinedSales()}
+              className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs flex items-center gap-1 transition-all cursor-pointer border border-slate-700"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Respaldar JSON</span>
+            </button>
+            <button
+              onClick={() => syncPendingSales(true)}
+              disabled={isSyncing}
+              className="px-3 py-1 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>Reintentar</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Notificación de estado de sincronización (éxito o error) */}
+      {syncFeedbackMessage && (
+        <div
+          className={`${
+            syncFeedbackType === 'error'
+              ? 'bg-rose-500/15 border-rose-500/30 text-rose-200'
+              : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+          } border-b px-3 sm:px-6 py-2 text-xs flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-200`}
+        >
+          <div className="flex items-center gap-2">
+            {syncFeedbackType === 'error' ? (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            ) : (
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
             <span>{syncFeedbackMessage}</span>
           </div>
         </div>

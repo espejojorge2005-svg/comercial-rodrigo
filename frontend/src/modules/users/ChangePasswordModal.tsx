@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Lock, KeyRound, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import type { User } from '../../types/index.js';
 import { apiRequest } from '../../api/client.js';
@@ -22,10 +22,20 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  useEffect(() => {
+    if (isOpen) {
+      setNewPassword('');
+      setConfirmPassword('');
+      setError(null);
+      setSuccess(false);
+    }
+  }, [isOpen, user]);
+
   if (!isOpen || !user) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading || success) return;
     setError(null);
 
     if (newPassword.length < 6) {

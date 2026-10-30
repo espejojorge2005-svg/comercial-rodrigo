@@ -6,6 +6,8 @@ import { apiRequest } from '../api/client.js';
 vi.mock('../lib/offlineStorage.js', () => ({
   offlineStorage: {
     getPendingCount: vi.fn(),
+    getQuarantinedOfflineSales: vi.fn(),
+    retryQuarantinedSales: vi.fn(),
     getPendingOfflineSales: vi.fn(),
     removeOfflineSale: vi.fn(),
     updateSaleStatus: vi.fn(),
@@ -19,12 +21,16 @@ vi.mock('../api/client.js', () => ({
 describe('useOfflineSyncStore - Cola de Sincronización Offline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(offlineStorage.getQuarantinedOfflineSales).mockResolvedValue([]);
+    vi.mocked(offlineStorage.getPendingOfflineSales).mockResolvedValue([]);
     useOfflineSyncStore.setState({
       isOnline: true,
       pendingCount: 0,
+      quarantinedCount: 0,
       isSyncing: false,
       lastSyncTime: null,
       syncFeedbackMessage: null,
+      syncFeedbackType: 'success',
     });
   });
 

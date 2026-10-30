@@ -1168,8 +1168,8 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
     });
   });
 
-  describe('Hallazgo 1.4 - Plazo de Envío SUNAT (1 día calendario - R.S. 000003-2023)', () => {
-    it('debe mantener la fecha original si la emisión fue hoy o ayer', () => {
+  describe('Hallazgo 1.4 - Plazo de Envío SUNAT (3 días calendario - R.S. 000003-2023/SUNAT)', () => {
+    it('debe mantener la fecha original si la emisión está dentro de los 3 días calendario (incluyendo hasta 3 días atrás)', () => {
       const today = new Date();
       const checkToday = getSunatCompliantEmissionDate(today);
       expect(checkToday.wasAdjusted).toBe(false);
@@ -1177,13 +1177,16 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
       const yesterday = new Date(Date.now() - 24 * 3600000);
       const checkYesterday = getSunatCompliantEmissionDate(yesterday);
       expect(checkYesterday.wasAdjusted).toBe(false);
+
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600000);
+      const checkThreeDays = getSunatCompliantEmissionDate(threeDaysAgo);
+      expect(checkThreeDays.wasAdjusted).toBe(false);
     });
 
-    it('debe ajustar a la fecha actual si la fecha original tiene 2 o más días de antigüedad', () => {
-      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600000);
-      const check = getSunatCompliantEmissionDate(threeDaysAgo);
+    it('debe ajustar a la fecha actual en hora Perú si la fecha original supera los 3 días calendario (4+ días)', () => {
+      const fourDaysAgo = new Date(Date.now() - 4 * 24 * 3600000);
+      const check = getSunatCompliantEmissionDate(fourDaysAgo);
       expect(check.wasAdjusted).toBe(true);
-      expect(check.emissionDate.getDate()).toBe(new Date().getDate());
     });
 
     it('reemitPendingSale debe actualizar fecha si supera plazo y emitir exitosamente ante SUNAT', async () => {

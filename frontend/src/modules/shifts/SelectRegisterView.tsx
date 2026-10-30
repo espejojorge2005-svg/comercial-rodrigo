@@ -40,8 +40,12 @@ export const SelectRegisterView: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRegisterId) return;
-    const num = parseFloat(initialBalance) || 0;
-    const ok = await openShift(selectedRegisterId, num, notes);
+    const num = parseFloat(initialBalance);
+    if (isNaN(num) || num < 0) {
+      toast.warning('El monto base inicial no puede ser negativo.');
+      return;
+    }
+    const ok = await openShift(selectedRegisterId, Number(num.toFixed(2)), notes);
     if (ok) {
       toast.success('¡Turno de caja aperturado exitosamente! Listo para registrar ventas.');
     } else {
@@ -187,7 +191,8 @@ export const SelectRegisterView: React.FC = () => {
                 </span>
                 <input
                   type="number"
-                  step="any"
+                  min="0"
+                  step="0.01"
                   value={initialBalance}
                   onChange={(e) => setInitialBalance(e.target.value)}
                   onFocus={(e) => e.target.select()}

@@ -1,8 +1,10 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -12,6 +14,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaymentMethod, ReceiptType } from '@prisma/client';
+
+const SALE_RECEIPT_TYPES: ReceiptType[] = [
+  ReceiptType.NOTA_VENTA,
+  ReceiptType.BOLETA,
+  ReceiptType.FACTURA,
+];
 
 export class SaleItemDto {
   @IsString({ message: 'El ID del producto es obligatorio' })
@@ -37,8 +45,8 @@ export class CreateSaleDto {
   cashShiftId: string;
 
   @IsOptional()
-  @IsEnum(ReceiptType, {
-    message: 'El tipo de comprobante debe ser NOTA_VENTA, BOLETA o FACTURA',
+  @IsIn(SALE_RECEIPT_TYPES, {
+    message: 'El tipo de comprobante de venta debe ser NOTA_VENTA, BOLETA o FACTURA',
   })
   receiptType?: ReceiptType;
 
@@ -80,6 +88,7 @@ export class CreateSaleDto {
   adminPin?: string;
 
   @IsArray()
+  @ArrayMinSize(1, { message: 'La venta debe incluir al menos un producto' })
   @ValidateNested({ each: true })
   @Type(() => SaleItemDto)
   items: SaleItemDto[];

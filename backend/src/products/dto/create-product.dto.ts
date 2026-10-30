@@ -7,13 +7,15 @@ import {
   IsPositive,
   IsString,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { UnitType } from '@prisma/client';
 
 export class CreateProductDto {
   @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsString()
-  barcode?: string;
+  barcode?: string | null;
 
   @IsString({ message: 'El nombre del producto es obligatorio' })
   @IsNotEmpty({ message: 'El nombre del producto no puede estar vacío' })
@@ -35,13 +37,15 @@ export class CreateProductDto {
   retailPrice: number;
 
   @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsNumber({}, { message: 'El precio al por mayor debe ser numérico' })
   @Min(0, { message: 'El precio al por mayor no puede ser negativo' })
   wholesalePrice?: number | null;
 
   @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsNumber({}, { message: 'La cantidad mínima para precio mayor debe ser numérica' })
-  @Min(1, { message: 'La cantidad mínima debe ser al menos 1' })
+  @Min(0.001, { message: 'La cantidad mínima debe ser mayor a 0' })
   wholesaleMinQty?: number | null;
 
   @IsNumber({}, { message: 'El stock actual debe ser numérico' })
@@ -53,6 +57,7 @@ export class CreateProductDto {
   minStock: number;
 
   @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsDateString({}, { message: 'La fecha de vencimiento debe tener un formato válido (YYYY-MM-DD)' })
   expirationDate?: string | null;
 }

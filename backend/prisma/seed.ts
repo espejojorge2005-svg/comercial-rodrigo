@@ -56,8 +56,9 @@ async function main() {
   // 2. Crear Usuarios (Admin y Cajeros)
   const passwordHashAdmin = await bcrypt.hash('admin123', 10);
   const passwordHashCajero = await bcrypt.hash('cajero123', 10);
+  const pinHashAdmin = await bcrypt.hash('1234', 10);
 
-  const admin = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { username: 'admin' },
     update: {},
     create: {
@@ -65,7 +66,7 @@ async function main() {
       username: 'admin',
       password: passwordHashAdmin,
       role: Role.ADMIN,
-      pin: '1234', // PIN de 4 dígitos para autorizar anulaciones
+      pin: pinHashAdmin, // PIN de 4 dígitos hasheado con bcrypt para autorizar anulaciones
       isActive: true,
     },
   });

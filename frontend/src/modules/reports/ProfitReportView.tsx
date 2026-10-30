@@ -6,6 +6,7 @@ import {
   formatPeruDate,
   formatPeruTime,
   getPeruYMD,
+  sanitizeExternalUrl,
 } from '../../lib/utils.js';
 import type { TaxBookResponse, ManagementReportResponse } from '../../types/index.js';
 import {
@@ -28,11 +29,20 @@ import {
   FileText,
   AlertCircle,
   Layers,
+  Download,
 } from 'lucide-react';
 
 let cachedManagementData: ManagementReportResponse | null = null;
 let cachedTaxData: TaxBookResponse | null = null;
 let cachedShiftsDropdown: any[] = [];
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('cr:auth-changed', () => {
+    cachedManagementData = null;
+    cachedTaxData = null;
+    cachedShiftsDropdown = [];
+  });
+}
 
 export const ProfitReportView: React.FC = () => {
   // Segmentación Principal: 'management' (Dueña) vs 'tax' (Contador)
@@ -49,6 +59,7 @@ export const ProfitReportView: React.FC = () => {
   const [taxData, setTaxData] = useState<TaxBookResponse | null>(cachedTaxData);
   const [isLoading, setIsLoading] = useState<boolean>(!cachedManagementData);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [isDownloadingSire, setIsDownloadingSire] = useState<boolean>(false);
 
   // Sub-pestañas para reporte gerencial
   const [managementTab, setManagementTab] = useState<'sales' | 'expenses'>('sales');
@@ -197,6 +208,32 @@ export const ProfitReportView: React.FC = () => {
     }
   };
 
+  // Descarga en formato TXT oficial SUNAT SIRE RVIE (Anexo 3)
+  const handleExportSireTxt = async () => {
+    setIsDownloadingSire(true);
+    try {
+      const { startDate, endDate } = getDateRangeParams();
+      const params = new URLSearchParams();
+
+      if (selectedShiftId !== 'all') {
+        params.append('shiftId', selectedShiftId);
+      } else {
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
+      }
+
+      await downloadReportBlob(
+        `/reports/tax-book/sire?${params.toString()}`,
+        `SIRE_RVIE_${getPeruYMD()}.txt`,
+      );
+      toast.success('Archivo oficial SUNAT SIRE RVIE (.TXT) descargado con éxito.');
+    } catch (err: any) {
+      toast.error(`Error descargando archivo SIRE: ${err.message || err}`);
+    } finally {
+      setIsDownloadingSire(false);
+    }
+  };
+
   // Filtrado de ventas del reporte gerencial
   const filteredManagementSales = (managementData?.salesDetail || []).filter((s: any) => {
     const q = searchTerm.toLowerCase();
@@ -282,6 +319,19 @@ export const ProfitReportView: React.FC = () => {
               <span>Libro SUNAT</span>
             </button>
           </div>
+
+          {/* Descarga SIRE TXT (solo modo Libro SUNAT) */}
+          {reportMode === 'tax' && (
+            <button
+              onClick={handleExportSireTxt}
+              disabled={isDownloadingSire || isLoading}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50 bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950/40"
+              title="Descargar archivo plano pipe-delimited (.TXT) oficial para SUNAT SIRE RVIE (Anexo 3)"
+            >
+              <Download className={`w-3.5 h-3.5 ${isDownloadingSire ? 'animate-bounce' : ''}`} />
+              <span>{isDownloadingSire ? 'Exportando...' : 'Descargar SIRE (.TXT)'}</span>
+            </button>
+          )}
 
           {/* Descarga Excel */}
           <button
@@ -518,7 +568,7 @@ export const ProfitReportView: React.FC = () => {
             <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
               <div>
                 <div className="text-xs text-slate-400 font-semibold mb-1 flex items-center justify-between">
-                  <span>Gastos de Caja Chica</span>
+                  <span>Gastos Operativos Caja</span>
                   <ArrowDownRight className="w-4 h-4 text-rose-400" />
                 </div>
                 {isLoading && !managementData ? (
@@ -527,12 +577,14 @@ export const ProfitReportView: React.FC = () => {
                   </div>
                 ) : (
                   <div className="text-xl font-black text-rose-400">
-                    -{formatCurrency(managementData?.summary.totalExpenses || 0)}
+                    -{formatCurrency(managementData?.summary.operatingExpenses ?? managementData?.summary.totalExpenses ?? 0)}
                   </div>
                 )}
               </div>
               <div className="mt-2 text-[11px] text-slate-400">
-                Salidas directas de efectivo
+                {(managementData?.summary.voidRefundExpenses ?? 0) > 0
+                  ? `+${formatCurrency(managementData?.summary.voidRefundExpenses || 0)} dev. anulaciones`
+                  : 'Salidas operativas de efectivo'}
               </div>
             </div>
 
@@ -1145,7 +1197,15 @@ export const ProfitReportView: React.FC = () => {
                         <td className="py-3 px-3 text-center font-bold text-white whitespace-nowrap">{rec.series}</td>
                         <td className="py-3 px-3 text-center text-slate-300 tabular-nums whitespace-nowrap">{rec.formattedCorrelative}</td>
                         <td className="py-3 px-3 text-center text-slate-400 font-bold whitespace-nowrap">
-                          {rec.customerDocType === '6' ? '6 (RUC)' : rec.customerDocType === '1' ? '1 (DNI)' : '0 (S/D)'}
+                          {rec.customerDocType === '6'
+                            ? '6 (RUC)'
+                            : rec.customerDocType === '1'
+                              ? '1 (DNI)'
+                              : rec.customerDocType === '4'
+                                ? '4 (C.E.)'
+                                : rec.customerDocType === '-'
+                                  ? '- (S/D)'
+                                  : `${rec.customerDocType} (S/D)`}
                         </td>
                         <td className="py-3 px-3 text-center text-slate-200 tabular-nums whitespace-nowrap">{rec.customerDocument}</td>
                         <td className="py-3 px-3 font-sans max-w-xs">
@@ -1191,44 +1251,51 @@ export const ProfitReportView: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-3 px-3 text-center font-sans whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-1">
-                            {rec.pdfUrl ? (
-                              <a
-                                href={rec.pdfUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[10px] font-bold border border-indigo-500/30 transition-all"
-                                title="Descargar Representación Gráfica (PDF)"
-                              >
-                                PDF
-                              </a>
-                            ) : null}
-                            {rec.xmlUrl ? (
-                              <a
-                                href={rec.xmlUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-1.5 py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-500/30 transition-all"
-                                title="Descargar XML firmado (UBL 2.1)"
-                              >
-                                XML
-                              </a>
-                            ) : null}
-                            {rec.cdrUrl ? (
-                              <a
-                                href={rec.cdrUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-1.5 py-0.5 rounded bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/30 transition-all"
-                                title="Descargar Constancia de Recepción (CDR SUNAT)"
-                              >
-                                CDR
-                              </a>
-                            ) : null}
-                            {!rec.pdfUrl && !rec.xmlUrl && !rec.cdrUrl && (
-                              <span className="text-slate-600 text-[10px]">-</span>
-                            )}
-                          </div>
+                          {(() => {
+                            const safePdf = sanitizeExternalUrl(rec.pdfUrl);
+                            const safeXml = sanitizeExternalUrl(rec.xmlUrl);
+                            const safeCdr = sanitizeExternalUrl(rec.cdrUrl);
+                            return (
+                              <div className="flex items-center justify-center gap-1">
+                                {safePdf ? (
+                                  <a
+                                    href={safePdf}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[10px] font-bold border border-indigo-500/30 transition-all"
+                                    title="Descargar Representación Gráfica (PDF)"
+                                  >
+                                    PDF
+                                  </a>
+                                ) : null}
+                                {safeXml ? (
+                                  <a
+                                    href={safeXml}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-1.5 py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-500/30 transition-all"
+                                    title="Descargar XML firmado (UBL 2.1)"
+                                  >
+                                    XML
+                                  </a>
+                                ) : null}
+                                {safeCdr ? (
+                                  <a
+                                    href={safeCdr}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-1.5 py-0.5 rounded bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/30 transition-all"
+                                    title="Descargar Constancia de Recepción (CDR SUNAT)"
+                                  >
+                                    CDR
+                                  </a>
+                                ) : null}
+                                {!safePdf && !safeXml && !safeCdr && (
+                                  <span className="text-slate-600 text-[10px]">-</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
@@ -1249,27 +1316,42 @@ export const ProfitReportView: React.FC = () => {
                   )}
                 </tbody>
 
-                {/* Fila de Totales Generales */}
-                {filteredTaxRecords.length > 0 && (
-                  <tfoot className="bg-slate-950 text-white font-bold border-t-2 border-slate-700">
-                    <tr>
-                      <td colSpan={8} className="py-3 px-3 text-right font-sans text-xs uppercase tracking-wider text-slate-400">
-                        TOTALES GENERALES DEL PERIODO:
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-slate-200 min-w-[115px]">
-                        {formatCurrency(taxData?.summary.totalTaxableBase || 0)}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-indigo-400 min-w-[110px]">
-                        {formatCurrency(taxData?.summary.totalIgv || 0)}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-emerald-400 text-sm min-w-[125px]">
-                        {formatCurrency(taxData?.summary.totalAmount || 0)}
-                      </td>
-                      <td></td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                )}
+                {/* Fila de Totales Generales / Subtotal Filtrado */}
+                {filteredTaxRecords.length > 0 && (() => {
+                  const isFiltered = searchTerm.trim().length > 0;
+                  const footTaxable = isFiltered
+                    ? Number(filteredTaxRecords.reduce((acc, r) => acc + r.taxableBase, 0).toFixed(2))
+                    : (taxData?.summary.totalTaxableBase || 0);
+                  const footIgv = isFiltered
+                    ? Number(filteredTaxRecords.reduce((acc, r) => acc + r.igvAmount, 0).toFixed(2))
+                    : (taxData?.summary.totalIgv || 0);
+                  const footTotal = isFiltered
+                    ? Number(filteredTaxRecords.reduce((acc, r) => acc + r.totalAmount, 0).toFixed(2))
+                    : (taxData?.summary.totalAmount || 0);
+
+                  return (
+                    <tfoot className="bg-slate-950 text-white font-bold border-t-2 border-slate-700">
+                      <tr>
+                        <td colSpan={8} className="py-3 px-3 text-right font-sans text-xs uppercase tracking-wider text-slate-400">
+                          {isFiltered
+                            ? `SUBTOTAL FILTRADO (${filteredTaxRecords.length} REGISTROS):`
+                            : 'TOTALES GENERALES DEL PERIODO:'}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-slate-200 min-w-[115px]">
+                          {formatCurrency(footTaxable)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-indigo-400 min-w-[110px]">
+                          {formatCurrency(footIgv)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono tabular-nums whitespace-nowrap text-emerald-400 text-sm min-w-[125px]">
+                          {formatCurrency(footTotal)}
+                        </td>
+                        <td></td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table>
             </div>
           </div>

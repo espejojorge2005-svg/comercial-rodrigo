@@ -6,7 +6,6 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -20,6 +19,9 @@ describe('UsersService', () => {
         create: vi.fn(),
         update: vi.fn(),
         count: vi.fn(),
+      },
+      cashShift: {
+        findFirst: vi.fn().mockResolvedValue(null),
       },
     };
 
@@ -203,6 +205,60 @@ describe('UsersService', () => {
 
       const updated = await service.updateUser('u-1', { name: 'Nombre Nuevo' }, 'admin-id');
       expect(updated.name).toBe('Nombre Nuevo');
+    });
+
+    it('debe impedir que un Administrador desactive su propia cuenta activa aunque existan otros admins', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'admin-1',
+        role: Role.ADMIN,
+        isActive: true,
+      });
+      mockPrisma.user.count.mockResolvedValue(2);
+
+      await expect(
+        service.updateUser('admin-1', { isActive: false }, 'admin-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('debe impedir desactivar a un colaborador con un turno de caja abierto', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'cajero-1',
+        role: Role.CAJERO,
+        isActive: true,
+      });
+      mockPrisma.cashShift.findFirst.mockResolvedValue({ id: 'shift-open-1' });
+
+      await expect(
+        service.updateUser('cajero-1', { isActive: false }, 'admin-1'),
+      ).rejects.toThrow('turno de caja abierto');
+    });
+
+    it('debe limpiar el PIN al degradar un ADMIN a CAJERO', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'admin-2',
+        username: 'admin2',
+        role: Role.ADMIN,
+        pin: '$2b$10$hashedpin',
+        isActive: true,
+      });
+      mockPrisma.user.count.mockResolvedValue(2);
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'admin-2',
+        role: Role.CAJERO,
+        isActive: true,
+      });
+
+      await service.updateUser('admin-2', { role: Role.CAJERO }, 'admin-1');
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'admin-2' },
+          data: expect.objectContaining({
+            role: Role.CAJERO,
+            pin: null,
+          }),
+        }),
+      );
     });
   });
 

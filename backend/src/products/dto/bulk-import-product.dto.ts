@@ -44,7 +44,7 @@ export class BulkProductItemDto {
 
   @IsOptional()
   @IsNumber()
-  @Min(1)
+  @Min(0.001)
   wholesaleMinQty?: number | null;
 
   @IsNumber({}, { message: 'El stock inicial debe ser numérico' })

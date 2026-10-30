@@ -25,6 +25,37 @@ export function formatCurrency(amount: number | string): string {
 
 
 /**
+ * Escapa caracteres HTML peligrosos antes de interpolar datos en ventanas de impresión o HTML crudo.
+ */
+export function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Valida que una URL externa use exclusivamente protocolos seguros http/https (previene javascript: o data:).
+ */
+export function sanitizeExternalUrl(url?: string | null): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Zona horaria oficial de Perú (GMT-5 / America/Lima)
  */
 export const PERU_TIMEZONE = 'America/Lima';
@@ -32,13 +63,31 @@ export const PERU_TIMEZONE = 'America/Lima';
 /**
  * Retorna la fecha actual en Perú en formato YYYY-MM-DD
  */
-export function getPeruYMD(date: Date = new Date()): string {
+export function getPeruYMD(date: Date | string | number = new Date()): string {
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: PERU_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: PERU_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(date);
+  }).format(d);
+}
+
+/**
+ * Suma o resta días calendario sobre la fecha actual en Perú (YYYY-MM-DD) sin desfase horario.
+ */
+export function addPeruDaysYMD(days: number, baseDate: Date = new Date()): string {
+  const [y, m, d] = getPeruYMD(baseDate).split('-').map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d + days));
+  return utc.toISOString().slice(0, 10);
 }
 
 /**
@@ -143,18 +192,29 @@ export function getProductExpirationInfo(
     };
   }
 
-  // Normalizar día exacto
-  const expYear = exp.getUTCFullYear();
-  const expMonth = exp.getUTCMonth();
-  const expDay = exp.getUTCDate();
+  // Extraer año-mes-día calendario exacto sin desplazar -1 día por UTC-5 cuando viene en 00:00:00Z
+  let expYear: number;
+  let expMonth: number;
+  let expDay: number;
 
-  const now = new Date();
-  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  if (typeof expirationDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(expirationDate.trim())) {
+    const [y, m, d] = expirationDate.trim().slice(0, 10).split('-').map(Number);
+    expYear = y;
+    expMonth = m - 1;
+    expDay = d;
+  } else {
+    expYear = exp.getUTCFullYear();
+    expMonth = exp.getUTCMonth();
+    expDay = exp.getUTCDate();
+  }
+
+  const [todayY, todayM, todayD] = getPeruYMD(new Date()).split('-').map(Number);
+  const todayUtc = Date.UTC(todayY, todayM - 1, todayD);
   const expUtc = Date.UTC(expYear, expMonth, expDay);
 
   const diffMs = expUtc - todayUtc;
   const daysDiff = Math.round(diffMs / (1000 * 60 * 60 * 24));
-  const formattedDate = formatPeruDate(exp);
+  const formattedDate = `${String(expDay).padStart(2, '0')}/${String(expMonth + 1).padStart(2, '0')}/${expYear}`;
 
   if (daysDiff < 0) {
     const absDays = Math.abs(daysDiff);
@@ -212,11 +272,12 @@ export function getProductExpirationInfo(
  */
 export function numeroALetras(monto: number | string): string {
   const num = typeof monto === 'string' ? parseFloat(monto) : monto;
-  if (isNaN(num) || num < 0) return 'SON: CERO CON 00/100 SOLES';
+  if (isNaN(num) || !isFinite(num) || num < 0) return 'SON: CERO CON 00/100 SOLES';
 
-  const entero = Math.floor(num);
-  const centavos = Math.round((num - entero) * 100);
-  const centavosStr = String(centavos).padStart(2, '0').slice(0, 2);
+  const rounded = Math.round(num * 100) / 100;
+  const entero = Math.floor(rounded);
+  const centavos = Math.round((rounded - entero) * 100);
+  const centavosStr = String(centavos).padStart(2, '0');
 
   const unidades = [
     '',
@@ -340,7 +401,7 @@ export function numeroALetras(monto: number | string): string {
 export function isValidPeruvianRuc(ruc: string, allowKnownDemoRucs = true): boolean {
   const clean = (ruc || '').trim();
   if (!/^\d{11}$/.test(clean)) return false;
-  const validPrefixes = ['10', '15', '17', '20'];
+  const validPrefixes = ['10', '15', '16', '17', '20'];
   if (!validPrefixes.some((p) => clean.startsWith(p))) return false;
 
   // Permitir RUCs de prueba / simulación del sistema si aplica

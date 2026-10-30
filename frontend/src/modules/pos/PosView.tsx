@@ -18,7 +18,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import type { Product, Category } from '../../types/index.js';
-import { getUnitBadge } from '../../lib/units.js';
+import { getUnitBadge, isDiscreteUnitType } from '../../lib/units.js';
 import { CheckoutModal } from './CheckoutModal.js';
 import { ReceiptTicketModal } from './ReceiptTicketModal.js';
 import { RecentSalesModal } from './RecentSalesModal.js';
@@ -46,7 +46,9 @@ export const PosView: React.FC = () => {
 
   const totalAmount = getTotalAmount();
   const totalItemsCount = getTotalItemsCount();
+  const roundedItemsCount = Number(totalItemsCount.toFixed(3));
   const wholesaleSavings = getTotalWholesaleSavings();
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
 
   // Estados de catálogo
   const [products, setProducts] = useState<Product[]>([]);
@@ -214,7 +216,7 @@ export const PosView: React.FC = () => {
           }`}
         >
           <ShoppingCart className="w-3.5 h-3.5" />
-          <span>Ticket {totalItemsCount > 0 ? `(${totalItemsCount} • ${formatCurrency(totalAmount)})` : ''}</span>
+          <span>Ticket {roundedItemsCount > 0 ? `(${roundedItemsCount} • ${formatCurrency(totalAmount)})` : ''}</span>
         </button>
       </div>
 
@@ -395,16 +397,19 @@ export const PosView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4 text-slate-400" />
                 <h3 className="font-bold text-white text-sm sm:text-base">Ticket de Venta</h3>
-                {totalItemsCount > 0 && (
+                {roundedItemsCount > 0 && (
                   <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-xs font-semibold font-mono">
-                    {totalItemsCount}
+                    {roundedItemsCount}
                   </span>
                 )}
               </div>
 
               {items.length > 0 && (
                 <button
-                  onClick={clearCart}
+                  onClick={() => {
+                    setQtyDrafts({});
+                    clearCart();
+                  }}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-all cursor-pointer"
                   title="Vaciar ticket"
                 >
@@ -494,34 +499,77 @@ export const PosView: React.FC = () => {
 
                     <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
                       {/* Controles de Cantidad */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => updateItemQty(item.product.id, item.quantity - 1)}
-                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
+                      {(() => {
+                        const isDiscrete = isDiscreteUnitType(item.product.unitType);
+                        const stepVal = isDiscrete ? 1 : 0.25;
+                        const draftVal = qtyDrafts[item.product.id];
+                        return (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = Number((item.quantity - stepVal).toFixed(3));
+                                setQtyDrafts((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[item.product.id];
+                                  return copy;
+                                });
+                                updateItemQty(item.product.id, next);
+                              }}
+                              className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
 
-                        <input
-                          type="number"
-                          step={['KG', 'LT'].includes(item.product.unitType) ? '0.1' : '1'}
-                          min="0.1"
-                          max={item.product.currentStock}
-                          value={item.quantity}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            if (!isNaN(val)) updateItemQty(item.product.id, val);
-                          }}
-                          className="w-12 text-center bg-slate-900 border border-slate-800 rounded-lg py-0.5 text-xs font-bold text-white outline-none font-mono"
-                        />
+                            <input
+                              type="number"
+                              step={isDiscrete ? '1' : '0.001'}
+                              min={isDiscrete ? '1' : '0.001'}
+                              max={item.product.currentStock}
+                              value={draftVal !== undefined ? draftVal : String(item.quantity)}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setQtyDrafts((prev) => ({ ...prev, [item.product.id]: raw }));
+                                const val = parseFloat(raw);
+                                if (!isNaN(val) && val > 0) {
+                                  updateItemQty(item.product.id, val);
+                                }
+                              }}
+                              onBlur={() => {
+                                const raw = qtyDrafts[item.product.id];
+                                if (raw !== undefined) {
+                                  const val = parseFloat(raw);
+                                  if (!isNaN(val) && val > 0) {
+                                    updateItemQty(item.product.id, val);
+                                  }
+                                  setQtyDrafts((prev) => {
+                                    const copy = { ...prev };
+                                    delete copy[item.product.id];
+                                    return copy;
+                                  });
+                                }
+                              }}
+                              className="w-14 text-center bg-slate-900 border border-slate-800 rounded-lg py-0.5 text-xs font-bold text-white outline-none font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
 
-                        <button
-                          onClick={() => updateItemQty(item.product.id, item.quantity + 1)}
-                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = Number((item.quantity + stepVal).toFixed(3));
+                                setQtyDrafts((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[item.product.id];
+                                  return copy;
+                                });
+                                updateItemQty(item.product.id, next);
+                              }}
+                              className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" />
+                            </button>
+                          </div>
+                        );
+                      })()}
 
                       <div className="font-extrabold text-white text-xs font-mono">
                         {formatCurrency(item.subtotal)}
@@ -569,7 +617,7 @@ export const PosView: React.FC = () => {
         <div className="lg:hidden fixed bottom-3 left-3 right-3 z-30 p-3 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl shadow-2xl flex items-center justify-between">
           <div>
             <div className="text-[10px] text-slate-400 uppercase font-semibold">
-              Ticket ({totalItemsCount} {totalItemsCount === 1 ? 'artículo' : 'artículos'})
+              Ticket ({roundedItemsCount} {roundedItemsCount === 1 ? 'artículo' : 'artículos'})
             </div>
             <div className="text-base font-extrabold text-emerald-400 font-mono">
               {formatCurrency(totalAmount)}

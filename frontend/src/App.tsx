@@ -46,6 +46,18 @@ export const App: React.FC = () => {
     }
   }, [token, fetchActiveShift, fetchConfig]);
 
+  // Al cambiar de usuario o cerrar sesión, regresar siempre a la pestaña segura 'pos'
+  useEffect(() => {
+    setCurrentTab('pos');
+  }, [user?.id]);
+
+  // Si un usuario no-ADMIN llega a una pestaña administrativa, redirigir a 'pos'
+  useEffect(() => {
+    if (user && user.role !== 'ADMIN' && currentTab !== 'pos') {
+      setCurrentTab('pos');
+    }
+  }, [user, currentTab]);
+
   // 1. Pantalla de Carga Inicial
   if (isInitializing) {
     return (

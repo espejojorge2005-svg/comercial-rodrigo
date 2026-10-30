@@ -307,10 +307,10 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       expect(filter?.lte).toBeInstanceOf(Date);
 
       // Inicio: 2026-10-24 00:00:00.000 en Perú (-05:00) -> 2026-10-24T05:00:00.000Z en UTC
-      expect(filter?.gte?.toISOString()).toBe('2026-10-24T05:00:00.000Z');
+      expect((filter?.gte as Date)?.toISOString()).toBe('2026-10-24T05:00:00.000Z');
 
       // Fin: 2026-10-24 23:59:59.999 en Perú (-05:00) -> 2026-10-25T04:59:59.999Z en UTC
-      expect(filter?.lte?.toISOString()).toBe('2026-10-25T04:59:59.999Z');
+      expect((filter?.lte as Date)?.toISOString()).toBe('2026-10-25T04:59:59.999Z');
     });
 
     it('demuestra por qué la propuesta setUTCHours(23, 59, 59, 999) es errónea y excluye ventas nocturnas', () => {
@@ -330,8 +330,8 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       expect(peruFilter?.lte).toBeDefined();
 
       // La venta de las 8:30 PM queda CORRECTAMENTE INCLUIDA en la jornada del 24 de octubre
-      expect(eveningSaleTimestamp.getTime() <= peruFilter!.lte!.getTime()).toBe(true);
-      expect(eveningSaleTimestamp.getTime() >= peruFilter!.gte!.getTime()).toBe(true);
+      expect(eveningSaleTimestamp.getTime() <= (peruFilter!.lte as Date).getTime()).toBe(true);
+      expect(eveningSaleTimestamp.getTime() >= (peruFilter!.gte as Date).getTime()).toBe(true);
     });
 
     it('debe extender fechas con medianoche T00:00:00 en endDate hasta fin de jornada en Perú', () => {
@@ -341,7 +341,62 @@ describe('ReportsService - Doble Segmentación (Tributario vs Gerencial)', () =>
       );
 
       // El endDate con medianoche se extiende a 23:59:59.999 hora de Perú
-      expect(filter?.lte?.toISOString()).toBe('2026-10-25T04:59:59.999Z');
+      expect((filter?.lte as Date)?.toISOString()).toBe('2026-10-25T04:59:59.999Z');
+    });
+
+    it('debe generar archivo plano SIRE RVIE TXT oficial y excluir devoluciones de turnos cerrados de gastos operativos', async () => {
+      mockPrisma.sale.findMany.mockResolvedValue([
+        {
+          id: 'sale-sire-1',
+          createdAt: new Date('2026-10-12T15:00:00Z'),
+          saleNumber: 10,
+          receiptType: ReceiptType.FACTURA,
+          series: 'F001',
+          correlativeNumber: 25,
+          fullReceiptNumber: 'F001-00000025',
+          taxableBase: 100.0,
+          igvAmount: 18.0,
+          totalAmount: 118.0,
+          customerDocument: '20552103816',
+          customerName: 'CORPORACION PERU SAC',
+          customerAddress: 'Av. Arequipa 1200',
+          emissionStatus: 'SIMULATED',
+          isVoided: false,
+          cashShift: { cashRegister: { name: 'Caja 1' } },
+        },
+      ]);
+      mockPrisma.creditNote.findMany.mockResolvedValue([]);
+
+      const sire = await reportsService.generateSireRvieTxt({
+        startDate: '2026-10-01',
+        endDate: '2026-10-31',
+      });
+      expect(sire.filename).toMatch(/^LE\d{11}20261000140400021112\.txt$/);
+      expect(sire.content).toContain('|01|F001|00000025||6|20552103816|CORPORACION PERU SAC|');
+      expect(sire.content).toContain('|100.00|0.00|18.00|0.00|');
+
+      // Verificar que una devolución de venta anulada de turno anterior NO genera pérdida falsa en netProfit
+      mockPrisma.sale.findMany.mockResolvedValue([]);
+      mockPrisma.cashMovement.findMany.mockResolvedValue([
+        {
+          id: 'mov-void-refund',
+          type: CashMovementType.EXPENSE,
+          amount: 100.0,
+          reason: 'Devolución en efectivo por anulación de B001-00000005 (Turno anterior)',
+          createdAt: new Date('2026-10-12T16:00:00Z'),
+          cashShift: {
+            cashRegister: { name: 'Caja 1' },
+            user: { name: 'Admin' },
+          },
+        },
+      ]);
+      mockPrisma.cashShift.findMany.mockResolvedValue([{ id: 's1', initialBalance: 200.0 }]);
+
+      const mgmt = await reportsService.getManagementReportData({});
+      expect(mgmt.summary.totalExpenses).toBe(100.0);
+      expect(mgmt.summary.operatingExpenses).toBe(0);
+      expect(mgmt.summary.netProfit).toBe(0);
+      expect(mgmt.summary.theoreticalDrawerCash).toBe(100.0); // 200 inicial - 100 salida física = 100 en gaveta
     });
 
     it('getTaxBookData aplica el rango horario de Perú al filtrar ventas', async () => {

@@ -6,6 +6,7 @@ import {
   IssueCreditNoteInput,
   BillingIssueResult,
 } from '../billing.types.js';
+import { resolveSunatCustomerDocType } from '../../sales/utils/sales-fiscal.util.js';
 
 function formatPeruYYYYMMDD(date: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -41,18 +42,8 @@ export class MockBillingDriver implements IBillingDriver {
       receiptType === 'FACTURA' ? '01' : receiptType === 'BOLETA' ? '03' : '00';
 
     // 2. Determinar tipo de documento del cliente según catálogo SUNAT #06
-    // 6: RUC (11 dígitos)
-    // 1: DNI (8 dígitos)
-    // -: Sin documento / Clientes Varios
-    let customerDocType = '-';
     const cleanDoc = (customerDocument || '').trim();
-    if (cleanDoc.length === 11) {
-      customerDocType = '6';
-    } else if (cleanDoc.length === 8) {
-      customerDocType = '1';
-    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
-      customerDocType = '4';
-    }
+    const customerDocType = resolveSunatCustomerDocType(cleanDoc, '-');
 
     const customerDocNum = cleanDoc || '-';
     // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
@@ -118,15 +109,8 @@ export class MockBillingDriver implements IBillingDriver {
     // Catálogo SUNAT #01: 07 = Nota de Crédito Electrónica
     const docTypeCode = '07';
 
-    let customerDocType = '-';
     const cleanDoc = (customerDocument || '').trim();
-    if (cleanDoc.length === 11) {
-      customerDocType = '6';
-    } else if (cleanDoc.length === 8) {
-      customerDocType = '1';
-    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
-      customerDocType = '4';
-    }
+    const customerDocType = resolveSunatCustomerDocType(cleanDoc, '-');
 
     const customerDocNum = cleanDoc || '-';
     // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)

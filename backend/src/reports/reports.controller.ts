@@ -50,7 +50,7 @@ export class ReportsController {
     }
 
     const buffer = await this.reportsService.generateTaxBookExcel(query);
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const dateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' }).replace(/-/g, '');
     const filename = `Libro_Ventas_SUNAT_${dateStr}.xlsx`;
 
     res.setHeader(
@@ -59,6 +59,28 @@ export class ReportsController {
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length.toString());
+    res.end(buffer);
+  }
+
+  /**
+   * Descarga archivo plano TXT para SIRE RVIE SUNAT (R.S. N° 000112-2021/SUNAT)
+   */
+  @Get('tax-book/sire')
+  async downloadSireRvieTxt(
+    @CurrentUser('role') userRole: Role,
+    @Query() query: ReportQueryDto,
+    @Res() res: Response,
+  ) {
+    if (userRole !== Role.ADMIN) {
+      throw new ForbiddenException('Solo el administrador puede exportar el archivo SIRE RVIE.');
+    }
+
+    const { filename, buffer } = await this.reportsService.generateSireRvieTxt(query);
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     res.end(buffer);
   }
 

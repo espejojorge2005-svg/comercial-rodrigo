@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { RolesGuard } from './guards/roles.guard.js';
+import { resolveJwtSecret } from './jwt-secret.util.js';
 
 @Module({
   imports: [
@@ -15,9 +16,7 @@ import { RolesGuard } from './guards/roles.guard.js';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret:
-          configService.get<string>('JWT_SECRET') ||
-          'comercial_rodrigo_super_secret_jwt_key_2026_xyz',
+        secret: resolveJwtSecret(configService),
         signOptions: {
           expiresIn: (configService.get<string>('JWT_EXPIRES_IN') || '12h') as any,
         },

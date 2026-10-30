@@ -28,6 +28,8 @@ export const CashMovementModal: React.FC<CashMovementModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading || successMsg) return;
+
     const numAmount = parseFloat(amountStr);
     if (!numAmount || numAmount <= 0) {
       setError('Por favor ingrese un monto válido mayor a 0');
@@ -207,10 +209,10 @@ export const CashMovementModal: React.FC<CashMovementModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || Boolean(successMsg)}
               className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-xs shadow-lg shadow-amber-600/30 transition-all cursor-pointer disabled:opacity-50"
             >
-              {isLoading ? 'Registrando...' : 'Confirmar'}
+              {isLoading ? 'Registrando...' : successMsg ? 'Registrado ✓' : 'Confirmar'}
             </button>
           </div>
         </form>

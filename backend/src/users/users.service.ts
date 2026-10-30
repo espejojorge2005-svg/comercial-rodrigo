@@ -117,7 +117,24 @@ export class UsersService {
       }
     }
 
-    const data: any = {};
+    if (dto.isActive === false && id === currentUserId) {
+      throw new BadRequestException(
+        'No puedes desactivar tu propia cuenta con sesión activa.',
+      );
+    }
+
+    if (dto.isActive === false && user.isActive && this.prisma.cashShift?.findFirst) {
+      const openShift = await this.prisma.cashShift.findFirst({
+        where: { userId: id, status: 'OPEN' },
+      });
+      if (openShift) {
+        throw new BadRequestException(
+          'No puedes desactivar a un colaborador con un turno de caja abierto. Cierre su turno primero.',
+        );
+      }
+    }
+
+    const data: Record<string, unknown> = {};
 
     if (dto.name !== undefined) {
       data.name = dto.name.trim();
@@ -149,11 +166,21 @@ export class UsersService {
             'No puedes degradar al único Administrador activo del sistema.',
           );
         }
+        if (id === currentUserId) {
+          throw new BadRequestException(
+            'No puedes quitarte el rol de Administrador a tu propia cuenta activa.',
+          );
+        }
       }
       data.role = dto.role;
     }
 
-    if (dto.pin !== undefined) {
+    const effectiveRole = dto.role ?? user.role;
+    if (effectiveRole !== Role.ADMIN) {
+      if (user.pin || dto.pin !== undefined) {
+        data.pin = null;
+      }
+    } else if (dto.pin !== undefined) {
       data.pin = dto.pin ? await bcrypt.hash(dto.pin.trim(), 10) : null;
     }
 

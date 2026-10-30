@@ -5,6 +5,7 @@ import {
   IssueCreditNoteInput,
   BillingIssueResult,
 } from '../billing.types.js';
+import { resolveSunatCustomerDocType } from '../../sales/utils/sales-fiscal.util.js';
 
 /**
  * Formatea una fecha a DD-MM-YYYY usando estrictamente la zona horaria de Perú (America/Lima / UTC-5)
@@ -26,7 +27,7 @@ function formatPeruDDMMYYYY(date: Date = new Date()): string {
 }
 
 /**
- * Mapeo Oficial Catálogo 03 SUNAT - Códigos de Unidades de Medida
+ * Mapeo Oficial Catálogo 03 SUNAT - Códigos de Unidades de Medida (UN/ECE Rec 20)
  * Siempre garantiza retornar un código válido de SUNAT.
  * Si la unidad es desconocida, errónea o vacía, retorna por defecto 'NIU' (Unidades)
  * para evitar que SUNAT marque la factura o boleta con estado OBSERVADO.
@@ -71,7 +72,7 @@ export const SUNAT_UNIT_MAP: Record<string, string> = {
   GALON: 'GLI',
   GALONES: 'GLI',
 
-  // Empaques y Presentaciones (Sacos, Cajas, Paquetes, Bolsas, Latas, Botellas, Baldes)
+  // Empaques y Presentaciones (Sacos, Cajas, Paquetes, Bolsas -> BG, Latas, Botellas, Baldes)
   SA: 'SA',
   SACO: 'SA',
   SACOS: 'SA',
@@ -88,9 +89,10 @@ export const SUNAT_UNIT_MAP: Record<string, string> = {
   PQT: 'PK',
   PAQUETE: 'PK',
   PAQUETES: 'PK',
-  BLS: 'BLS',
-  BOLSA: 'BLS',
-  BOLSAS: 'BLS',
+  BG: 'BG',
+  BLS: 'BG',
+  BOLSA: 'BG',
+  BOLSAS: 'BG',
   BO: 'BO',
   BOTELLA: 'BO',
   BOTELLAS: 'BO',
@@ -125,7 +127,6 @@ export function mapUnitTypeToSunat(unitType?: string | null): string {
 /**
  * Normaliza la cabecera de autenticación requerida por la API REST de Nubefact.
  * Formato oficial Nubefact: Authorization: Token token="TU_TOKEN"
- * Soporta de manera transparente si el usuario ingresó solo el token o prefijado con Bearer/Token.
  */
 export function buildNubefactAuthHeader(apiToken: string): string {
   const clean = (apiToken || '').trim();
@@ -140,6 +141,8 @@ export function buildNubefactAuthHeader(apiToken: string): string {
   return `Token token="${rawToken}"`;
 }
 
+const NUBEFACT_TIMEOUT_MS = 15_000;
+
 @Injectable()
 export class NubefactBillingDriver implements IBillingDriver {
   readonly driverName = 'NUBEFACT';
@@ -151,7 +154,7 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     if (!apiUrl || !apiToken) {
       this.logger.warn(
-        'Credenciales de Nubefact (NUBEFACT_URL / NUBEFACT_TOKEN) no encontradas en .env. Se usará simulación.',
+        'Credenciales de Nubefact (NUBEFACT_URL / NUBEFACT_TOKEN) no encontradas en .env.',
       );
       throw new Error(
         'El driver NUBEFACT requiere configurar NUBEFACT_URL y NUBEFACT_TOKEN en las variables de entorno.',
@@ -172,35 +175,26 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     // Catálogo Nubefact: 1 = Factura, 2 = Boleta
     const tipoDeComprobante = receiptType === 'FACTURA' ? 1 : 2;
-
-    let clienteTipoDoc = '-';
     const cleanDoc = (customerDocument || '').trim();
-    if (cleanDoc.length === 11) {
-      clienteTipoDoc = '6';
-    } else if (cleanDoc.length === 8) {
-      clienteTipoDoc = '1';
-    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
-      clienteTipoDoc = '4';
-    }
+    const clienteTipoDoc = resolveSunatCustomerDocType(cleanDoc, '-');
 
-    // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
+    // Zona horaria oficial de Perú (America/Lima / UTC-5)
     const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
-    // 1. Recorrer y procesar el arreglo de items: calcular montos exactos línea por línea
-    // (Valor venta, IGV y total con redondeo matemático por producto)
+    // 1. Procesar ítems línea por línea según UBL 2.1 (valor_unitario hasta 10 decimales sin IGV)
     let calculatedTotalGravada = 0;
     let calculatedTotalIgv = 0;
     let calculatedTotal = 0;
 
     const formattedItems = items.map((item) => {
       const itemSubtotal = Number((item.subtotal ?? item.quantity * item.unitPrice).toFixed(2));
-      // Base imponible / Valor de venta de la línea gravada (redondeado a 2 decimales)
       const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
-      // IGV de la línea: diferencia exacta entre el subtotal con IGV y el valor de venta
       const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
-      // Valor unitario sin IGV a 4 decimales según estándar Nubefact / SUNAT
+      const effectiveUnitPrice =
+        item.quantity > 0 ? itemSubtotal / item.quantity : item.unitPrice;
+      // UBL 2.1 cbc:PriceAmount permite hasta 10 decimales para evitar errores OSE 2027 / 3244
       const itemValorUnitario =
-        item.quantity > 0 ? Number((itemValorTotal / item.quantity).toFixed(4)) : 0;
+        item.quantity > 0 ? Number((effectiveUnitPrice / 1.18).toFixed(10)) : 0;
 
       calculatedTotalGravada += itemValorTotal;
       calculatedTotalIgv += itemIgv;
@@ -212,24 +206,21 @@ export class NubefactBillingDriver implements IBillingDriver {
         descripcion: item.name,
         cantidad: item.quantity,
         valor_unitario: itemValorUnitario,
-        precio_unitario: Number(item.unitPrice.toFixed(2)),
+        precio_unitario: Number(effectiveUnitPrice.toFixed(2)),
         subtotal: itemValorTotal,
-        tipo_de_igv: 1, // Gravado - Operación Onerosa
+        tipo_de_igv: 1, // Gravado - Operación Onerosa (Catálogo 07: código 10)
         igv: itemIgv,
         total: itemSubtotal,
         anticipo_regularizacion: false,
       };
     });
 
-    // 2. Cabeceras calculadas estrictamente a partir de la suma línea por línea de los ítems
-    // Esto garantiza consistencia matemática total (evita el rechazo de SUNAT por desfase de S/ 0.01)
     const finalTotalGravada = Number(calculatedTotalGravada.toFixed(2));
     const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
     const finalTotal = Number(calculatedTotal.toFixed(2));
 
     const cleanEmail = (customerEmail || '').trim();
 
-    // Estructurar JSON estándar para el API de Nubefact / ApisPerú
     const payload = {
       operacion: 'generar_comprobante',
       tipo_de_comprobante: tipoDeComprobante,
@@ -242,11 +233,12 @@ export class NubefactBillingDriver implements IBillingDriver {
       cliente_direccion: customerAddress || '-',
       cliente_email: cleanEmail,
       fecha_de_emision: fechaEmision,
-      moneda: 1, // Soles
+      moneda: 1, // PEN Soles
       porcentaje_de_igv: 18.0,
       total_gravada: finalTotalGravada,
       total_igv: finalTotalIgv,
       total: finalTotal,
+      condiciones_de_pago: 'CONTADO', // R.S. 000193-2020/SUNAT
       detraccion: false,
       enviar_automaticamente_a_la_sunat: true,
       enviar_automaticamente_al_cliente: Boolean(cleanEmail && cleanEmail.includes('@')),
@@ -257,6 +249,7 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     const response = await fetch(apiUrl, {
       method: 'POST',
+      signal: AbortSignal.timeout(NUBEFACT_TIMEOUT_MS),
       headers: {
         'Content-Type': 'application/json',
         Authorization: buildNubefactAuthHeader(apiToken),
@@ -264,7 +257,35 @@ export class NubefactBillingDriver implements IBillingDriver {
       body: JSON.stringify(payload),
     });
 
-    const data: any = await response.json();
+    // Errores transitorios de pasarela/servidor (502/503/504/429) deben quedar PENDING para reintento
+    if (response.status >= 500 || response.status === 429) {
+      this.logger.warn(
+        `Nubefact respondió HTTP ${response.status} temporal para ${series}-${correlativeNumber}. Se preserva en PENDING.`,
+      );
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Servicio PSE Nubefact temporalmente no disponible (HTTP ${response.status}). Queda pendiente de reenvío.`,
+      };
+    }
+
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      this.logger.warn(
+        `Respuesta no-JSON desde Nubefact (HTTP ${response.status}) para ${series}-${correlativeNumber}. Se preserva en PENDING.`,
+      );
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Respuesta temporal inválida del PSE Nubefact (HTTP ${response.status}). Queda pendiente de reenvío.`,
+      };
+    }
 
     if (!response.ok || data.errors || data.aceptada_por_sunat === false) {
       const errorMsg =
@@ -304,7 +325,7 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     if (!apiUrl || !apiToken) {
       this.logger.warn(
-        'Credenciales de Nubefact (NUBEFACT_URL / NUBEFACT_TOKEN) no encontradas en .env. Se usará simulación.',
+        'Credenciales de Nubefact (NUBEFACT_URL / NUBEFACT_TOKEN) no encontradas en .env.',
       );
       throw new Error(
         'El driver NUBEFACT requiere configurar NUBEFACT_URL y NUBEFACT_TOKEN en las variables de entorno.',
@@ -329,25 +350,15 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     // Catálogo Nubefact: 3 = Nota de Crédito
     const tipoDeComprobante = 3;
-
-    let clienteTipoDoc = '-';
     const cleanDoc = (customerDocument || '').trim();
-    if (cleanDoc.length === 11) {
-      clienteTipoDoc = '6';
-    } else if (cleanDoc.length === 8) {
-      clienteTipoDoc = '1';
-    } else if (cleanDoc.length >= 9 && cleanDoc.length <= 12) {
-      clienteTipoDoc = '4';
-    }
+    const clienteTipoDoc = resolveSunatCustomerDocType(cleanDoc, '-');
 
-    // 🕒 Zona horaria oficial de Perú (America/Lima / UTC-5)
     const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
     // Nubefact: documento_que_se_modifica_tipo: 1 = Factura, 2 = Boleta
     const docModificaTipo = modifiedDocTypeCode === '01' ? 1 : 2;
     const tipoNotaCreditoNum = parseInt(reasonCode, 10) || 1;
 
-    // 1. Recorrer y procesar el arreglo de items línea por línea para la Nota de Crédito
     let calculatedTotalGravada = 0;
     let calculatedTotalIgv = 0;
     let calculatedTotal = 0;
@@ -356,8 +367,10 @@ export class NubefactBillingDriver implements IBillingDriver {
       const itemSubtotal = Number((item.subtotal ?? item.quantity * item.unitPrice).toFixed(2));
       const itemValorTotal = Number((itemSubtotal / 1.18).toFixed(2));
       const itemIgv = Number((itemSubtotal - itemValorTotal).toFixed(2));
+      const effectiveUnitPrice =
+        item.quantity > 0 ? itemSubtotal / item.quantity : item.unitPrice;
       const itemValorUnitario =
-        item.quantity > 0 ? Number((itemValorTotal / item.quantity).toFixed(4)) : 0;
+        item.quantity > 0 ? Number((effectiveUnitPrice / 1.18).toFixed(10)) : 0;
 
       calculatedTotalGravada += itemValorTotal;
       calculatedTotalIgv += itemIgv;
@@ -369,7 +382,7 @@ export class NubefactBillingDriver implements IBillingDriver {
         descripcion: item.name,
         cantidad: item.quantity,
         valor_unitario: itemValorUnitario,
-        precio_unitario: Number(item.unitPrice.toFixed(2)),
+        precio_unitario: Number(effectiveUnitPrice.toFixed(2)),
         subtotal: itemValorTotal,
         tipo_de_igv: 1,
         igv: itemIgv,
@@ -418,6 +431,7 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     const response = await fetch(apiUrl, {
       method: 'POST',
+      signal: AbortSignal.timeout(NUBEFACT_TIMEOUT_MS),
       headers: {
         'Content-Type': 'application/json',
         Authorization: buildNubefactAuthHeader(apiToken),
@@ -425,7 +439,28 @@ export class NubefactBillingDriver implements IBillingDriver {
       body: JSON.stringify(payload),
     });
 
-    const data: any = await response.json();
+    if (response.status >= 500 || response.status === 429) {
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Servicio PSE Nubefact temporalmente no disponible (HTTP ${response.status}). Nota de Crédito pendiente de reenvío.`,
+      };
+    }
+
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Respuesta temporal inválida del PSE Nubefact (HTTP ${response.status}). Nota de Crédito pendiente de reenvío.`,
+      };
+    }
 
     if (!response.ok || data.errors || data.aceptada_por_sunat === false) {
       const errorMsg =
@@ -469,4 +504,3 @@ export class NubefactBillingDriver implements IBillingDriver {
     };
   }
 }
-

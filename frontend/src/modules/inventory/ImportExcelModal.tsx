@@ -85,6 +85,7 @@ export const ImportExcelModal: React.FC<ImportExcelModalProps> = ({
   };
 
   const handleImport = async () => {
+    if (isImporting) return;
     const validRows = parsedRows.filter((r) => r.isValid);
     if (validRows.length === 0) return;
 
@@ -101,7 +102,7 @@ export const ImportExcelModal: React.FC<ImportExcelModalProps> = ({
           costPrice: r.costPrice,
           retailPrice: r.retailPrice,
           wholesalePrice: r.wholesalePrice,
-          wholesaleMinQty: r.wholesaleMinQty,
+          wholesaleMinQty: r.wholesalePrice !== null ? r.wholesaleMinQty : null,
           currentStock: r.currentStock,
           minStock: r.minStock,
           expirationDate: r.expirationDate,

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, RotateCcw } from 'lucide-react';
 import { apiRequest } from '../../../api/client.js';
 import type { Product } from '../../../types/index.js';
+import { isDiscreteUnitType } from '../../../lib/units.js';
 
 export interface StockAdjustmentModalProps {
   isOpen: boolean;
@@ -22,14 +23,27 @@ export const StockAdjustmentModal: React.FC<StockAdjustmentModalProps> = ({
 
   if (!isOpen) return null;
 
-  const currentNum = product.currentStock;
-  const newNum = parseFloat(newStockStr) || 0;
-  const diff = newNum - currentNum;
+  const isDiscrete = isDiscreteUnitType(product.unitType);
+  const currentNum = Number((product.currentStock || 0).toFixed(3));
+  const parsedRaw = parseFloat(newStockStr);
+  const newNum = Number.isNaN(parsedRaw) ? 0 : Number(parsedRaw.toFixed(3));
+  const diff = Number((newNum - currentNum).toFixed(3));
 
   const handleAdjust = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
+    setError(null);
+
+    if (newStockStr.trim() === '' || Number.isNaN(parsedRaw)) {
+      setError('Ingrese una cantidad válida');
+      return;
+    }
     if (newNum < 0) {
       setError('El stock no puede ser negativo');
+      return;
+    }
+    if (isDiscrete && !Number.isInteger(newNum)) {
+      setError('Este producto se vende por unidad entera y no admite stock fraccionado');
       return;
     }
 
@@ -83,7 +97,7 @@ export const StockAdjustmentModal: React.FC<StockAdjustmentModalProps> = ({
             </label>
             <input
               type="number"
-              step="0.1"
+              step={isDiscrete ? '1' : '0.001'}
               min="0"
               value={newStockStr}
               onChange={(e) => setNewStockStr(e.target.value)}

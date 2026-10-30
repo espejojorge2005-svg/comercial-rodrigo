@@ -179,11 +179,11 @@ model Product {
 
 model Sale {
   id                String          @id @default(uuid())
-  saleNumber        Int             @default(autoincrement())
+  saleNumber        Int             @unique @default(autoincrement())
   receiptType       ReceiptType     @default(NOTA_VENTA)
   series            String          @default("NV01")
   correlativeNumber Int             @default(1)
-  fullReceiptNumber String?         // "NV01-00000001", "B001-00000001", "F001-00000001"
+  fullReceiptNumber String?         @unique // "NV01-00000001", "B001-00000001", "F001-00000001"
   isFiscal          Boolean         @default(false)
   taxableBase       Decimal         @default(0) @db.Decimal(12, 2)
   igvAmount         Decimal         @default(0) @db.Decimal(12, 2)
@@ -216,12 +216,15 @@ model Sale {
   items             SaleDetail[]
   createdAt         DateTime        @default(now())
 
+  @@unique([series, correlativeNumber])
   @@index([cashShiftId])
   @@index([userId])
   @@index([voidedByAdminId])
   @@index([createdAt])
   @@index([receiptType])
   @@index([isVoided])
+  @@index([customerDocument])
+  @@index([emissionStatus])
 }
 
 model SaleDetail {
@@ -257,6 +260,7 @@ model KardexMovement {
   @@index([productId])
   @@index([userId])
   @@index([createdAt])
+  @@index([referenceId])
 }
 
 model StoreConfig {
@@ -274,7 +278,7 @@ model CreditNote {
   id                String          @id @default(uuid())
   series            String          // "BC01", "FC01", "BC02", "FC02"
   correlativeNumber Int
-  fullNumber        String          // "BC01-00000001", "FC01-00000001"
+  fullNumber        String          @unique // "BC01-00000001", "FC01-00000001"
   saleId            String          @unique
   sale              Sale            @relation(fields: [saleId], references: [id])
   reasonCode        String          @default("01") // SUNAT Catálogo 09 ("01" = Anulación de la operación)
@@ -296,7 +300,10 @@ model CreditNote {
   cashShift         CashShift       @relation(fields: [cashShiftId], references: [id])
   createdAt         DateTime        @default(now())
 
+  @@unique([series, correlativeNumber])
   @@index([cashShiftId])
   @@index([adminId])
+  @@index([createdAt])
+  @@index([emissionStatus])
 }
 

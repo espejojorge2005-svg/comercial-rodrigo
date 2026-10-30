@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
+import { isValidPeruvianRuc } from '../sales/utils/sales-fiscal.util.js';
 
 @Injectable()
 export class SettingsService {
@@ -35,10 +36,24 @@ export class SettingsService {
    * Actualiza la configuración comercial (Solo Administrador)
    */
   async updateSettings(dto: UpdateSettingsDto) {
-    const data: any = {};
-    if (dto.name !== undefined) data.name = dto.name.trim();
+    const data: Record<string, string> = {};
+    if (dto.name !== undefined) {
+      const cleanName = dto.name.trim();
+      if (!cleanName) {
+        throw new BadRequestException('El nombre comercial no puede estar vacío.');
+      }
+      data.name = cleanName;
+    }
     if (dto.subtitle !== undefined) data.subtitle = dto.subtitle.trim();
-    if (dto.ruc !== undefined) data.ruc = dto.ruc.trim();
+    if (dto.ruc !== undefined) {
+      const cleanRuc = dto.ruc.trim();
+      if (!isValidPeruvianRuc(cleanRuc)) {
+        throw new BadRequestException(
+          'El RUC del emisor debe tener 11 dígitos numéricos válidos según el algoritmo Módulo 11 de SUNAT.',
+        );
+      }
+      data.ruc = cleanRuc;
+    }
     if (dto.phone !== undefined) data.phone = dto.phone.trim();
     if (dto.address !== undefined) data.address = dto.address.trim();
     if (dto.footerText !== undefined) data.footerText = dto.footerText.trim();

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useCartStore } from '../../store/useCartStore.js';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
@@ -65,6 +65,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [lookupBadge, setLookupBadge] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const isSubmittingRef = useRef<boolean>(false);
 
   // Cálculos fiscales calculados SIEMPRE en nivel superior (Cumpliendo reglas estrictas de React Hooks)
   const { taxableBase, igvAmount } = useMemo(() => {
@@ -85,6 +86,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // Sincronizar estado al abrir el modal de forma segura con useEffect (NUNCA durante el render)
   useEffect(() => {
     if (isOpen) {
+      isSubmittingRef.current = false;
       setCashPaid(String(totalAmount));
       setDigitalPaid('0');
       setError(null);
@@ -240,7 +242,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     if (cleanCustDoc.length !== 11) {
       isFormValid = false;
       validationMessage =
-        'El RUC debe tener exactamente 11 dígitos numéricos e iniciar con 10, 20, 15 o 17';
+        'El RUC debe tener exactamente 11 dígitos numéricos e iniciar con 10, 20, 15, 16 o 17';
     } else if (!isRucValidForFactura) {
       isFormValid = false;
       validationMessage =
@@ -297,18 +299,30 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setCashPaid(String(Number((current + amount).toFixed(2))));
   };
 
-  // Atajo de teclado: Enter en Nota de Venta para cobro ultrarrápido
+  // Atajo de teclado: Enter para cobro rápido (sin dispararse en botones ni al consultar DNI/RUC)
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isLoading && isFormValid) {
-      // Si está en un input multilínea o cancelando, ignorar
-      if ((e.target as HTMLElement).tagName !== 'TEXTAREA') {
-        handleSubmit(e);
+    if (e.key !== 'Enter') return;
+    const target = e.target as HTMLElement;
+    const tag = target.tagName;
+    if (tag === 'TEXTAREA' || tag === 'BUTTON') return;
+
+    if (target.dataset?.docInput === 'true') {
+      e.preventDefault();
+      if (custDoc.trim().length === 8 || custDoc.trim().length === 11) {
+        handleLookupDocument();
       }
+      return;
+    }
+
+    if (!isLoading && !isSubmittingRef.current && isFormValid) {
+      handleSubmit(e);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || isLoading) return;
+
     if (!activeShift) {
       setError('No hay un turno de caja activo para procesar la venta');
       return;
@@ -319,26 +333,38 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       return;
     }
 
-    if (paymentMethod === 'CASH' && cashNum < totalAmount) {
-      setError(`Efectivo insuficiente. Faltan ${formatCurrency(totalAmount - cashNum)}`);
+    const totalCents = Math.round(totalAmount * 100);
+    const cashCents = Math.round(cashNum * 100);
+    const digitalCents = Math.round(digitalNum * 100);
+    const requiredCashCents = Math.max(0, totalCents - digitalCents);
+
+    if (paymentMethod === 'CASH' && cashCents + 10 < totalCents) {
+      setError(`Efectivo insuficiente. Faltan ${formatCurrency((totalCents - cashCents) / 100)}`);
       return;
     }
 
     if (paymentMethod === 'MIXED') {
-      if (cashNum + digitalNum < totalAmount) {
+      if (digitalCents <= 0 || digitalCents > totalCents) {
         setError(
-          `Monto total insuficiente. Pagado: ${formatCurrency(cashNum + digitalNum)}, Total: ${formatCurrency(totalAmount)}`,
+          'En Pago Mixto, el monto digital debe ser mayor a S/ 0.00 y no superar el total de la venta',
         );
         return;
       }
-      if (cashNum < requiredCash) {
+      if (cashCents + digitalCents + 10 < totalCents) {
         setError(
-          `Efectivo recibido en gaveta insuficiente. Se requiere al menos ${formatCurrency(requiredCash)} en efectivo para completar la venta (Faltan ${formatCurrency(requiredCash - cashNum)})`,
+          `Monto total insuficiente. Pagado: ${formatCurrency((cashCents + digitalCents) / 100)}, Total: ${formatCurrency(totalAmount)}`,
+        );
+        return;
+      }
+      if (cashCents + 10 < requiredCashCents) {
+        setError(
+          `Efectivo recibido en gaveta insuficiente. Se requiere al menos ${formatCurrency(requiredCashCents / 100)} en efectivo para completar la venta (Faltan ${formatCurrency((requiredCashCents - cashCents) / 100)})`,
         );
         return;
       }
     }
 
+    isSubmittingRef.current = true;
     setIsLoading(true);
     setError(null);
 
@@ -459,6 +485,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       setCustomer(custName, custDoc);
       clearCart();
+      isSubmittingRef.current = false;
       setIsLoading(false);
       onSaleSuccess(syntheticSale);
       onClose();
@@ -466,7 +493,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
     // Si el navegador ya detectó que no hay internet, guardar directamente offline
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      await processOfflineSale();
+      try {
+        await processOfflineSale();
+      } catch (offErr: any) {
+        isSubmittingRef.current = false;
+        setIsLoading(false);
+        setError(offErr?.message || 'Error al registrar la venta offline');
+      }
       return;
     }
 
@@ -504,6 +537,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       setCustomer(custName, custDoc);
       clearCart();
+      isSubmittingRef.current = false;
       setIsLoading(false);
       onSaleSuccess(res.sale);
       onClose();
@@ -520,8 +554,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         (typeof navigator !== 'undefined' && !navigator.onLine);
 
       if (isConnectionIssue) {
-        await processOfflineSale();
+        try {
+          await processOfflineSale();
+        } catch (offErr: any) {
+          isSubmittingRef.current = false;
+          setIsLoading(false);
+          setError(offErr?.message || 'Error al registrar la venta offline');
+        }
       } else {
+        isSubmittingRef.current = false;
         setIsLoading(false);
         setError(errMsg || 'Error al procesar la venta');
       }
@@ -717,7 +758,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   Datos Fiscales de Factura (Empresas)
                 </strong>
                 <span>
-                  Ingrese el RUC de 11 dígitos (iniciado en 10, 20, 15 o 17), Razón Social y Dirección Fiscal para habilitar la emisión.
+                  Ingrese el RUC de 11 dígitos (iniciado en 10, 20, 15, 16 o 17), Razón Social y Dirección Fiscal para habilitar la emisión.
                 </span>
               </div>
             </div>
@@ -746,6 +787,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <div className="relative flex items-center">
                   <input
                     type="text"
+                    data-doc-input="true"
                     maxLength={receiptType === 'FACTURA' ? 11 : 12}
                     value={custDoc}
                     onChange={(e) => {
@@ -799,7 +841,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 )}
                 {receiptType === 'FACTURA' && custDoc && !isRucValidForFactura && (
                   <span className="text-[10px] text-rose-400 mt-1 block">
-                    Debe iniciar con 10, 20, 15 o 17 (11 dígitos)
+                    Debe iniciar con 10, 20, 15, 16 o 17 (11 dígitos válidos)
                   </span>
                 )}
                 {receiptType === 'BOLETA' && isBoletaOver700 && !isDocValidForBoleta && (

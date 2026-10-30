@@ -18,7 +18,6 @@ export class SalesSequenceService {
     if (match) {
       boxNum = match[0].padStart(2, '0');
     } else {
-      // Determinista por hash de identificador si no incluye números
       const sum = (identifier || name || 'POS-01')
         .split('')
         .reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -42,10 +41,7 @@ export class SalesSequenceService {
 
   /**
    * 🛡️ ASIGNACIÓN SEGURA DE SERIES POR CAJA FÍSICA (PREVENCIÓN TOTAL DE COLISIONES)
-   * Garantiza que cada caja física posea una serie única e inmutable para cada tipo de comprobante.
-   * 1. Si la caja ya tiene una serie registrada en ReceiptSequence, la reutiliza.
-   * 2. Si es una serie nueva, verifica contra la base de datos que ninguna otra caja la tenga asignada.
-   *    Si otra caja ya la tiene, busca el siguiente número disponible (B001 -> B002 -> B003...).
+   * Importante: No suprime errores SQL dentro de transacciones PostgreSQL (evita estado 25P02).
    */
   async getOrAllocateSeries(
     tx: any,
@@ -54,58 +50,46 @@ export class SalesSequenceService {
     name: string,
     receiptType: ReceiptType,
   ): Promise<string> {
-    // 1. Si la caja ya tiene serie asignada para este tipo de comprobante en ReceiptSequence, respetarla
-    if (tx.receiptSequence?.findUnique) {
-      try {
-        const existingForRegister = await tx.receiptSequence.findUnique({
-          where: {
-            cashRegisterId_receiptType: {
-              cashRegisterId,
-              receiptType,
-            },
+    if (typeof tx?.receiptSequence?.findUnique === 'function') {
+      const existingForRegister = await tx.receiptSequence.findUnique({
+        where: {
+          cashRegisterId_receiptType: {
+            cashRegisterId,
+            receiptType,
           },
-        });
-        if (existingForRegister?.series) {
-          return existingForRegister.series;
-        }
-      } catch (err) {
-        // En tests unitarios con mocks parciales
+        },
+      });
+      if (existingForRegister?.series) {
+        return existingForRegister.series;
       }
     }
 
-    // 2. Determinar la serie candidata preferida
     let candidate = this.getSeriesForRegister(identifier, name, receiptType);
 
-    // 3. Si tx soporta findUnique, verificar que la serie no pertenezca a OTRA caja física
-    if (tx.receiptSequence?.findUnique) {
-      try {
-        let isTaken = true;
-        let counter = 1;
-        const match = (identifier || '').match(/\d+/) || (name || '').match(/\d+/);
-        if (match) {
-          counter = parseInt(match[0], 10) || 1;
-        }
+    if (typeof tx?.receiptSequence?.findUnique === 'function') {
+      let isTaken = true;
+      let counter = 1;
+      const match = (identifier || '').match(/\d+/) || (name || '').match(/\d+/);
+      if (match) {
+        counter = parseInt(match[0], 10) || 1;
+      }
 
-        while (isTaken && counter <= 99) {
-          const takenSeq = await tx.receiptSequence.findUnique({
-            where: { series: candidate },
-          });
+      while (isTaken && counter <= 99) {
+        const takenSeq = await tx.receiptSequence.findUnique({
+          where: { series: candidate },
+        });
 
-          if (!takenSeq || takenSeq.cashRegisterId === cashRegisterId) {
-            isTaken = false;
-          } else {
-            // Colisión detectada: esta serie ya pertenece a otra caja. Avanzar al siguiente número.
-            counter++;
-            const boxPad = String(counter).padStart(2, '0');
-            if (receiptType === ReceiptType.NOTA_VENTA) candidate = `NV${boxPad}`;
-            else if (receiptType === ReceiptType.BOLETA) candidate = `B${boxPad.padStart(3, '0')}`;
-            else if (receiptType === ReceiptType.FACTURA) candidate = `F${boxPad.padStart(3, '0')}`;
-            else if (receiptType === ReceiptType.NOTA_CREDITO_BOLETA) candidate = `BC${boxPad}`;
-            else if (receiptType === ReceiptType.NOTA_CREDITO_FACTURA) candidate = `FC${boxPad}`;
-          }
+        if (!takenSeq || takenSeq.cashRegisterId === cashRegisterId) {
+          isTaken = false;
+        } else {
+          counter++;
+          const boxPad = String(counter).padStart(2, '0');
+          if (receiptType === ReceiptType.NOTA_VENTA) candidate = `NV${boxPad}`;
+          else if (receiptType === ReceiptType.BOLETA) candidate = `B${boxPad.padStart(3, '0')}`;
+          else if (receiptType === ReceiptType.FACTURA) candidate = `F${boxPad.padStart(3, '0')}`;
+          else if (receiptType === ReceiptType.NOTA_CREDITO_BOLETA) candidate = `BC${boxPad}`;
+          else if (receiptType === ReceiptType.NOTA_CREDITO_FACTURA) candidate = `FC${boxPad}`;
         }
-      } catch (err) {
-        // Fallback seguro a la serie candidata
       }
     }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { formatCurrency, formatPeruDate, formatPeruTime, formatPeruDateTime } from '../../lib/utils.js';
+import { escapeHtml, formatCurrency, formatPeruDate, formatPeruTime, formatPeruDateTime } from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { Printer, X } from 'lucide-react';
 
@@ -65,13 +65,17 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
 
   if (!isOpen || !shiftData) return null;
 
-  const isBlind = shiftData.isBlindAudit !== false && shiftData.expectedBalance === undefined;
+  const isBlind =
+    shiftData.isBlindAudit !== false &&
+    (shiftData.expectedBalance === undefined || shiftData.expectedBalance === null);
   const diff = shiftData.difference !== null && shiftData.difference !== undefined ? shiftData.difference : null;
   const isExact = diff !== null && Math.abs(diff) < 0.05;
 
   const soldProducts = shiftData.soldProducts || [];
   const salesList = shiftData.salesList || [];
-  const totalUnitsSold = soldProducts.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0);
+  const totalUnitsSold = Number(
+    soldProducts.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0).toFixed(3),
+  );
 
   const generatePrintHtml = () => {
     const is58 = paperWidth === '58mm';
@@ -82,13 +86,13 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
     const soldRowsHtml = soldProducts.length > 0
       ? soldProducts.map((p) => `
         <tr style="page-break-inside: avoid;">
-          <td style="padding: 2px 0; vertical-align: top; font-weight: bold; width: 15%;">${p.quantity}</td>
+          <td style="padding: 2px 0; vertical-align: top; font-weight: bold; width: 15%;">${Number(p.quantity)}</td>
           <td style="padding: 2px 4px 2px 0; vertical-align: top; width: 55%; word-break: break-word;">
-            <div style="font-weight: 600;">${p.productName}</div>
-            ${p.barcode ? `<div style="font-size: 8px; color: #444;">[${p.barcode}]</div>` : ''}
+            <div style="font-weight: 600;">${escapeHtml(p.productName)}</div>
+            ${p.barcode ? `<div style="font-size: 8px; color: #444;">[${escapeHtml(p.barcode)}]</div>` : ''}
           </td>
           <td style="padding: 2px 0; vertical-align: top; text-align: right; font-weight: bold; width: 30%; white-space: nowrap;">
-            ${formatCurrency(p.totalRevenue)}
+            ${escapeHtml(formatCurrency(p.totalRevenue))}
           </td>
         </tr>
       `).join('')
@@ -103,8 +107,8 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
         <div style="font-size: ${is58 ? '8.5px' : '9.5px'}; line-height: 1.3;">
           ${salesList.slice(0, 15).map((s) => `
             <div style="display: flex; justify-content: space-between;">
-              <span>${s.fullReceiptNumber || `#${String(s.saleNumber).padStart(6, '0')}`} (${formatPeruTime(s.createdAt)})</span>
-              <span style="font-weight: bold;">${formatCurrency(s.totalAmount)}</span>
+              <span>${escapeHtml(s.fullReceiptNumber || `#${String(s.saleNumber).padStart(6, '0')}`)} (${escapeHtml(formatPeruTime(s.createdAt))})</span>
+              <span style="font-weight: bold;">${escapeHtml(formatCurrency(s.totalAmount))}</span>
             </div>
           `).join('')}
           ${salesList.length > 15 ? `<div style="text-align: center; color: #555; font-size: 8.5px; margin-top: 1px;">...y ${salesList.length - 15} ventas más</div>` : ''}
@@ -117,7 +121,7 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
       <html>
         <head>
           <meta charset="utf-8">
-          <title>Corte_Z_${shiftData.cajaIdentifier || 'Caja'}_${formatPeruDate(shiftData.closedAt || new Date()).replace(/\//g, '-')}</title>
+          <title>Corte_Z_${escapeHtml(shiftData.cajaIdentifier || 'Caja')}_${escapeHtml(formatPeruDate(shiftData.closedAt || new Date()).replace(/\//g, '-'))}</title>
           <style>
             @page {
               margin: 0mm;
@@ -174,10 +178,10 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
           <div class="ticket-container">
             <!-- MEMBRETE EMPRESA -->
           <div class="text-center">
-            <div class="font-bold uppercase" style="font-size: ${titleFontSize}; letter-spacing: 1px;">${config.name}</div>
-            ${config.subtitle ? `<div style="font-size: 9px; margin-top: 1px;">${config.subtitle}</div>` : ''}
-            <div style="font-size: 9px; margin-top: 1px;">RUC: ${config.ruc} ${config.phone ? `• TEL: ${config.phone}` : ''}</div>
-            <div style="font-size: 8.5px;">${config.address}</div>
+            <div class="font-bold uppercase" style="font-size: ${titleFontSize}; letter-spacing: 1px;">${escapeHtml(config.name)}</div>
+            ${config.subtitle ? `<div style="font-size: 9px; margin-top: 1px;">${escapeHtml(config.subtitle)}</div>` : ''}
+            <div style="font-size: 9px; margin-top: 1px;">RUC: ${escapeHtml(config.ruc)} ${config.phone ? `• TEL: ${escapeHtml(config.phone)}` : ''}</div>
+            <div style="font-size: 8.5px;">${escapeHtml(config.address)}</div>
 
             <div class="divider"></div>
             <div class="font-bold uppercase" style="font-size: ${is58 ? '10px' : '11px'};">
@@ -191,11 +195,11 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
 
           <!-- DATOS DE TURNO -->
           <div style="margin-bottom: 3px;">
-            <div class="row"><span>CAJA:</span><span class="font-bold">${shiftData.cajaName} ${shiftData.cajaIdentifier ? `(${shiftData.cajaIdentifier})` : ''}</span></div>
-            <div class="row"><span>CAJERO(A):</span><span class="font-bold">${shiftData.cashierName}</span></div>
-            <div class="row"><span>APERTURA:</span><span>${formatPeruTime(shiftData.openedAt)} (${formatPeruDate(shiftData.openedAt)})</span></div>
-            <div class="row"><span>CIERRE:</span><span>${shiftData.closedAt ? `${formatPeruTime(shiftData.closedAt)} (${formatPeruDate(shiftData.closedAt)})` : 'EN CURSO'}</span></div>
-            ${shiftData.salesCount !== undefined ? `<div class="row"><span>TICKETS EMITIDOS:</span><span class="font-bold">${shiftData.salesCount} ventas</span></div>` : ''}
+            <div class="row"><span>CAJA:</span><span class="font-bold">${escapeHtml(shiftData.cajaName)} ${shiftData.cajaIdentifier ? `(${escapeHtml(shiftData.cajaIdentifier)})` : ''}</span></div>
+            <div class="row"><span>CAJERO(A):</span><span class="font-bold">${escapeHtml(shiftData.cashierName)}</span></div>
+            <div class="row"><span>APERTURA:</span><span>${escapeHtml(formatPeruTime(shiftData.openedAt))} (${escapeHtml(formatPeruDate(shiftData.openedAt))})</span></div>
+            <div class="row"><span>CIERRE:</span><span>${shiftData.closedAt ? `${escapeHtml(formatPeruTime(shiftData.closedAt))} (${escapeHtml(formatPeruDate(shiftData.closedAt))})` : 'EN CURSO'}</span></div>
+            ${shiftData.salesCount !== undefined ? `<div class="row"><span>TICKETS EMITIDOS:</span><span class="font-bold">${Number(shiftData.salesCount)} ventas</span></div>` : ''}
           </div>
 
           <!-- RESUMEN DE ARTÍCULOS VENDIDOS (SOLICITADO POR EL USUARIO) -->
@@ -268,7 +272,7 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
             <div class="divider"></div>
             <div class="row font-bold">
               <span>(=) ESPERADO EN GAVETA:</span>
-              <span>${formatCurrency(shiftData.expectedBalance || 0)}</span>
+              <span>${formatCurrency(shiftData.expectedBalance ?? 0)}</span>
             </div>
             <div class="row font-bold">
               <span>(=) CONTADO POR CAJERO:</span>
@@ -290,14 +294,14 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
             <div class="divider"></div>
             <div style="font-size: 9px;">
               <span class="font-bold">OBSERVACIONES:</span>
-              <div style="font-style: italic; margin-top: 1px;">${shiftData.notes}</div>
+              <div style="font-style: italic; margin-top: 1px;">${escapeHtml(shiftData.notes)}</div>
             </div>
           ` : ''}
 
           <!-- FIRMAS -->
           <div class="sign-box">
             <div class="sign-line"></div>
-            <div class="font-bold uppercase" style="font-size: 9px;">${shiftData.cashierName}</div>
+            <div class="font-bold uppercase" style="font-size: 9px;">${escapeHtml(shiftData.cashierName)}</div>
             <div style="font-size: 8.5px; color: #444;">Firma Cajero(a) • Entregué Conforme</div>
 
             <div class="sign-line" style="margin-top: 18px;"></div>
@@ -590,7 +594,7 @@ export const ShiftReceiptTicketModal: React.FC<ShiftReceiptTicketModalProps> = (
 
               <div className="border-t border-dashed border-slate-400 pt-1 mt-1 flex justify-between font-bold">
                 <span>(=) ESPERADO EN GAVETA:</span>
-                <span>{formatCurrency(shiftData.expectedBalance || 0)}</span>
+                <span>{formatCurrency(shiftData.expectedBalance ?? 0)}</span>
               </div>
 
               <div className="flex justify-between font-bold text-slate-900">

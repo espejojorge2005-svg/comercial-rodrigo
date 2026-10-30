@@ -5,6 +5,7 @@ import { CreateProductDto } from './dto/create-product.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
 import { BulkImportProductsDto } from './dto/bulk-import-product.dto.js';
 import { buildPeruDateTimeFilter } from '../reports/reports.service.js';
+import { formatPeruYMD, isDiscreteUnit } from '../sales/utils/sales-fiscal.util.js';
 
 @Injectable()
 export class ProductsService {
@@ -69,9 +70,10 @@ export class ProductsService {
       ];
     }
 
-    const now = new Date();
-    // Inicio del día UTC para comparación estricta de fechas de vencimiento
-    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    // Inicio del día calendario en Perú (America/Lima) expresado en medianoche UTC (YYYY-MM-DDT00:00:00Z)
+    // para evitar adelantar el vencimiento a las 7:00 PM hora peruana.
+    const peruTodayYmd = formatPeruYMD(new Date());
+    const todayStart = new Date(`${peruTodayYmd}T00:00:00.000Z`);
     const in15Days = new Date(todayStart.getTime() + 15 * 24 * 60 * 60 * 1000);
     const in30Days = new Date(todayStart.getTime() + 30 * 24 * 60 * 60 * 1000);
 
@@ -108,7 +110,7 @@ export class ProductsService {
 
     const isPaginated = pageNum !== undefined && pageNum !== null;
     const pageNumber = Math.max(1, Number(pageNum) || 1);
-    const pageSize = Math.min(200, Math.max(1, Number(limitNum) || 25));
+    const pageSize = Math.min(5000, Math.max(1, Number(limitNum) || 25));
     const skip = isPaginated ? (pageNumber - 1) * pageSize : undefined;
     const take = isPaginated ? pageSize : undefined;
 
@@ -234,56 +236,72 @@ export class ProductsService {
    * Creación de nuevo producto (Solo ADMIN)
    */
   async createProduct(dto: CreateProductDto, userId: string) {
-    if (dto.barcode) {
+    const cleanBarcode = dto.barcode ? dto.barcode.trim() : null;
+    if (cleanBarcode) {
       const existing = await this.prisma.product.findUnique({
-        where: { barcode: dto.barcode },
+        where: { barcode: cleanBarcode },
       });
       if (existing) {
         throw new BadRequestException('Ya existe un producto registrado con este código de barras');
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const product = await tx.product.create({
-        data: {
-          barcode: dto.barcode || null,
-          name: dto.name,
-          categoryId: dto.categoryId,
-          unitType: dto.unitType,
-          costPrice: new Prisma.Decimal(dto.costPrice),
-          retailPrice: new Prisma.Decimal(dto.retailPrice),
-          wholesalePrice:
-            dto.wholesalePrice !== undefined && dto.wholesalePrice !== null
-              ? new Prisma.Decimal(dto.wholesalePrice)
-              : (null as any),
-          wholesaleMinQty:
-            dto.wholesaleMinQty !== undefined && dto.wholesaleMinQty !== null
-              ? new Prisma.Decimal(dto.wholesaleMinQty)
-              : (null as any),
-          currentStock: new Prisma.Decimal(dto.currentStock),
-          minStock: new Prisma.Decimal(dto.minStock),
-          expirationDate: dto.expirationDate ? new Date(dto.expirationDate) : null,
-        },
-      });
+    if (isDiscreteUnit(dto.unitType) && !Number.isInteger(dto.currentStock)) {
+      throw new BadRequestException(
+        `El stock inicial debe ser un número entero para unidades discretas (${dto.unitType}).`,
+      );
+    }
 
-      // Si se crea con stock inicial, registrar en Kardex como inventario inicial / compra
-      if (dto.currentStock > 0) {
-        await tx.kardexMovement.create({
+    const roundedStock = Number(dto.currentStock.toFixed(3));
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.create({
           data: {
-            productId: product.id,
-            movementType: MovementType.PURCHASE,
-            quantity: new Prisma.Decimal(dto.currentStock),
-            previousStock: new Prisma.Decimal(0),
-            newStock: new Prisma.Decimal(dto.currentStock),
-            unitCost: new Prisma.Decimal(dto.costPrice),
-            reason: 'Inventario inicial / Compra registrada',
-            userId,
+            barcode: cleanBarcode,
+            name: dto.name.trim(),
+            categoryId: dto.categoryId,
+            unitType: dto.unitType,
+            costPrice: new Prisma.Decimal(dto.costPrice),
+            retailPrice: new Prisma.Decimal(dto.retailPrice),
+            wholesalePrice:
+              dto.wholesalePrice !== undefined && dto.wholesalePrice !== null
+                ? new Prisma.Decimal(dto.wholesalePrice)
+                : (null as any),
+            wholesaleMinQty:
+              dto.wholesaleMinQty !== undefined && dto.wholesaleMinQty !== null
+                ? new Prisma.Decimal(dto.wholesaleMinQty)
+                : (null as any),
+            currentStock: new Prisma.Decimal(roundedStock),
+            minStock: new Prisma.Decimal(dto.minStock),
+            expirationDate: dto.expirationDate ? new Date(dto.expirationDate) : null,
           },
         });
-      }
 
-      return product;
-    });
+        // Si se crea con stock inicial, registrar en Kardex como inventario inicial / compra
+        if (roundedStock > 0) {
+          await tx.kardexMovement.create({
+            data: {
+              productId: product.id,
+              movementType: MovementType.PURCHASE,
+              quantity: new Prisma.Decimal(roundedStock),
+              previousStock: new Prisma.Decimal(0),
+              newStock: new Prisma.Decimal(roundedStock),
+              unitCost: new Prisma.Decimal(dto.costPrice),
+              reason: 'Inventario inicial / Compra registrada',
+              userId,
+            },
+          });
+        }
+
+        return product;
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new BadRequestException('Ya existe un producto registrado con este código de barras');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -394,10 +412,21 @@ export class ProductsService {
             ? new Prisma.Decimal(item.wholesalePrice)
             : null;
         const wholesaleMinQty =
-          item.wholesaleMinQty !== undefined && item.wholesaleMinQty !== null && item.wholesaleMinQty >= 1
-            ? new Prisma.Decimal(item.wholesaleMinQty)
-            : new Prisma.Decimal(3);
-        const initialStock = new Prisma.Decimal(item.currentStock >= 0 ? item.currentStock : 0);
+          wholesalePrice !== null
+            ? item.wholesaleMinQty !== undefined &&
+              item.wholesaleMinQty !== null &&
+              item.wholesaleMinQty >= 0.001
+              ? new Prisma.Decimal(item.wholesaleMinQty)
+              : new Prisma.Decimal(3)
+            : null;
+        const normalizedStock =
+          item.currentStock >= 0 ? Number(Number(item.currentStock).toFixed(3)) : 0;
+        if (isDiscreteUnit(unitType) && !Number.isInteger(normalizedStock)) {
+          throw new BadRequestException(
+            `El producto "${trimmedName}" se vende por unidad entera (${unitType}) y no admite stock decimal (${normalizedStock}).`,
+          );
+        }
+        const initialStock = new Prisma.Decimal(normalizedStock);
         const minStock = new Prisma.Decimal(item.minStock >= 0 ? item.minStock : 5);
         const expirationDate = item.expirationDate ? new Date(item.expirationDate) : null;
 
@@ -427,13 +456,13 @@ export class ProductsService {
           // Si el Excel define stock y difiere del actual, generar ajuste en Kardex
           const currentStockNum = Number(existingTarget.currentStock);
           const newStockNum = Number(initialStock);
-          if (newStockNum !== currentStockNum) {
+          const diff = Number((newStockNum - currentStockNum).toFixed(3));
+          if (Math.abs(diff) > 0) {
             await tx.product.update({
               where: { id: existingTarget.id },
               data: { currentStock: initialStock },
             });
 
-            const diff = newStockNum - currentStockNum;
             await tx.kardexMovement.create({
               data: {
                 productId: updated.id,
@@ -446,6 +475,7 @@ export class ProductsService {
                 userId,
               },
             });
+            existingTarget.currentStock = initialStock;
           }
 
           updatedCount++;
@@ -502,62 +532,95 @@ export class ProductsService {
         updatedCount,
         totalProcessed: createdCount + updatedCount,
       };
-    });
+    }, { maxWait: 10000, timeout: 60000 });
   }
 
   /**
    * Actualización de producto (Solo ADMIN)
    */
   async updateProduct(id: string, dto: UpdateProductDto, userId: string) {
-    const product = await this.prisma.product.findUnique({ where: { id } });
-    if (!product) throw new NotFoundException('Producto no encontrado');
+    try {
+      // Lectura y escritura atómica dentro de la transacción para evitar pérdidas de stock concurrentes
+      return await this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.findUnique({ where: { id } });
+        if (!product) throw new NotFoundException('Producto no encontrado');
 
-    const data: Prisma.ProductUpdateInput = {};
+        const data: Prisma.ProductUpdateInput = {};
 
-    if (dto.barcode !== undefined) data.barcode = dto.barcode || null;
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.categoryId !== undefined) data.category = { connect: { id: dto.categoryId } };
-    if (dto.unitType !== undefined) data.unitType = dto.unitType;
-    if (dto.costPrice !== undefined) data.costPrice = new Prisma.Decimal(dto.costPrice);
-    if (dto.retailPrice !== undefined) data.retailPrice = new Prisma.Decimal(dto.retailPrice);
-    if (dto.wholesalePrice !== undefined)
-      data.wholesalePrice =
-        dto.wholesalePrice !== null ? new Prisma.Decimal(dto.wholesalePrice) : (null as any);
-    if (dto.wholesaleMinQty !== undefined)
-      data.wholesaleMinQty =
-        dto.wholesaleMinQty !== null ? new Prisma.Decimal(dto.wholesaleMinQty) : (null as any);
-    if (dto.minStock !== undefined) data.minStock = new Prisma.Decimal(dto.minStock);
-    if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    if (dto.expirationDate !== undefined) {
-      data.expirationDate = dto.expirationDate ? new Date(dto.expirationDate) : null;
-    }
+        if (dto.barcode !== undefined) {
+          const cleanBarcode = dto.barcode ? dto.barcode.trim() : null;
+          if (cleanBarcode && cleanBarcode !== product.barcode) {
+            const duplicate = await tx.product.findFirst({
+              where: { barcode: cleanBarcode, id: { not: id } },
+            });
+            if (duplicate) {
+              throw new BadRequestException(
+                'Ya existe otro producto registrado con este código de barras',
+              );
+            }
+          }
+          data.barcode = cleanBarcode;
+        }
+        if (dto.name !== undefined) data.name = dto.name.trim();
+        if (dto.categoryId !== undefined) data.category = { connect: { id: dto.categoryId } };
+        if (dto.unitType !== undefined) data.unitType = dto.unitType;
+        if (dto.costPrice !== undefined) data.costPrice = new Prisma.Decimal(dto.costPrice);
+        if (dto.retailPrice !== undefined) data.retailPrice = new Prisma.Decimal(dto.retailPrice);
+        if (dto.wholesalePrice !== undefined)
+          data.wholesalePrice =
+            dto.wholesalePrice !== null ? new Prisma.Decimal(dto.wholesalePrice) : (null as any);
+        if (dto.wholesaleMinQty !== undefined)
+          data.wholesaleMinQty =
+            dto.wholesaleMinQty !== null ? new Prisma.Decimal(dto.wholesaleMinQty) : (null as any);
+        if (dto.minStock !== undefined) data.minStock = new Prisma.Decimal(dto.minStock);
+        if (dto.isActive !== undefined) data.isActive = dto.isActive;
+        if (dto.expirationDate !== undefined) {
+          data.expirationDate = dto.expirationDate ? new Date(dto.expirationDate) : null;
+        }
 
-    // Actualización atómica con Kardex dentro de una transacción Prisma
-    return this.prisma.$transaction(async (tx) => {
-      // Si hay ajuste manual de stock, registrarlo en Kardex
-      if (dto.currentStock !== undefined && dto.currentStock !== Number(product.currentStock)) {
-        data.currentStock = new Prisma.Decimal(dto.currentStock);
-        const diff = dto.currentStock - Number(product.currentStock);
+        const effectiveUnitType = dto.unitType ?? product.unitType;
 
-        await tx.kardexMovement.create({
-          data: {
-            productId: product.id,
-            movementType: diff > 0 ? MovementType.ADJUSTMENT_IN : MovementType.ADJUSTMENT_OUT,
-            quantity: new Prisma.Decimal(Math.abs(diff)),
-            previousStock: product.currentStock,
-            newStock: new Prisma.Decimal(dto.currentStock),
-            unitCost: product.costPrice,
-            reason: `Ajuste manual de inventario (${diff > 0 ? '+' : ''}${diff})`,
-            userId,
-          },
+        // Si hay ajuste manual de stock, validar unidad y registrarlo en Kardex
+        if (dto.currentStock !== undefined) {
+          if (effectiveUnitType && isDiscreteUnit(effectiveUnitType) && !Number.isInteger(dto.currentStock)) {
+            throw new BadRequestException(
+              `El stock debe ser un número entero para unidades discretas (${effectiveUnitType}).`,
+            );
+          }
+
+          const newStockRounded = Number(dto.currentStock.toFixed(3));
+          const prevStockNum = Number(product.currentStock);
+          const diff = Number((newStockRounded - prevStockNum).toFixed(3));
+
+          if (Math.abs(diff) > 0) {
+            data.currentStock = new Prisma.Decimal(newStockRounded);
+
+            await tx.kardexMovement.create({
+              data: {
+                productId: product.id,
+                movementType: diff > 0 ? MovementType.ADJUSTMENT_IN : MovementType.ADJUSTMENT_OUT,
+                quantity: new Prisma.Decimal(Math.abs(diff)),
+                previousStock: product.currentStock,
+                newStock: new Prisma.Decimal(newStockRounded),
+                unitCost: dto.costPrice !== undefined ? new Prisma.Decimal(dto.costPrice) : product.costPrice,
+                reason: `Ajuste manual de inventario (${diff > 0 ? '+' : ''}${diff})`,
+                userId,
+              },
+            });
+          }
+        }
+
+        return tx.product.update({
+          where: { id },
+          data,
         });
-      }
-
-      return tx.product.update({
-        where: { id },
-        data,
       });
-    });
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new BadRequestException('Ya existe un producto registrado con este código de barras');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -643,8 +706,8 @@ export class ProductsService {
       },
     });
 
-    const now = new Date();
-    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    const peruTodayYmd = formatPeruYMD(new Date());
+    const todayStart = new Date(`${peruTodayYmd}T00:00:00.000Z`);
     const in30Days = new Date(todayStart.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     let totalStockUnits = 0;
@@ -684,7 +747,7 @@ export class ProductsService {
 
     return {
       totalProducts: products.length,
-      totalStockUnits: Number(totalStockUnits.toFixed(2)),
+      totalStockUnits: Number(totalStockUnits.toFixed(3)),
       totalValuedCost: Number(totalValuedCost.toFixed(2)),
       totalValuedRetail: Number(totalValuedRetail.toFixed(2)),
       lowStockCount,

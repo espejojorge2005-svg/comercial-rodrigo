@@ -48,8 +48,16 @@ export const InventoryView: React.FC = () => {
   const [expirationFilter, setExpirationFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('name_asc');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   // Estados de Paginación de Inventario
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -81,8 +89,32 @@ export const InventoryView: React.FC = () => {
     }
   }, []);
 
-  // Exportar a Excel en vivo (Stock Valorizado + Kardex + Alertas)
+  const buildProductsQueryUrl = useCallback(
+    (page?: number, limit?: number) => {
+      let url = '/products?';
+      if (page !== undefined && limit !== undefined) {
+        url += `page=${page}&limit=${limit}&`;
+      }
+      if (selectedCategory !== 'all') url += `category=${encodeURIComponent(selectedCategory)}&`;
+      if (debouncedSearch.trim()) url += `search=${encodeURIComponent(debouncedSearch.trim())}&`;
+      if (expirationFilter !== 'all') {
+        url += `expirationStatus=${encodeURIComponent(expirationFilter)}&`;
+      }
+      if (sortBy !== 'name_asc') {
+        if (sortBy === 'only_expired' || sortBy === 'only_expiring_soon') {
+          url += `sortBy=expiration_asc&`;
+        } else {
+          url += `sortBy=${encodeURIComponent(sortBy)}&`;
+        }
+      }
+      return url;
+    },
+    [selectedCategory, debouncedSearch, expirationFilter, sortBy],
+  );
+
+  // Exportar a Excel en vivo (Stock Valorizado + Kardex + Alertas respetando filtros activos)
   const handleExportExcel = async () => {
+    if (isExportingExcel) return;
     setIsExportingExcel(true);
     try {
       let currentKardex = kardexList;
@@ -92,7 +124,7 @@ export const InventoryView: React.FC = () => {
       }
       let allProducts = products;
       if (paginationMeta && paginationMeta.total > products.length) {
-        const full = await apiRequest<any>('/products');
+        const full = await apiRequest<any>(buildProductsQueryUrl());
         allProducts = Array.isArray(full) ? full : (full?.data || products);
       }
       exportKardexAndInventoryExcel(allProducts, currentKardex, config.name);
@@ -125,17 +157,7 @@ export const InventoryView: React.FC = () => {
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      let url = `/products?page=${currentPage}&limit=${itemsPerPage}&`;
-      if (selectedCategory !== 'all') url += `category=${encodeURIComponent(selectedCategory)}&`;
-      if (searchTerm.trim()) url += `search=${encodeURIComponent(searchTerm.trim())}&`;
-      if (expirationFilter !== 'all') url += `expirationStatus=${encodeURIComponent(expirationFilter)}&`;
-      if (sortBy !== 'name_asc') {
-        if (sortBy === 'only_expired' || sortBy === 'only_expiring_soon') {
-          url += `sortBy=expiration_asc&`;
-        } else {
-          url += `sortBy=${encodeURIComponent(sortBy)}&`;
-        }
-      }
+      const url = buildProductsQueryUrl(currentPage, itemsPerPage);
       const res = await apiRequest<any>(url);
       if (res && res.data && res.meta) {
         setProducts(res.data);
@@ -152,12 +174,12 @@ export const InventoryView: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCategory, searchTerm, expirationFilter, sortBy, currentPage, itemsPerPage]);
+  }, [buildProductsQueryUrl, currentPage, itemsPerPage]);
 
   // Resetear a página 1 cuando cambian los filtros principales
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedCategory, searchTerm, expirationFilter, sortBy]);
+  }, [selectedCategory, debouncedSearch, expirationFilter, sortBy]);
 
   // Cargar Kardex con soporte de filtrado por producto y recarga en tiempo real
   const fetchKardex = useCallback(async (prodId?: string) => {
@@ -201,8 +223,12 @@ export const InventoryView: React.FC = () => {
     const info = getProductExpirationInfo(p.expirationDate);
     return info.state === 'CRITICAL' || info.state === 'WARNING';
   }).length;
-  const totalUnitsStock = products.reduce((acc, p) => acc + (p.currentStock || 0), 0);
-  const globalTotalStockUnits = summary?.totalStockUnits ?? totalUnitsStock;
+  const totalUnitsStock = Number(
+    products.reduce((acc, p) => acc + (p.currentStock || 0), 0).toFixed(3),
+  );
+  const globalTotalStockUnits = Number(
+    (summary?.totalStockUnits ?? totalUnitsStock).toFixed(3),
+  );
   const totalStockValue = products.reduce(
     (acc, p) => acc + p.currentStock * (p.costPrice || 0),
     0,
@@ -219,21 +245,29 @@ export const InventoryView: React.FC = () => {
           ).toFixed(1)
         : '0');
 
-  const kardexIncomeTotal = kardexList.reduce((acc, m) => {
-    const isIncome =
-      m.movementType === 'PURCHASE' ||
-      m.movementType === 'RETURN_SALE' ||
-      m.movementType === 'ADJUSTMENT_IN';
-    return isIncome ? acc + (m.quantity || 0) : acc;
-  }, 0);
+  const kardexIncomeTotal = Number(
+    kardexList
+      .reduce((acc, m) => {
+        const isIncome =
+          m.movementType === 'PURCHASE' ||
+          m.movementType === 'RETURN_SALE' ||
+          m.movementType === 'ADJUSTMENT_IN';
+        return isIncome ? acc + (m.quantity || 0) : acc;
+      }, 0)
+      .toFixed(3),
+  );
 
-  const kardexOutTotal = kardexList.reduce((acc, m) => {
-    const isIncome =
-      m.movementType === 'PURCHASE' ||
-      m.movementType === 'RETURN_SALE' ||
-      m.movementType === 'ADJUSTMENT_IN';
-    return !isIncome ? acc + (m.quantity || 0) : acc;
-  }, 0);
+  const kardexOutTotal = Number(
+    kardexList
+      .reduce((acc, m) => {
+        const isIncome =
+          m.movementType === 'PURCHASE' ||
+          m.movementType === 'RETURN_SALE' ||
+          m.movementType === 'ADJUSTMENT_IN';
+        return !isIncome ? acc + (m.quantity || 0) : acc;
+      }, 0)
+      .toFixed(3),
+  );
 
   // Eliminar producto
   const handleDeleteProduct = async (id: string, name: string) => {

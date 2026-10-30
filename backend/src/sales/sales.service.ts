@@ -5,7 +5,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
-  UnauthorizedException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import {
@@ -33,6 +33,7 @@ import {
   isValidPeruvianRuc,
   getSunatCompliantEmissionDate,
   getSunatCreditNoteDeadline,
+  isDiscreteUnit,
 } from './utils/sales-fiscal.util.js';
 
 export {
@@ -93,12 +94,21 @@ export class SalesService {
    * Registro atómico de venta en POS con CONTROL DE CONCURRENCIA ACID, Kardex
    * y Arquitectura de Comprobantes de Triple Vía (Nota de Venta, Boleta y Factura)
    */
-  async createSale(userId: string, dto: CreateSaleDto) {
+  async createSale(userId: string, dto: CreateSaleDto, userRole?: Role) {
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('La venta debe incluir al menos un producto');
     }
 
     const receiptType = dto.receiptType || ReceiptType.NOTA_VENTA;
+    if (
+      receiptType !== ReceiptType.NOTA_VENTA &&
+      receiptType !== ReceiptType.BOLETA &&
+      receiptType !== ReceiptType.FACTURA
+    ) {
+      throw new BadRequestException(
+        'El tipo de comprobante de venta solo puede ser NOTA_VENTA, BOLETA o FACTURA.',
+      );
+    }
 
     // Validación preliminar estricta para Factura Electrónica (Algoritmo Módulo 11 de SUNAT)
     if (receiptType === ReceiptType.FACTURA) {
@@ -106,7 +116,7 @@ export class SalesService {
 
       if (!isValidPeruvianRuc(ruc)) {
         throw new BadRequestException(
-          'Para emitir Factura Electrónica se exige un RUC auténtico de 11 dígitos (que inicie con 10, 20, 15 o 17) con dígito verificador válido ante SUNAT.',
+          'Para emitir Factura Electrónica se exige un RUC auténtico de 11 dígitos (que inicie con 10, 20, 15, 16 o 17) con dígito verificador válido ante SUNAT.',
         );
       }
 
@@ -148,6 +158,17 @@ export class SalesService {
 
     if (!shift || shift.status !== ShiftStatus.OPEN) {
       throw new BadRequestException('El turno de caja especificado no está abierto');
+    }
+
+    if (
+      shift.userId &&
+      userRole &&
+      userRole !== Role.ADMIN &&
+      shift.userId !== userId
+    ) {
+      throw new ForbiddenException(
+        'No tienes autorización para registrar ventas en el turno abierto de otro cajero',
+      );
     }
 
     // 2. Ejecutar toda la venta en una transacción ACID atómica
@@ -232,6 +253,16 @@ export class SalesService {
             );
           }
 
+          if (
+            product.unitType &&
+            isDiscreteUnit(product.unitType) &&
+            !Number.isInteger(item.quantity)
+          ) {
+            throw new BadRequestException(
+              `El producto "${product.name}" se comercializa por unidad entera (${product.unitType}) y no permite cantidades fraccionadas (${item.quantity}).`,
+            );
+          }
+
           const currentStockNum = Number(product.currentStock);
           if (currentStockNum < item.quantity) {
             throw new BadRequestException(
@@ -275,7 +306,7 @@ export class SalesService {
               if (!authorizedAdmin) {
                 authorizedAdmin = await this.verifyAdminPin(dto.adminPin, tx);
                 if (!authorizedAdmin) {
-                  throw new UnauthorizedException(
+                  throw new ForbiddenException(
                     'PIN de Administrador inválido para autorizar el descuento o rebaja de precio.',
                   );
                 }
@@ -741,9 +772,11 @@ export class SalesService {
         } else {
           matches = a.pin === cleanPin;
           if (matches) {
-            if (userClient && typeof userClient.update === 'function') {
+            // Auto-migrar SIEMPRE fuera de cualquier transacción activa (evita abortar tx con 25P02)
+            const rootUserClient = this.prisma?.user;
+            if (rootUserClient && typeof rootUserClient.update === 'function') {
               const hashedPin = await bcrypt.hash(cleanPin, 10);
-              await userClient
+              await rootUserClient
                 .update({
                   where: { id: a.id },
                   data: { pin: hashedPin },
@@ -787,7 +820,7 @@ export class SalesService {
     const admin = await this.verifyAdminPin(dto.adminPin);
 
     if (!admin) {
-      throw new UnauthorizedException('PIN de administrador inválido para autorizar la anulación');
+      throw new ForbiddenException('PIN de administrador inválido para autorizar la anulación');
     }
 
     const sale = await this.prisma.sale.findUnique({
@@ -806,35 +839,67 @@ export class SalesService {
       throw new BadRequestException('Esta venta ya se encuentra anulada previamente');
     }
 
-    const isFiscal =
+    const isFiscalReceipt =
       sale.receiptType === ReceiptType.BOLETA || sale.receiptType === ReceiptType.FACTURA;
 
-    // 🛡️ CONTROL TRIBUTARIO: Plazo legal SUNAT para emisión de Notas de Crédito Electrónicas (R.S. 193-2020/SUNAT)
-    if (isFiscal) {
+    // Si el CPE fue REJECTED formalmente por PSE/SUNAT, jamás existió en SUNAT (no corresponde emitir Nota de Crédito)
+    const shouldEmitCreditNote =
+      isFiscalReceipt && sale.emissionStatus !== EmissionStatus.REJECTED;
+
+    if (
+      isFiscalReceipt &&
+      sale.emissionStatus === EmissionStatus.PENDING &&
+      process.env.BILLING_DRIVER === 'NUBEFACT'
+    ) {
+      throw new BadRequestException(
+        'Este comprobante electrónico aún está PENDIENTE de envío a SUNAT. Reemítalo primero antes de generar una Nota de Crédito.',
+      );
+    }
+
+    // 🛡️ CONTROL TRIBUTARIO: Plazo del 15° día hábil aplica a motivos 01/02/03 (R.S. 193-2020/SUNAT),
+    // permitiendo devoluciones efectivas de mercadería (06 / 07) fuera de dicho plazo.
+    const requestedReasonCode = dto.reasonCode || '01';
+    if (shouldEmitCreditNote && ['01', '02', '03'].includes(requestedReasonCode)) {
       const deadlineInfo = getSunatCreditNoteDeadline(sale.createdAt || new Date());
       if (deadlineInfo.isExpired) {
         const docName =
           sale.receiptType === ReceiptType.FACTURA ? 'Factura Electrónica' : 'Boleta Electrónica';
         throw new BadRequestException(
-          `No es posible anular este comprobante electrónico ante SUNAT. El plazo legal reglamentario (15° día hábil del mes siguiente: ${deadlineInfo.formattedDeadline}) ha vencido para esta ${docName} emitida el ${deadlineInfo.formattedEmissionDate}. Para regularizar comprobantes de períodos fiscales cerrados, consulte con su contador.`,
+          `No es posible anular este comprobante electrónico ante SUNAT. El plazo legal reglamentario (15° día hábil del mes siguiente: ${deadlineInfo.formattedDeadline}) ha vencido para esta ${docName} emitida el ${deadlineInfo.formattedEmissionDate}. Para devoluciones de mercadería utilice motivo 06, o consulte con su contador.`,
         );
       }
     }
 
     // =========================================================================
-    // ETAPA 1: TRANSACCIÓN DB LOCAL (Atómica y Rápida: Reingreso de stock y anulación)
+    // ETAPA 1: TRANSACCIÓN DB LOCAL (Atómica con bloqueo contra doble anulación)
     // =========================================================================
     const txResult = await this.prisma.$transaction(
       async (tx) => {
+        // Reclamo atómico condicional: evita doble devolución de stock y doble egreso de caja en peticiones concurrentes
+        if (typeof tx.sale.updateMany === 'function') {
+          const claimed = await tx.sale.updateMany({
+            where: { id: sale.id, isVoided: false },
+            data: {
+              isVoided: true,
+              voidedAt: new Date(),
+              voidedReason: dto.reason,
+              voidedByAdminId: admin.id,
+            },
+          });
+          if (claimed.count === 0) {
+            throw new BadRequestException('Esta venta ya se encuentra anulada previamente');
+          }
+        }
+
         let createdCreditNote: any = null;
         let ncSeries = '';
         let ncCorrelative = 0;
         let ncFullNumber = '';
-        let reasonCode = '01';
+        let reasonCode = requestedReasonCode;
         let reasonDescription = 'ANULACIÓN DE LA OPERACIÓN';
 
-        // Si es Boleta o Factura, reservar correlativo y registrar Nota de Crédito en DB
-        if (isFiscal) {
+        // Si es Boleta o Factura aceptada/simulada, reservar correlativo y registrar Nota de Crédito en DB
+        if (shouldEmitCreditNote) {
           const ncReceiptType =
             sale.receiptType === ReceiptType.BOLETA
               ? ReceiptType.NOTA_CREDITO_BOLETA
@@ -971,7 +1036,7 @@ export class SalesService {
         return {
           voided,
           createdCreditNote,
-          isFiscal,
+          isFiscal: shouldEmitCreditNote,
           ncSeries,
           ncCorrelative,
           ncFullNumber,
@@ -1061,12 +1126,24 @@ export class SalesService {
             createdAt: updatedNc.createdAt,
           };
         } else {
+          const failedStatus =
+            billingRes.emissionStatus === 'PENDING'
+              ? EmissionStatus.PENDING
+              : EmissionStatus.REJECTED;
+
+          if (this.prisma.creditNote?.update) {
+            await this.prisma.creditNote.update({
+              where: { id: txResult.createdCreditNote.id },
+              data: { emissionStatus: failedStatus },
+            });
+          }
+
           creditNoteResult = {
             ...txResult.createdCreditNote,
             taxableBase: Number(txResult.createdCreditNote.taxableBase),
             igvAmount: Number(txResult.createdCreditNote.igvAmount),
             totalAmount: Number(txResult.createdCreditNote.totalAmount),
-            emissionStatus: EmissionStatus.PENDING,
+            emissionStatus: failedStatus,
           };
         }
       } catch (billingErr: any) {
@@ -1083,14 +1160,118 @@ export class SalesService {
       }
     }
 
+    const ncAccepted =
+      creditNoteResult &&
+      (creditNoteResult.emissionStatus === EmissionStatus.ACCEPTED ||
+        creditNoteResult.emissionStatus === EmissionStatus.SIMULATED);
+
     return {
       message: creditNoteResult
-        ? `Nota de Crédito ${creditNoteResult.fullNumber} emitida con éxito. Venta anulada y stock devuelto a inventario.`
+        ? ncAccepted
+          ? `Nota de Crédito ${creditNoteResult.fullNumber} emitida con éxito. Venta anulada y stock devuelto a inventario.`
+          : `Venta anulada en sistema y stock devuelto, pero la Nota de Crédito ${creditNoteResult.fullNumber} quedó en estado ${creditNoteResult.emissionStatus} ante SUNAT. Reintente su envío desde el historial.`
         : 'Venta anulada correctamente. Stock devuelto a inventario.',
       saleId: txResult.voided.id,
       saleNumber: txResult.voided.saleNumber,
       authorizedBy: admin.name,
       creditNote: creditNoteResult,
+    };
+  }
+
+  /**
+   * Reemisión de Nota de Crédito pendiente o rechazada ante el PSE / SUNAT
+   */
+  async reemitCreditNote(saleId: string) {
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+      include: {
+        creditNote: true,
+        items: { include: { product: true } },
+      },
+    });
+
+    if (!sale || !sale.creditNote) {
+      throw new NotFoundException('No se encontró una Nota de Crédito asociada a esta venta.');
+    }
+
+    const cn = sale.creditNote;
+    if (
+      cn.emissionStatus === EmissionStatus.ACCEPTED ||
+      cn.emissionStatus === EmissionStatus.SIMULATED
+    ) {
+      return {
+        success: true,
+        message: `La Nota de Crédito ${cn.fullNumber} ya figura aceptada.`,
+        creditNote: cn,
+      };
+    }
+
+    const storeConfig = await this.prisma.storeConfig?.findFirst?.();
+    const billingRes = await this.billingService.issueCreditNote({
+      saleId: sale.id,
+      receiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
+      creditNoteSeries: cn.series,
+      creditNoteCorrelative: cn.correlativeNumber,
+      modifiedReceiptType: sale.receiptType as 'BOLETA' | 'FACTURA',
+      modifiedDocTypeCode: sale.receiptType === ReceiptType.FACTURA ? '01' : '03',
+      modifiedSeries: sale.series,
+      modifiedCorrelative: sale.correlativeNumber,
+      modifiedFullNumber:
+        sale.fullReceiptNumber ||
+        `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`,
+      reasonCode: cn.reasonCode,
+      reasonDescription: cn.reasonDescription,
+      customReason: cn.customReason || undefined,
+      totalAmount: Number(cn.totalAmount),
+      taxableBase: Number(cn.taxableBase),
+      igvAmount: Number(cn.igvAmount),
+      customerName: sale.customerName || 'CLIENTES VARIOS',
+      customerDocument: sale.customerDocument,
+      customerAddress: sale.customerAddress,
+      customerEmail: sale.customerEmail?.trim() || null,
+      companyRuc: storeConfig?.ruc || '10458923011',
+      items: sale.items.map((i) => ({
+        name: i.product.name,
+        quantity: Number(i.quantity),
+        unitPrice: Number(i.unitPrice),
+        subtotal: Number(i.subtotal),
+        unitType: i.product.unitType,
+      })),
+      createdAt: new Date(),
+    });
+
+    if (billingRes.success) {
+      const finalStatus =
+        (billingRes.emissionStatus as EmissionStatus) || EmissionStatus.ACCEPTED;
+      const updated = await this.prisma.creditNote.update({
+        where: { id: cn.id },
+        data: {
+          hash: billingRes.hash,
+          qrString: billingRes.qrString,
+          emissionStatus: finalStatus,
+          externalId: billingRes.externalId || null,
+          pdfUrl: billingRes.pdfUrl || null,
+          xmlUrl: billingRes.xmlUrl || null,
+          cdrUrl: billingRes.cdrUrl || null,
+        },
+      });
+      return {
+        success: true,
+        message: `Nota de Crédito ${cn.fullNumber} aceptada por SUNAT.`,
+        creditNote: updated,
+      };
+    }
+
+    const failedStatus =
+      billingRes.emissionStatus === 'PENDING' ? EmissionStatus.PENDING : EmissionStatus.REJECTED;
+    await this.prisma.creditNote.update({
+      where: { id: cn.id },
+      data: { emissionStatus: failedStatus },
+    });
+
+    return {
+      success: false,
+      message: billingRes.message,
     };
   }
 
@@ -1187,6 +1368,11 @@ export class SalesService {
           'Para Factura Electrónica es obligatorio ingresar la Razón Social auténtica de la empresa.',
         );
       }
+      if (!customerAddress || customerAddress.trim().length < 3) {
+        throw new BadRequestException(
+          'La Dirección Fiscal de la empresa es estrictamente obligatoria para emitir Factura Electrónica.',
+        );
+      }
     } else if (targetReceiptType === ReceiptType.BOLETA) {
       if (trimmedDoc.length === 11 && !isValidPeruvianRuc(trimmedDoc)) {
         throw new BadRequestException(
@@ -1244,9 +1430,27 @@ export class SalesService {
     const originalTicketNumber =
       sale.fullReceiptNumber || `${sale.series}-${String(sale.correlativeNumber).padStart(8, '0')}`;
 
-    // 4. Transacción atómica: incremento seguro de correlativo y actualización de la venta
+    // 4. Transacción atómica: reclamo condicional contra doble canje concurrente e incremento de correlativo
     const txResult = await this.prisma.$transaction(
       async (tx) => {
+        if (typeof tx.sale.updateMany === 'function') {
+          const claimed = await tx.sale.updateMany({
+            where: {
+              id: sale.id,
+              receiptType: ReceiptType.NOTA_VENTA,
+              isVoided: false,
+            },
+            data: {
+              isFiscal: true,
+            },
+          });
+          if (claimed.count === 0) {
+            throw new BadRequestException(
+              'Este ticket ya fue canjeado previamente o se encuentra anulado.',
+            );
+          }
+        }
+
         const series = await this.getOrAllocateSeries(
           tx,
           cashRegisterId,
@@ -1271,9 +1475,10 @@ export class SalesService {
         const correlativeNumber = sequence.currentNumber;
         const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
 
-        // 🛡️ REGLA TRIBUTARIA SUNAT (R.S. 000003-2023): La fecha fiscal del comprobante canjeado
-        // es la fecha actual (hoy) para evitar el rechazo Error 2324 por superar el plazo de 1 día calendario.
-        const fiscalEmissionDate = new Date();
+        // Si el ticket original aún está dentro del plazo SUNAT (0-3 días) y respeta cronología,
+        // preservar su fecha; si es antiguo, usar fecha actual para evitar rechazo SUNAT 2324.
+        const dateCheck = getSunatCompliantEmissionDate(sale.createdAt || new Date());
+        const fiscalEmissionDate = dateCheck.wasAdjusted ? new Date() : sale.createdAt || new Date();
 
         const updatedSale = await tx.sale.update({
           where: { id: sale.id },
@@ -1283,7 +1488,7 @@ export class SalesService {
             correlativeNumber,
             fullReceiptNumber,
             isFiscal: true,
-            createdAt: fiscalEmissionDate,
+            ...(dateCheck.wasAdjusted ? { createdAt: fiscalEmissionDate } : {}),
             taxableBase: new Prisma.Decimal(taxableBase),
             igvAmount: new Prisma.Decimal(igvAmount),
             customerDocument: trimmedDoc || null,
@@ -1674,10 +1879,10 @@ export class SalesService {
 
     if (clean.length === 11) {
       // 1. Validar prefijos válidos de RUC peruano
-      const validPrefixes = ['10', '20', '15', '17'];
+      const validPrefixes = ['10', '15', '16', '17', '20'];
       const hasValidPrefix = validPrefixes.some((p) => clean.startsWith(p));
       if (!hasValidPrefix) {
-        throw new BadRequestException('El RUC debe comenzar con 10, 20, 15 o 17');
+        throw new BadRequestException('El RUC debe comenzar con 10, 15, 16, 17 o 20');
       }
 
       // 2. Validación estricta del dígito verificador oficial de SUNAT (Algoritmo Módulo 11)
@@ -1752,7 +1957,7 @@ export class SalesService {
             };
           }
         }
-      } catch (err) {
+      } catch {
         // Fallback a caché local si la red está caída
       }
 
@@ -1837,7 +2042,7 @@ export class SalesService {
             };
           }
         }
-      } catch (err) {
+      } catch {
         // Fallback a historial
       }
 
@@ -1875,8 +2080,12 @@ export class SalesService {
   /**
    * Sincronización en lote de ventas procesadas offline (modo sin conexión)
    */
-  async syncOfflineSales(userId: string, batchDto: SyncOfflineSalesBatchDto) {
-    return this.offlineService.syncOfflineSales(userId, batchDto);
+  async syncOfflineSales(
+    userId: string,
+    batchDto: SyncOfflineSalesBatchDto,
+    userRole?: Role,
+  ) {
+    return this.offlineService.syncOfflineSales(userId, batchDto, userRole);
   }
 
   /**

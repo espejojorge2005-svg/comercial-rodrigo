@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Put, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Put, Body, UseGuards, Ip } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { VerifyPinDto } from './dto/verify-pin.dto.js';
@@ -11,13 +11,18 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
+  async login(@Body() loginDto: LoginDto, @Ip() clientIp?: string) {
+    return this.authService.login(loginDto, clientIp);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('verify-pin')
-  async verifyPin(@Body() verifyPinDto: VerifyPinDto) {
-    return this.authService.verifyAdminPin(verifyPinDto);
+  async verifyPin(
+    @Body() verifyPinDto: VerifyPinDto,
+    @CurrentUser('id') requesterId?: string,
+    @Ip() clientIp?: string,
+  ) {
+    return this.authService.verifyAdminPin(verifyPinDto, requesterId || clientIp);
   }
 
   @UseGuards(JwtAuthGuard)

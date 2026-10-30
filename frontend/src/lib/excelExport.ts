@@ -49,6 +49,18 @@ const translatePaymentMethod = (method: string): string => {
 };
 
 /**
+ * Previene inyección de fórmulas DDE/CSV en celdas de texto exportadas a Excel
+ */
+export function sanitizeExcelCell(val: string | number): string | number {
+  if (typeof val !== 'string') return val;
+  const trimmed = val.trimStart();
+  if (trimmed.length > 0 && /^[=+\-@]/.test(trimmed) && !/^-{2,}/.test(trimmed)) {
+    return `'${val}`;
+  }
+  return val;
+}
+
+/**
  * Crea una hoja de cálculo con encabezado ejecutivo formal, tabla de datos y fila de totales
  */
 function createFormattedSheet(options: {
@@ -64,22 +76,22 @@ function createFormattedSheet(options: {
   const aoa: (string | number)[][] = [];
 
   // 1. Banner Institucional
-  aoa.push([storeName.toUpperCase()]);
-  aoa.push([reportTitle.toUpperCase()]);
-  aoa.push([reportSubtitle]);
+  aoa.push([sanitizeExcelCell(storeName.toUpperCase())]);
+  aoa.push([sanitizeExcelCell(reportTitle.toUpperCase())]);
+  aoa.push([sanitizeExcelCell(reportSubtitle)]);
   aoa.push([`Generado: ${formatDateTime(new Date())} | Moneda: Soles (PEN)`]);
   aoa.push([]); // Espacio en blanco
 
   // 2. Encabezados de Columnas de la Tabla
   aoa.push(headers);
 
-  // 3. Filas de Datos
-  dataRows.forEach((row) => aoa.push(row));
+  // 3. Filas de Datos sanitizadas
+  dataRows.forEach((row) => aoa.push(row.map(sanitizeExcelCell)));
 
   // 4. Fila de Totales Generales
   if (totalsRow) {
     aoa.push([]); // Espacio separador
-    aoa.push(totalsRow);
+    aoa.push(totalsRow.map(sanitizeExcelCell));
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -129,7 +141,7 @@ export const exportKardexAndInventoryExcel = (
 
   const stockRows = products.map((p, idx) => {
     const cost = Number((p.costPrice || 0).toFixed(2));
-    const stock = Number((p.currentStock || 0).toFixed(2));
+    const stock = Number((p.currentStock || 0).toFixed(3));
     const totalValuedCost = Number((stock * cost).toFixed(2));
     const totalValuedRetail = Number((stock * (p.retailPrice || 0)).toFixed(2));
     const retailMargin = cost > 0 ? Number((((p.retailPrice - cost) / cost) * 100).toFixed(1)) : 0;
@@ -190,7 +202,7 @@ export const exportKardexAndInventoryExcel = (
     `${products.length} productos registrados`,
     '',
     '',
-    Number(sumStock.toFixed(2)),
+    Number(sumStock.toFixed(3)),
     '',
     '',
     '',
@@ -271,8 +283,8 @@ export const exportKardexAndInventoryExcel = (
     `${kardexMovements.length} movimientos registrados`,
     '',
     '',
-    Number(sumIncomeQty.toFixed(2)),
-    Number(sumOutQty.toFixed(2)),
+    Number(sumIncomeQty.toFixed(3)),
+    Number(sumOutQty.toFixed(3)),
     '',
     '',
     '',
@@ -301,7 +313,7 @@ export const exportKardexAndInventoryExcel = (
   let sumAlertBudget = 0;
 
   const alertRows = alertProducts.map((p, idx) => {
-    const deficit = Math.max(0, p.minStock - p.currentStock);
+    const deficit = Number(Math.max(0, p.minStock - p.currentStock).toFixed(3));
     const cost = p.costPrice || 0;
     const estPurchaseBudget = Number((deficit * cost).toFixed(2));
     sumDeficit += deficit;
@@ -344,7 +356,7 @@ export const exportKardexAndInventoryExcel = (
     '',
     '',
     '',
-    Number(sumDeficit.toFixed(2)),
+    Number(sumDeficit.toFixed(3)),
     '',
     Number(sumAlertBudget.toFixed(2)),
     '',
@@ -404,8 +416,8 @@ export const exportShiftAuditExcel = (
     const totalSales = Number(s.metrics?.totalSales || 0);
     const income = Number(s.metrics?.incomeMovements || 0);
     const expenses = Number(s.metrics?.expenseMovements || 0);
-    const expected = s.expectedBalance !== null ? Number(s.expectedBalance) : initial + cash + income - expenses;
-    const actual = s.actualBalance !== null ? Number(s.actualBalance) : expected;
+    const expected = s.expectedBalance != null ? Number(s.expectedBalance) : initial + cash + income - expenses;
+    const actual = s.actualBalance != null ? Number(s.actualBalance) : expected;
 
     sumInitial += initial;
     sumCash += cash;
@@ -443,8 +455,8 @@ export const exportShiftAuditExcel = (
       income,
       expenses,
       expected,
-      s.actualBalance !== null ? actual : '--',
-      s.difference !== null ? diff : '--',
+      s.actualBalance != null ? actual : '--',
+      s.difference != null ? diff : '--',
       diagnostic,
       s.notes || 'Ninguna',
     ];
@@ -738,7 +750,7 @@ export const exportProfitReportExcel = (
     ['Ventas con Pago Mixto (S/.)', summary.paymentMethods?.MIXED || 0, 'Combinación efectivo + digital'],
   ];
 
-  const wsSummary = XLSX.utils.aoa_to_sheet(summaryAoa);
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryAoa.map((row) => row.map(sanitizeExcelCell)));
   wsSummary['!cols'] = [{ wch: 44 }, { wch: 28 }, { wch: 38 }];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen Financiero');
 
@@ -798,7 +810,7 @@ export const exportProfitReportExcel = (
     `${products.length} productos analizados`,
     '',
     '',
-    Number(sumProdQty.toFixed(2)),
+    Number(sumProdQty.toFixed(3)),
     '',
     '',
     Number(sumProdRevenue.toFixed(2)),
@@ -872,7 +884,7 @@ export const exportProfitReportExcel = (
     '',
     '',
     '',
-    sumTicketUnits,
+    Number(sumTicketUnits.toFixed(3)),
     Number(sumTicketSales.toFixed(2)),
     Number(sumTicketCost.toFixed(2)),
     Number(sumTicketProfit.toFixed(2)),

@@ -41,6 +41,8 @@ export interface OfflineSale {
   createdAt: string; // ISO String
   syncStatus: 'PENDING' | 'SYNCING' | 'SYNCED' | 'ERROR';
   syncError?: string;
+  retryCount?: number;
+  quarantined?: boolean;
 }
 
 const DB_NAME = 'ComercialRodrigo_OfflineDB';
@@ -163,10 +165,15 @@ class OfflineStorageService {
         const product = request.result as Product;
         if (product) {
           const current = Number(product.currentStock) || 0;
-          product.currentStock = Math.max(0, current - quantitySold);
+          product.currentStock = Math.max(0, Number((current - quantitySold).toFixed(3)));
           store.put(product);
         }
       };
+
+      return await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     } catch (err) {
       console.warn(`No se pudo descontar stock local para producto ${productId}:`, err);
     }
@@ -178,7 +185,7 @@ class OfflineStorageService {
     const db = await this.getDB();
     const tx = db.transaction('offlineSales', 'readwrite');
     const store = tx.objectStore('offlineSales');
-    store.put(sale);
+    store.put({ ...sale, retryCount: sale.retryCount ?? 0, quarantined: false });
 
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve();
@@ -186,7 +193,7 @@ class OfflineStorageService {
     });
   }
 
-  async getPendingOfflineSales(): Promise<OfflineSale[]> {
+  async getPendingOfflineSales(includeQuarantined = false): Promise<OfflineSale[]> {
     try {
       const db = await this.getDB();
       const tx = db.transaction('offlineSales', 'readonly');
@@ -196,8 +203,15 @@ class OfflineStorageService {
       return new Promise((resolve, reject) => {
         request.onsuccess = () => {
           const list = (request.result || []) as OfflineSale[];
-          // Retornar solo pendientes o con error que requieran reintento
-          resolve(list.filter((s) => s.syncStatus === 'PENDING' || s.syncStatus === 'ERROR'));
+          resolve(
+            list.filter((s) => {
+              if (s.syncStatus === 'PENDING') return true;
+              if (s.syncStatus === 'ERROR') {
+                return includeQuarantined || !s.quarantined;
+              }
+              return false;
+            }),
+          );
         };
         request.onerror = () => reject(request.error);
       });
@@ -207,8 +221,55 @@ class OfflineStorageService {
     }
   }
 
+  async getQuarantinedOfflineSales(): Promise<OfflineSale[]> {
+    try {
+      const db = await this.getDB();
+      const tx = db.transaction('offlineSales', 'readonly');
+      const store = tx.objectStore('offlineSales');
+      const request = store.getAll();
+
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => {
+          const list = (request.result || []) as OfflineSale[];
+          resolve(list.filter((s) => s.syncStatus === 'ERROR' && Boolean(s.quarantined)));
+        };
+        request.onerror = () => reject(request.error);
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  async retryQuarantinedSales(): Promise<void> {
+    try {
+      const db = await this.getDB();
+      const tx = db.transaction('offlineSales', 'readwrite');
+      const store = tx.objectStore('offlineSales');
+      const request = store.getAll();
+
+      request.onsuccess = () => {
+        const list = (request.result || []) as OfflineSale[];
+        for (const sale of list) {
+          if (sale.syncStatus === 'ERROR') {
+            sale.syncStatus = 'PENDING';
+            sale.quarantined = false;
+            sale.retryCount = 0;
+            store.put(sale);
+          }
+        }
+      };
+
+      return await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (err) {
+      console.warn('Error al reactivar ventas en cuarentena:', err);
+    }
+  }
+
   async getPendingCount(): Promise<number> {
-    const pending = await this.getPendingOfflineSales();
+    const pending = await this.getPendingOfflineSales(false);
     return pending.length;
   }
 
@@ -216,6 +277,7 @@ class OfflineStorageService {
     offlineId: string,
     status: OfflineSale['syncStatus'],
     error?: string,
+    forceQuarantine = false,
   ): Promise<void> {
     try {
       const db = await this.getDB();
@@ -228,9 +290,22 @@ class OfflineStorageService {
         if (sale) {
           sale.syncStatus = status;
           if (error) sale.syncError = error;
+          if (status === 'ERROR') {
+            sale.retryCount = (sale.retryCount || 0) + 1;
+            if (forceQuarantine || sale.retryCount >= 3) {
+              sale.quarantined = true;
+            }
+          } else {
+            sale.quarantined = false;
+          }
           store.put(sale);
         }
       };
+
+      return await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     } catch (err) {
       console.warn('Error actualizando estado de venta offline:', err);
     }
@@ -242,6 +317,11 @@ class OfflineStorageService {
       const tx = db.transaction('offlineSales', 'readwrite');
       const store = tx.objectStore('offlineSales');
       store.delete(offlineId);
+
+      return await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     } catch (err) {
       console.warn('Error eliminando venta offline sincronizada:', err);
     }
@@ -251,16 +331,25 @@ class OfflineStorageService {
 
   async cacheActiveShift(shift: CashShift | null): Promise<void> {
     try {
+      if (shift) {
+        localStorage.setItem('cached_active_shift', JSON.stringify(shift));
+      } else {
+        localStorage.removeItem('cached_active_shift');
+      }
+
       const db = await this.getDB();
       const tx = db.transaction('activeShiftCache', 'readwrite');
       const store = tx.objectStore('activeShiftCache');
       if (shift) {
         store.put({ key: 'currentShift', shift, updatedAt: new Date().toISOString() });
-        localStorage.setItem('cached_active_shift', JSON.stringify(shift));
       } else {
         store.delete('currentShift');
-        localStorage.removeItem('cached_active_shift');
       }
+
+      return await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     } catch (err) {
       console.warn('Error guardando turno activo en caché:', err);
     }

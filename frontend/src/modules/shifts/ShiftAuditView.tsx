@@ -35,6 +35,12 @@ import { ShiftReceiptTicketModal } from './ShiftReceiptTicketModal.js';
 
 let cachedAuditShifts: any[] = [];
 
+if (typeof window !== 'undefined') {
+  window.addEventListener('cr:auth-changed', () => {
+    cachedAuditShifts = [];
+  });
+}
+
 export const ShiftAuditView: React.FC = () => {
   const { config } = useConfigStore();
   const [shifts, setShifts] = useState<any[]>(cachedAuditShifts);
@@ -111,15 +117,17 @@ export const ShiftAuditView: React.FC = () => {
   const totalShifts = shifts.length;
   const openShiftsCount = shifts.filter((s) => s.status === 'OPEN').length;
   const closedShifts = shifts.filter((s) => s.status === 'CLOSED');
-  const discrepancyCount = closedShifts.filter((s) => s.difference && Math.abs(s.difference) > 0.1).length;
+  const discrepancyCount = closedShifts.filter(
+    (s) => s.difference != null && Math.abs(Number(s.difference)) >= 0.05,
+  ).length;
 
   const sumInitial = filteredShifts.reduce((acc, s) => acc + (Number(s.initialBalance) || 0), 0);
   const sumSales = filteredShifts.reduce((acc, s) => acc + (Number(s.metrics?.totalSales) || 0), 0);
   const sumCashSales = filteredShifts.reduce((acc, s) => acc + (Number(s.metrics?.cashFromSales) || 0), 0);
   const sumDigitalSales = filteredShifts.reduce((acc, s) => acc + (Number(s.metrics?.digitalFromSales) || 0), 0);
-  const sumActual = filteredShifts.reduce((acc, s) => acc + (s.actualBalance !== null ? Number(s.actualBalance) : 0), 0);
-  const sumExpected = filteredShifts.reduce((acc, s) => acc + (s.expectedBalance !== null ? Number(s.expectedBalance) : 0), 0);
-  const sumDiff = filteredShifts.reduce((acc, s) => acc + (s.difference !== null ? Number(s.difference) : 0), 0);
+  const sumActual = filteredShifts.reduce((acc, s) => acc + (s.actualBalance != null ? Number(s.actualBalance) : 0), 0);
+  const sumExpected = filteredShifts.reduce((acc, s) => acc + (s.expectedBalance != null ? Number(s.expectedBalance) : 0), 0);
+  const sumDiff = filteredShifts.reduce((acc, s) => acc + (s.difference != null ? Number(s.difference) : 0), 0);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-slate-100">
@@ -323,7 +331,7 @@ export const ShiftAuditView: React.FC = () => {
               ) : (
                 filteredShifts.map((s) => {
                   const isOpen = s.status === 'OPEN';
-                  const diff = s.difference !== null ? s.difference : null;
+                  const diff = s.difference != null ? Number(s.difference) : null;
                   const hasDiscrepancy = diff !== null && Math.abs(diff) >= 0.05;
                   const metrics = s.metrics || {};
 
@@ -377,11 +385,11 @@ export const ShiftAuditView: React.FC = () => {
                       </td>
 
                       <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
-                        {s.actualBalance !== null ? formatCurrency(s.actualBalance) : <span className="text-slate-600 font-sans font-normal">--</span>}
+                        {s.actualBalance != null ? formatCurrency(s.actualBalance) : <span className="text-slate-600 font-sans font-normal">--</span>}
                       </td>
 
                       <td className="p-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
-                        {s.expectedBalance !== null ? formatCurrency(s.expectedBalance) : <span className="text-slate-600 font-sans font-normal">--</span>}
+                        {s.expectedBalance != null ? formatCurrency(s.expectedBalance) : <span className="text-slate-600 font-sans font-normal">--</span>}
                       </td>
 
                       <td className="p-3.5 text-center whitespace-nowrap">
@@ -562,7 +570,7 @@ export const ShiftAuditView: React.FC = () => {
                 <div className="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-500/30">
                   <span className="text-[10px] text-indigo-300 font-semibold block">(=) Saldo Esperado</span>
                   <span className="text-sm font-extrabold font-mono text-indigo-200">
-                    {selectedShift.expectedBalance !== null ? formatCurrency(selectedShift.expectedBalance) : formatCurrency(selectedShift.initialBalance + (selectedShift.metrics?.cashFromSales || 0) + (selectedShift.metrics?.incomeMovements || 0) - (selectedShift.metrics?.expenseMovements || 0))}
+                    {selectedShift.expectedBalance != null ? formatCurrency(selectedShift.expectedBalance) : formatCurrency(selectedShift.initialBalance + (selectedShift.metrics?.cashFromSales || 0) + (selectedShift.metrics?.incomeMovements || 0) - (selectedShift.metrics?.expenseMovements || 0))}
                   </span>
                 </div>
               </div>
@@ -572,12 +580,12 @@ export const ShiftAuditView: React.FC = () => {
                 <div>
                   <span className="text-slate-400">Efectivo Contado por Cajero:</span>
                   <span className="ml-2 font-mono font-bold text-white text-sm">
-                    {selectedShift.actualBalance !== null ? formatCurrency(selectedShift.actualBalance) : 'Turno aún abierto'}
+                    {selectedShift.actualBalance != null ? formatCurrency(selectedShift.actualBalance) : 'Turno aún abierto'}
                   </span>
                 </div>
 
                 <div>
-                  {selectedShift.difference !== null ? (
+                  {selectedShift.difference != null ? (
                     Math.abs(selectedShift.difference) < 0.05 ? (
                       <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 flex items-center gap-1.5 text-xs">
                         <CheckCircle2 className="w-3.5 h-3.5" />
@@ -718,7 +726,12 @@ export const ShiftAuditView: React.FC = () => {
                     Resumen de Artículos Vendidos en el Turno
                   </h4>
                   <span className="text-[11px] text-slate-400">
-                    {(selectedShift.soldProducts || selectedShift.metrics?.soldProducts || []).reduce((acc: number, p: any) => acc + (Number(p.quantity) || 0), 0)} unidades totales
+                    {Number(
+                      (selectedShift.soldProducts || selectedShift.metrics?.soldProducts || [])
+                        .reduce((acc: number, p: any) => acc + (Number(p.quantity) || 0), 0)
+                        .toFixed(3),
+                    )}{' '}
+                    unidades totales
                   </span>
                 </div>
 
@@ -775,9 +788,9 @@ export const ShiftAuditView: React.FC = () => {
                 openedAt: ticketShift.openedAt,
                 closedAt: ticketShift.closedAt,
                 initialBalance: Number(ticketShift.initialBalance) || 0,
-                actualBalance: ticketShift.actualBalance !== null ? Number(ticketShift.actualBalance) : 0,
-                expectedBalance: ticketShift.expectedBalance !== null ? Number(ticketShift.expectedBalance) : null,
-                difference: ticketShift.difference !== null ? Number(ticketShift.difference) : null,
+                actualBalance: ticketShift.actualBalance != null ? Number(ticketShift.actualBalance) : 0,
+                expectedBalance: ticketShift.expectedBalance != null ? Number(ticketShift.expectedBalance) : null,
+                difference: ticketShift.difference != null ? Number(ticketShift.difference) : null,
                 isBlindAudit: false,
                 salesCount: ticketShift.metrics?.salesCount || 0,
                 cashFromSales: ticketShift.metrics?.cashFromSales || 0,

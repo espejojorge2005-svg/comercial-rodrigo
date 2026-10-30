@@ -99,4 +99,26 @@ describe('useCartStore - Lógica Financiera de Punto de Venta', () => {
     expect(state.getTotalAmount()).toBe(0);
     expect(state.getTotalItemsCount()).toBe(0);
   });
+
+  it('debe permitir vender el saldo fraccionado menor a 1 en productos a granel (KG / LT)', () => {
+    const bulkProduct: Product = {
+      ...mockProduct,
+      id: 'prod-bulk-1',
+      name: 'Azúcar Rubia Granel',
+      unitType: 'KG',
+      retailPrice: 4.0,
+      wholesalePrice: null,
+      wholesaleMinQty: null,
+      currentStock: 0.45,
+    };
+
+    const store = useCartStore.getState();
+    const added = store.addItem(bulkProduct); // sin cantidad explícita -> agrega los 0.45 kg restantes
+    expect(added).toBe(true);
+
+    const state = useCartStore.getState();
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0].quantity).toBe(0.45);
+    expect(state.items[0].subtotal).toBe(1.8);
+  });
 });

@@ -1,4 +1,9 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
@@ -6,22 +11,34 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { VerifyPinDto } from './dto/verify-pin.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
+import { AuthRateLimiter } from './rate-limiter.util.js';
 
 @Injectable()
 export class AuthService {
+  private readonly loginLimiter = new AuthRateLimiter(8, 5 * 60 * 1000);
+  private readonly pinLimiter = new AuthRateLimiter(5, 5 * 60 * 1000);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
   ) {}
 
-  async login(loginDto: LoginDto) {
-    const { username, password } = loginDto;
+  async login(loginDto: LoginDto, clientIp?: string) {
+    const username = loginDto.username.trim().toLowerCase();
+    const { password } = loginDto;
+    const rateKey = `login:${username}:${clientIp || 'local'}`;
+
+    this.loginLimiter.assertAllowed(
+      rateKey,
+      'Demasiados intentos de inicio de sesión fallidos. Espere unos minutos antes de reintentar.',
+    );
 
     const user = await this.prisma.user.findUnique({
       where: { username },
     });
 
     if (!user) {
+      this.loginLimiter.recordFailure(rateKey);
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
@@ -31,8 +48,11 @@ export class AuthService {
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
+      this.loginLimiter.recordFailure(rateKey);
       throw new UnauthorizedException('Credenciales incorrectas');
     }
+
+    this.loginLimiter.reset(rateKey);
 
     const payload = {
       sub: user.id,
@@ -53,8 +73,14 @@ export class AuthService {
     };
   }
 
-  async verifyAdminPin(verifyPinDto: VerifyPinDto) {
+  async verifyAdminPin(verifyPinDto: VerifyPinDto, callerKey?: string) {
     const { pin } = verifyPinDto;
+    const rateKey = `pin:${callerKey || 'global'}`;
+
+    this.pinLimiter.assertAllowed(
+      rateKey,
+      'Demasiados intentos fallidos de PIN de Administrador. Espere 5 minutos.',
+    );
 
     // 🛡️ SEGURIDAD: Comparación con bcrypt para PIN protegido
     const admins = this.prisma.user.findMany
@@ -98,6 +124,7 @@ export class AuthService {
         }
 
         if (matches) {
+          this.pinLimiter.reset(rateKey);
           return {
             valid: true,
             adminId: admin.id,
@@ -129,6 +156,7 @@ export class AuthService {
           ? await bcrypt.compare(pin, admin.pin)
           : admin.pin === pin;
         if (matches) {
+          this.pinLimiter.reset(rateKey);
           return {
             valid: true,
             adminId: admin.id,
@@ -138,7 +166,8 @@ export class AuthService {
       }
     }
 
-    throw new UnauthorizedException('PIN de administrador inválido');
+    this.pinLimiter.recordFailure(rateKey);
+    throw new ForbiddenException('PIN de administrador inválido');
   }
 
   async getProfile(userId: string) {
@@ -167,7 +196,7 @@ export class AuthService {
       throw new UnauthorizedException('Usuario no encontrado');
     }
 
-    const data: any = {};
+    const data: Record<string, unknown> = {};
 
     if (dto.name && dto.name.trim()) {
       data.name = dto.name.trim();

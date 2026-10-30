@@ -51,6 +51,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setError(null);
 
     if (!name.trim()) {
@@ -65,6 +66,11 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
 
     if (!isEditing && (!password || password.length < 6)) {
       setError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    if (isEditing && password && password.length < 6) {
+      setError('La nueva contraseña debe tener al menos 6 caracteres.');
       return;
     }
 

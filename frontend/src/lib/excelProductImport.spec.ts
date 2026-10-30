@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import * as XLSX from 'xlsx';
-import { parseProductsExcelFile } from './excelProductImport.js';
+import {
+  parseProductsExcelFile,
+  parseUnitType,
+  parseFlexibleNumber,
+} from './excelProductImport.js';
 
 describe('excelProductImport - Procesamiento e Importación de Catálogo', () => {
   function createMockExcelFile(data: any[]): File {
@@ -71,5 +75,61 @@ describe('excelProductImport - Procesamiento e Importación de Catálogo', () =>
     const file = createMockExcelFile([]);
 
     await expect(parseProductsExcelFile(file)).rejects.toThrow('La hoja de cálculo está vacía.');
+  });
+
+  it('no debe confundir BOLSA con SA (Saco) y debe soportar decimales con coma, stock mínimo 0 y rechazar negativos o duplicados', async () => {
+    expect(parseUnitType('BOLSA DE 1 KG')).toBe('NIU');
+    expect(parseUnitType('SACO DE 50 KG')).toBe('SA');
+    expect(parseFlexibleNumber('4,50', 0)).toBe(4.5);
+    expect(parseFlexibleNumber('-5', 0)).toBe(-5);
+    expect(parseFlexibleNumber(0, 5)).toBe(0);
+
+    const headers = [
+      'Nombre del Producto',
+      'Código de Barras',
+      'Unidad de Medida',
+      'Costo de Compra',
+      'Precio Venta Menor',
+      'Stock Inicial',
+      'Stock Mínimo',
+      'Fecha Vencimiento',
+    ];
+
+    const validCommaAndZeroMin = [
+      'Detergente Bolsa 800g',
+      '7759990001112',
+      'BOLSA',
+      '3,50',
+      '4,80',
+      20,
+      0,
+      '30/11/2027',
+    ];
+    const duplicateBarcodeAndNegative = [
+      'Detergente Duplicado',
+      '7759990001112',
+      'NIU',
+      '-2.00',
+      '5.00',
+      '1.5',
+      5,
+      '',
+    ];
+
+    const file = createMockExcelFile([headers, validCommaAndZeroMin, duplicateBarcodeAndNegative]);
+    const parsed = await parseProductsExcelFile(file);
+
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].isValid).toBe(true);
+    expect(parsed[0].unitType).toBe('NIU');
+    expect(parsed[0].costPrice).toBe(3.5);
+    expect(parsed[0].retailPrice).toBe(4.8);
+    expect(parsed[0].minStock).toBe(0);
+    expect(parsed[0].expirationDate).toBe('2027-11-30');
+
+    expect(parsed[1].isValid).toBe(false);
+    expect(parsed[1].errorMessages.some((m) => m.includes('duplicado'))).toBe(true);
+    expect(parsed[1].errorMessages.some((m) => m.includes('costo'))).toBe(true);
+    expect(parsed[1].errorMessages.some((m) => m.includes('discretas'))).toBe(true);
   });
 });

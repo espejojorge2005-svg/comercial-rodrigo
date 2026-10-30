@@ -258,6 +258,10 @@ export interface TaxBookRecord {
   cashRegister: string;
   isCreditNote?: boolean;
   modifiedDocument?: string | null;
+  modifiedDocTypeCode?: string | null;
+  modifiedSeries?: string | null;
+  modifiedCorrelative?: string | null;
+  modifiedIssueDate?: string | null;
   reasonDescription?: string | null;
   pdfUrl?: string | null;
   xmlUrl?: string | null;
@@ -288,6 +292,8 @@ export interface ManagementReportSummary {
   grossProfit: number;
   grossMarginPct: number;
   totalExpenses: number;
+  operatingExpenses?: number;
+  voidRefundExpenses?: number;
   totalIncomes: number;
   netProfit: number;
   netMarginPct: number;

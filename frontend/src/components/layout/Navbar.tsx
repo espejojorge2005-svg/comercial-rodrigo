@@ -206,10 +206,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onTabChange }) => {
               </div>
             </div>
 
-            {/* Perfil compacto en pantallas medianas (md a xl) */}
+            {/* Perfil compacto en pantallas móviles y medianas (< xl) */}
             <div
               onClick={() => isAdmin && setIsAdminProfileModalOpen(true)}
-              className={`hidden md:flex xl:hidden items-center pl-1.5 border-l border-slate-800 shrink-0 ${
+              className={`flex xl:hidden items-center pl-1.5 border-l border-slate-800 shrink-0 ${
                 isAdmin ? 'cursor-pointer hover:bg-slate-800/60 p-1 rounded-xl transition-all' : ''
               }`}
               title={isAdmin ? 'Configurar mi cuenta, contraseña y PIN' : `${user?.name || 'Usuario'} (${user?.role || 'ROL'})`}

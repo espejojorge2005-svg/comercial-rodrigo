@@ -14,6 +14,7 @@ interface ShiftState {
   openShift: (cashRegisterId: string, initialBalance: number, notes?: string) => Promise<boolean>;
   closeShift: (actualBalance: number, notes?: string) => Promise<any>;
   registerMovement: (type: CashMovementType, amount: number, reason: string) => Promise<boolean>;
+  resetShiftState: () => void;
 }
 
 export const useShiftStore = create<ShiftState>((set, get) => ({
@@ -21,6 +22,11 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   registers: [],
   isLoading: false,
   error: null,
+
+  resetShiftState: () => {
+    set({ activeShift: null, registers: [], isLoading: false, error: null });
+    void offlineStorage.cacheActiveShift(null);
+  },
 
   fetchRegisters: async () => {
     try {
@@ -40,11 +46,19 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       await offlineStorage.cacheActiveShift(data);
       return data;
     } catch (err: any) {
-      // Si la petición falla (offline), recuperar el turno en caché local para no bloquear la caja
-      const cached = await offlineStorage.getCachedActiveShift();
-      if (cached) {
-        set({ activeShift: cached, isLoading: false });
-        return cached;
+      // Si la petición falla por red (offline), recuperar el turno en caché local SOLO si pertenece al usuario actual
+      if (!navigator.onLine || err?.isNetworkError) {
+        const cached = await offlineStorage.getCachedActiveShift();
+        let currentUserId: string | null = null;
+        try {
+          const rawUser = localStorage.getItem('auth_user');
+          if (rawUser) currentUserId = JSON.parse(rawUser)?.id ?? null;
+        } catch {}
+
+        if (cached && (!currentUserId || cached.userId === currentUserId)) {
+          set({ activeShift: cached, isLoading: false });
+          return cached;
+        }
       }
       set({ activeShift: null, isLoading: false });
       return null;

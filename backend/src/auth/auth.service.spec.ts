@@ -59,6 +59,27 @@ describe('AuthService', () => {
       });
     });
 
+    it('debe normalizar mayúsculas y espacios en username al iniciar sesión', async () => {
+      const hashedPassword = await bcrypt.hash('password123', 10);
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        name: 'Rodrigo Admin',
+        username: 'admin',
+        password: hashedPassword,
+        role: Role.ADMIN,
+        isActive: true,
+      });
+
+      await authService.login({
+        username: '  Admin  ',
+        password: 'password123',
+      });
+
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+        where: { username: 'admin' },
+      });
+    });
+
     it('debe lanzar UnauthorizedException si el usuario no existe', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
 

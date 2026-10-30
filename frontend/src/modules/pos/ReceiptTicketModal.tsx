@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import QRCode from 'qrcode';
-import { formatCurrency, formatPeruDateTime, numeroALetras } from '../../lib/utils.js';
+import {
+  escapeHtml,
+  formatCurrency,
+  formatPeruDateTime,
+  getPeruYMD,
+  numeroALetras,
+  sanitizeExternalUrl,
+} from '../../lib/utils.js';
 import { useConfigStore } from '../../store/useConfigStore.js';
 import { useAuthStore } from '../../store/useAuthStore.js';
 import {
@@ -11,6 +18,8 @@ import {
   Sparkles,
   FileText,
   Zap,
+  AlertTriangle,
+  Clock,
 } from 'lucide-react';
 import type { Sale } from '../../types/index.js';
 
@@ -65,6 +74,20 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
   const receiptType = saleData?.receiptType || 'NOTA_VENTA';
   const isFiscal =
     isCreditNote || saleData?.isFiscal || receiptType === 'BOLETA' || receiptType === 'FACTURA';
+  const effectiveEmissionStatus: string | null =
+    (isCreditNote ? creditNote?.emissionStatus : saleData?.emissionStatus) || null;
+  const isEmissionRejected = isFiscal && effectiveEmissionStatus === 'REJECTED';
+  const isEmissionPending = isFiscal && effectiveEmissionStatus === 'PENDING';
+
+  const safePdfUrl = sanitizeExternalUrl(
+    (isCreditNote ? creditNote?.pdfUrl : null) || saleData?.pdfUrl,
+  );
+  const safeXmlUrl = sanitizeExternalUrl(
+    (isCreditNote ? creditNote?.xmlUrl : null) || saleData?.xmlUrl,
+  );
+  const safeCdrUrl = sanitizeExternalUrl(
+    (isCreditNote ? creditNote?.cdrUrl : null) || saleData?.cdrUrl,
+  );
 
   const handlePaperWidthChange = (width: '80mm' | '58mm') => {
     setPaperWidth(width);
@@ -111,15 +134,23 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
     const totalFormatted = Number(
       isCreditNote ? (creditNote?.totalAmount ?? saleData.totalAmount ?? 0) : (saleData.totalAmount || 0),
     ).toFixed(2);
-    const dateFormatted = (
+    const dateFormatted = getPeruYMD(
       isCreditNote && creditNote?.createdAt
         ? creditNote.createdAt
-        : saleData.createdAt || new Date().toISOString()
-    ).split('T')[0];
+        : saleData.createdAt || new Date(),
+    );
     const customerDoc = (saleData.customerDocument || '').trim();
-    const customerDocType = customerDoc.length === 11 ? '6' : customerDoc.length === 8 ? '1' : '-';
-    const hashVal =
-      (isCreditNote && creditNote?.hash) || saleData.hash || 's1mU14t3dH4shC0d3SuN4tNC==';
+    const customerDocType =
+      /^\d{11}$/.test(customerDoc) && /^(10|15|16|17|20)/.test(customerDoc)
+        ? '6'
+        : /^\d{8}$/.test(customerDoc)
+          ? '1'
+          : customerDoc.length >= 9 && customerDoc.length <= 12
+            ? '4'
+            : customerDoc
+              ? '0'
+              : '-';
+    const hashVal = (isCreditNote && creditNote?.hash) || saleData.hash || '';
 
     const rawQrString =
       (isCreditNote && creditNote?.qrString) ||
@@ -190,7 +221,7 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
       <html>
         <head>
           <meta charset="utf-8">
-          <title>${getFullReceiptNumber()}</title>
+          <title>${escapeHtml(getFullReceiptNumber())}</title>
           <style>
             @page {
               margin: 0mm;
@@ -302,17 +333,17 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
 
   // Auto-descarga de PDF si la opción está activada y el comprobante tiene URL de PDF
   useEffect(() => {
-    if (isOpen && autoDownloadPdfEnabled && saleData?.pdfUrl && !autoDownloadTriggeredRef.current) {
+    if (isOpen && autoDownloadPdfEnabled && safePdfUrl && !autoDownloadTriggeredRef.current) {
       autoDownloadTriggeredRef.current = true;
       const timer = setTimeout(() => {
-        window.open(saleData.pdfUrl, '_blank');
+        window.open(safePdfUrl, '_blank', 'noopener,noreferrer');
       }, 500);
       return () => clearTimeout(timer);
     }
     if (!isOpen) {
       autoDownloadTriggeredRef.current = false;
     }
-  }, [isOpen, autoDownloadPdfEnabled, saleData?.pdfUrl]);
+  }, [isOpen, autoDownloadPdfEnabled, safePdfUrl]);
 
   if (!isOpen || !saleData) return null;
 
@@ -365,16 +396,24 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
         <div className="text-center pb-3 border-b border-slate-800 print:hidden">
           <div
             className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2 border ${
-              isCreditNote
+              isEmissionRejected
                 ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                : receiptType === 'NOTA_VENTA'
-                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                  : receiptType === 'BOLETA'
-                    ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                    : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+                : isEmissionPending
+                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                  : isCreditNote
+                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                    : receiptType === 'NOTA_VENTA'
+                      ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                      : receiptType === 'BOLETA'
+                        ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                        : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
             }`}
           >
-            {isCreditNote ? (
+            {isEmissionRejected ? (
+              <AlertTriangle className="w-6 h-6" />
+            ) : isEmissionPending ? (
+              <Clock className="w-6 h-6" />
+            ) : isCreditNote ? (
               <FileText className="w-6 h-6" />
             ) : receiptType === 'NOTA_VENTA' ? (
               <Sparkles className="w-6 h-6" />
@@ -383,13 +422,17 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             )}
           </div>
           <h3 className="text-lg font-bold text-white">
-            {isCreditNote
-              ? '¡Nota de Crédito Electrónica!'
-              : receiptType === 'NOTA_VENTA'
-                ? '¡Nota de Venta Generada!'
-                : receiptType === 'BOLETA'
-                  ? '¡Boleta Electrónica Emitida!'
-                  : '¡Factura Electrónica Emitida!'}
+            {isEmissionRejected
+              ? 'Comprobante Observado / Rechazado por PSE'
+              : isEmissionPending
+                ? 'Comprobante Pendiente de Envío SUNAT'
+                : isCreditNote
+                  ? '¡Nota de Crédito Electrónica!'
+                  : receiptType === 'NOTA_VENTA'
+                    ? '¡Nota de Venta Generada!'
+                    : receiptType === 'BOLETA'
+                      ? '¡Boleta Electrónica Emitida!'
+                      : '¡Factura Electrónica Emitida!'}
           </h3>
           <p className="text-xs text-slate-400">
             {isCreditNote
@@ -585,9 +628,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               <span>CAJERO:</span>
               <span>{saleData.user?.name || saleData.cashier || 'Cajero de Turno'}</span>
             </div>
-            <div className="flex justify-between">
-              <span>{receiptType === 'FACTURA' ? 'RAZÓN SOCIAL:' : 'CLIENTE:'}</span>
-              <span className="truncate max-w-[170px] font-semibold text-right">
+            <div className="flex justify-between gap-2">
+              <span className="shrink-0">{receiptType === 'FACTURA' ? 'RAZÓN SOCIAL:' : 'CLIENTE:'}</span>
+              <span className="break-words max-w-[195px] font-semibold text-right">
                 {saleData.customerName || (receiptType === 'FACTURA' ? '-' : 'Clientes Varios')}
               </span>
             </div>
@@ -604,17 +647,17 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               </div>
             )}
             {saleData.customerAddress && (
-              <div className="flex justify-between text-[10px]">
-                <span>DIRECCIÓN:</span>
-                <span className="text-right truncate max-w-[170px]">
+              <div className="flex justify-between gap-2 text-[10px]">
+                <span className="shrink-0">DIRECCIÓN:</span>
+                <span className="text-right break-words max-w-[195px]">
                   {saleData.customerAddress}
                 </span>
               </div>
             )}
             {saleData.customerEmail && (
-              <div className="flex justify-between text-[10px]">
-                <span>CORREO:</span>
-                <span className="text-right truncate max-w-[170px] font-mono">
+              <div className="flex justify-between gap-2 text-[10px]">
+                <span className="shrink-0">CORREO:</span>
+                <span className="text-right break-all max-w-[195px] font-mono">
                   {saleData.customerEmail}
                 </span>
               </div>
@@ -633,9 +676,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
             <tbody className="divide-y divide-slate-100">
               {saleData.items?.map((item: any, idx: number) => {
                 const qty = Number(item.quantity);
-                const hasMultiple = qty > 1;
                 const unitPrice = Number(item.unitPrice);
                 const subtotal = Number(item.subtotal);
+                const rawUnit = item.product?.unitType || item.unitType || 'NIU';
 
                 return (
                   <tr key={idx} className="py-1">
@@ -644,11 +687,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                       <div className="font-semibold text-slate-900 leading-tight">
                         {item.product?.name || item.productName}
                       </div>
-                      {hasMultiple && (
-                        <div className="text-[9.5px] text-slate-500">
-                          {qty} × {formatCurrency(unitPrice)}
-                        </div>
-                      )}
+                      <div className="text-[9.5px] text-slate-500">
+                        {qty} {rawUnit} × {formatCurrency(unitPrice)}
+                      </div>
                     </td>
                     <td className="py-1 align-top text-right font-bold whitespace-nowrap">
                       {formatCurrency(subtotal)}
@@ -781,18 +822,29 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               )}
 
               {/* Leyenda Legal Oficial */}
-              <div className="text-[9px] text-slate-500 space-y-0.5 pt-1">
-                <p className="font-bold">
-                  Representación impresa de la{' '}
-                  {isCreditNote
-                    ? 'NOTA DE CRÉDITO ELECTRÓNICA'
-                    : receiptType === 'FACTURA'
-                      ? 'FACTURA ELECTRÓNICA'
-                      : 'BOLETA DE VENTA ELECTRÓNICA'}
-                </p>
-                <p>Autorizado mediante resolución de SUNAT</p>
-                <p>Consulte su comprobante en www.sunat.gob.pe</p>
-              </div>
+              {isEmissionRejected ? (
+                <div className="p-2 rounded bg-rose-50 border border-rose-300 text-[9px] text-rose-800 space-y-0.5">
+                  <p className="font-extrabold uppercase">COMPROBANTE RECHAZADO / OBSERVADO</p>
+                  <p>Requiere corrección o reenvío por Administración para validez tributaria ante SUNAT.</p>
+                </div>
+              ) : (
+                <div className="text-[9px] text-slate-500 space-y-0.5 pt-1">
+                  <p className="font-bold">
+                    Representación impresa de la{' '}
+                    {isCreditNote
+                      ? 'NOTA DE CRÉDITO ELECTRÓNICA'
+                      : receiptType === 'FACTURA'
+                        ? 'FACTURA ELECTRÓNICA'
+                        : 'BOLETA DE VENTA ELECTRÓNICA'}
+                  </p>
+                  <p>
+                    {isEmissionPending
+                      ? 'En cola de transmisión electrónica a SUNAT (PSE)'
+                      : 'Autorizado mediante resolución de SUNAT'}
+                  </p>
+                  <p>Consulte su comprobante en www.sunat.gob.pe</p>
+                </div>
+              )}
             </div>
           ) : (
             /* PLANTILLA DE NOTA DE VENTA: Sin QR ni leyendas de SUNAT */
@@ -849,14 +901,14 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               - Si es ADMIN: Puede ver y descargar PDF, XML (UBL 2.1) y CDR SUNAT
               - Si es CAJERO: Solo ve "Descargar PDF" para no saturar la pantalla con archivos técnicos
           */}
-          {(saleData?.pdfUrl || (isAdmin && (saleData?.xmlUrl || saleData?.cdrUrl))) && (
+          {(safePdfUrl || (isAdmin && (safeXmlUrl || safeCdrUrl))) && (
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center gap-2 flex-wrap text-[11px]">
               <span className="text-slate-400 font-semibold text-[10px] uppercase">
                 {isAdmin ? 'Descargas SUNAT (Admin):' : 'Comprobante:'}
               </span>
-              {saleData.pdfUrl && (
+              {safePdfUrl && (
                 <a
-                  href={saleData.pdfUrl}
+                  href={safePdfUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition-all flex items-center gap-1.5"
@@ -866,9 +918,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                   <span>Descargar PDF</span>
                 </a>
               )}
-              {isAdmin && saleData.xmlUrl && (
+              {isAdmin && safeXmlUrl && (
                 <a
-                  href={saleData.xmlUrl}
+                  href={safeXmlUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-mono text-xs transition-all"
@@ -877,9 +929,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                   XML (UBL 2.1)
                 </a>
               )}
-              {isAdmin && saleData.cdrUrl && (
+              {isAdmin && safeCdrUrl && (
                 <a
-                  href={saleData.cdrUrl}
+                  href={safeCdrUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-2.5 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-mono text-xs transition-all"

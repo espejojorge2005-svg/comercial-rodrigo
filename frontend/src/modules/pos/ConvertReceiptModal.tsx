@@ -95,7 +95,7 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
           setLookupBadge(`⚠️ ${data.message || 'No encontrado en línea (ingreso manual)'}`);
         } else if (data.documentType === 'RUC') {
           setLookupBadge(`✓ SUNAT: ${data.status || 'ACTIVO'} • ${data.condition || 'HABIDO'}${data.source === 'LOCAL_HISTORY' ? ' (Historial)' : ''}`);
-          if (targetType !== 'FACTURA') {
+          if (targetType !== 'FACTURA' && docToSearch.startsWith('20')) {
             setTargetType('FACTURA');
           }
         } else {
@@ -119,6 +119,19 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
 
     const docTrimmed = custDoc.trim();
     const nameTrimmed = custName.trim();
+    const addressTrimmed = custAddress.trim();
+    const forbiddenCompanyNames = [
+      'EMPRESA',
+      'EMPRESA SAC',
+      'EMPRESA S.A.C.',
+      'EMPRESA SRL',
+      'EMPRESA S.R.L.',
+      'CLIENTE VARIOS',
+      'CLIENTES VARIOS',
+      'RUC',
+      'SIN NOMBRE',
+      'VARIOS',
+    ];
 
     if (targetType === 'FACTURA') {
       if (!isValidPeruvianRuc(docTrimmed)) {
@@ -127,21 +140,31 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
         );
         return;
       }
-      if (!nameTrimmed) {
-        setError('Para Factura Electrónica es obligatoria la Razón Social de la empresa.');
+      if (nameTrimmed.length < 2 || forbiddenCompanyNames.includes(nameTrimmed.toUpperCase())) {
+        setError('Para Factura Electrónica es obligatoria la Razón Social auténtica de la empresa.');
+        return;
+      }
+      if (addressTrimmed.length < 3) {
+        setError('Para Factura Electrónica es obligatoria la Dirección Fiscal (mínimo 3 caracteres).');
         return;
       }
     } else if (targetType === 'BOLETA') {
-      if (docTrimmed.length === 11 && !isValidPeruvianRuc(docTrimmed)) {
+      if (/^\d{11}$/.test(docTrimmed) && !isValidPeruvianRuc(docTrimmed)) {
         setError('El RUC de 11 dígitos no tiene un dígito verificador válido ante SUNAT.');
         return;
       }
       if (isHighValueBoleta) {
-        if (!docTrimmed || (docTrimmed.length !== 8 && docTrimmed.length !== 11)) {
-          setError('Por normativa SUNAT, Boletas de S/ 700.00 a más requieren DNI o RUC obligatorio.');
+        if (!docTrimmed || docTrimmed.length < 8 || docTrimmed.length > 12) {
+          setError(
+            'Por normativa SUNAT, Boletas de S/ 700.00 a más requieren DNI, Carnet de Extranjería o RUC (8 a 12 caracteres).',
+          );
           return;
         }
-        if (!nameTrimmed) {
+        if (
+          nameTrimmed.length < 3 ||
+          nameTrimmed.toLowerCase() === 'cliente varios' ||
+          nameTrimmed.toLowerCase() === 'clientes varios'
+        ) {
           setError('Por normativa SUNAT, se requieren los nombres y apellidos completos del cliente.');
           return;
         }
@@ -284,7 +307,7 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
             {/* Input DNI / RUC con botón de consulta SUNAT */}
             <div>
               <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                {targetType === 'FACTURA' ? 'RUC de la Empresa (11 dígitos) *' : 'DNI / RUC del Cliente'}
+                {targetType === 'FACTURA' ? 'RUC de la Empresa (11 dígitos) *' : 'DNI / CE / RUC del Cliente'}
                 {isHighValueBoleta && targetType === 'BOLETA' && (
                   <span className="text-amber-400 ml-1 font-semibold text-[10px]">
                     (Obligatorio para montos ≥ S/ 700.00)
@@ -296,11 +319,15 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
                   <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
+                    maxLength={targetType === 'FACTURA' ? 11 : 12}
                     value={custDoc}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 11);
+                      const val =
+                        targetType === 'FACTURA'
+                          ? e.target.value.replace(/\D/g, '').slice(0, 11)
+                          : e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 12);
                       setCustDoc(val);
-                      if (val.length === 11 && targetType !== 'FACTURA') {
+                      if (/^\d{11}$/.test(val) && val.startsWith('20') && targetType !== 'FACTURA') {
                         setTargetType('FACTURA');
                       }
                     }}
@@ -310,7 +337,7 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
                         handleLookupDocument();
                       }
                     }}
-                    placeholder={targetType === 'FACTURA' ? 'Ej: 20601234567' : 'Ej: 71234567 o 10...'}
+                    placeholder={targetType === 'FACTURA' ? 'Ej: 20601234567' : 'Ej: 71234567, CE o 10...'}
                     className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-600 outline-none transition-all font-mono"
                   />
                 </div>
@@ -331,8 +358,16 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
               </div>
 
               {lookupBadge && (
-                <div className="mt-1.5 text-[11px] text-emerald-400 flex items-center gap-1 font-medium animate-in fade-in">
-                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                <div
+                  className={`mt-1.5 text-[11px] flex items-center gap-1 font-medium animate-in fade-in ${
+                    lookupBadge.startsWith('⚠️') ? 'text-amber-400' : 'text-emerald-400'
+                  }`}
+                >
+                  {lookupBadge.startsWith('⚠️') ? (
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  )}
                   <span>{lookupBadge}</span>
                 </div>
               )}

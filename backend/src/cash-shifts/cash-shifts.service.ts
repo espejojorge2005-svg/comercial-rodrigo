@@ -128,6 +128,9 @@ export class CashShiftsService {
       .filter((m) => m.type === CashMovementType.EXPENSE)
       .reduce((acc, m) => acc + Number(m.amount), 0);
 
+    const roundedIncomeMovements = Number(totalIncomeMovements.toFixed(2));
+    const roundedExpenseMovements = Number(totalExpenseMovements.toFixed(2));
+
     return {
       ...shift,
       initialBalance: Number(shift.initialBalance),
@@ -138,211 +141,287 @@ export class CashShiftsService {
         cashPaidTotal: Number(cashSales.toFixed(2)),
         digitalSales: Number(digitalSales.toFixed(2)),
         salesCount: sales.length,
-        totalIncomeMovements: Number(totalIncomeMovements.toFixed(2)),
-        totalExpenseMovements: Number(totalExpenseMovements.toFixed(2)),
+        incomeMovements: roundedIncomeMovements,
+        expenseMovements: roundedExpenseMovements,
+        totalIncomeMovements: roundedIncomeMovements,
+        totalExpenseMovements: roundedExpenseMovements,
       },
     };
   }
 
   /**
-   * Apertura de turno en una caja física
+   * Apertura de turno en una caja física (atómica y protegida contra doble apertura concurrente)
    */
   async openShift(userId: string, dto: OpenShiftDto) {
-    // 1. Verificar si el usuario ya tiene un turno abierto
-    const existingUserShift = await this.prisma.cashShift.findFirst({
-      where: {
-        userId,
-        status: ShiftStatus.OPEN,
-      },
-    });
-
-    if (existingUserShift) {
-      throw new BadRequestException('Ya tienes un turno activo abierto en el sistema.');
+    if (!Number.isFinite(dto.initialBalance) || dto.initialBalance < 0) {
+      throw new BadRequestException('El saldo inicial de apertura no puede ser negativo.');
     }
 
-    // 2. Verificar si la caja física seleccionada ya está ocupada por otro usuario
-    const existingRegisterShift = await this.prisma.cashShift.findFirst({
-      where: {
-        cashRegisterId: dto.cashRegisterId,
-        status: ShiftStatus.OPEN,
-      },
-      include: { user: true },
-    });
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // 1. Verificar si el usuario ya tiene un turno abierto
+        const existingUserShift = await tx.cashShift.findFirst({
+          where: {
+            userId,
+            status: ShiftStatus.OPEN,
+          },
+        });
 
-    if (existingRegisterShift) {
-      throw new BadRequestException(
-        `Esta caja física ya se encuentra en uso por el usuario ${existingRegisterShift.user.name}.`,
-      );
+        if (existingUserShift) {
+          throw new BadRequestException('Ya tienes un turno activo abierto en el sistema.');
+        }
+
+        // 2. Verificar si la caja física seleccionada ya está ocupada por otro usuario
+        const existingRegisterShift = await tx.cashShift.findFirst({
+          where: {
+            cashRegisterId: dto.cashRegisterId,
+            status: ShiftStatus.OPEN,
+          },
+          include: { user: true },
+        });
+
+        if (existingRegisterShift) {
+          throw new BadRequestException(
+            `Esta caja física ya se encuentra en uso por el usuario ${existingRegisterShift.user.name}.`,
+          );
+        }
+
+        // 3. Crear el turno
+        const newShift = await tx.cashShift.create({
+          data: {
+            userId,
+            cashRegisterId: dto.cashRegisterId,
+            initialBalance: new Prisma.Decimal(Number(dto.initialBalance.toFixed(2))),
+            status: ShiftStatus.OPEN,
+            notes: dto.notes,
+          },
+          include: {
+            cashRegister: true,
+            user: { select: { id: true, name: true, username: true } },
+          },
+        });
+
+        return {
+          message: 'Turno de caja aperturado exitosamente',
+          shift: {
+            ...newShift,
+            initialBalance: Number(newShift.initialBalance),
+          },
+        };
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new BadRequestException(
+          'La caja seleccionada o tu usuario ya cuenta con un turno abierto en curso.',
+        );
+      }
+      throw error;
     }
-
-    // 3. Crear el turno
-    const newShift = await this.prisma.cashShift.create({
-      data: {
-        userId,
-        cashRegisterId: dto.cashRegisterId,
-        initialBalance: new Prisma.Decimal(dto.initialBalance),
-        status: ShiftStatus.OPEN,
-        notes: dto.notes,
-      },
-      include: {
-        cashRegister: true,
-        user: { select: { id: true, name: true, username: true } },
-      },
-    });
-
-    return {
-      message: 'Turno de caja aperturado exitosamente',
-      shift: {
-        ...newShift,
-        initialBalance: Number(newShift.initialBalance),
-      },
-    };
   }
 
   /**
-   * Cierre de turno con ARQUEO CIEGO para el cajero
+   * Cierre de turno con ARQUEO CIEGO para el cajero (transaccional e idempotente ante doble clic)
    */
   async closeShift(userId: string, userRole: Role, dto: CloseShiftDto) {
-    const shift = await this.prisma.cashShift.findUnique({
-      where: { id: dto.shiftId },
-      include: {
-        cashMovements: true,
-        cashRegister: true,
-      },
-    });
-
-    if (!shift) {
-      throw new NotFoundException('Turno de caja no encontrado');
+    if (!Number.isFinite(dto.actualBalance) || dto.actualBalance < 0) {
+      throw new BadRequestException('El monto físico declarado no puede ser negativo.');
     }
 
-    if (shift.status === ShiftStatus.CLOSED) {
-      throw new BadRequestException('Este turno ya ha sido cerrado previamente.');
-    }
+    return this.prisma.$transaction(async (tx) => {
+      const shift = await tx.cashShift.findUnique({
+        where: { id: dto.shiftId },
+        include: {
+          cashMovements: true,
+          cashRegister: true,
+        },
+      });
 
-    // Si es cajero, solo puede cerrar su propio turno
-    if (userRole === Role.CAJERO && shift.userId !== userId) {
-      throw new ForbiddenException('No tienes permiso para cerrar el turno de otro usuario.');
-    }
+      if (!shift) {
+        throw new NotFoundException('Turno de caja no encontrado');
+      }
 
-    // Calcular ventas no anuladas del turno con sus productos
-    const sales = await this.prisma.sale.findMany({
-      where: {
-        cashShiftId: shift.id,
-        isVoided: false,
-      },
-      select: {
-        id: true,
-        saleNumber: true,
-        cashPaid: true,
-        digitalPaid: true,
-        changeAmount: true,
-        totalAmount: true,
-        paymentMethod: true,
-        createdAt: true,
-        items: {
-          select: {
-            quantity: true,
-            unitPrice: true,
-            subtotal: true,
-            product: {
-              select: {
-                id: true,
-                name: true,
-                barcode: true,
-                unitType: true,
+      if (shift.status === ShiftStatus.CLOSED) {
+        throw new BadRequestException('Este turno ya ha sido cerrado previamente.');
+      }
+
+      // Si es cajero, solo puede cerrar su propio turno
+      if (userRole === Role.CAJERO && shift.userId !== userId) {
+        throw new ForbiddenException('No tienes permiso para cerrar el turno de otro usuario.');
+      }
+
+      // Bloqueo atómico para evitar condiciones de carrera por doble clic al cerrar caja
+      if (typeof (tx.cashShift as any).updateMany === 'function') {
+        const lockResult = await tx.cashShift.updateMany({
+          where: { id: shift.id, status: ShiftStatus.OPEN },
+          data: { status: ShiftStatus.CLOSED },
+        });
+        if (lockResult.count === 0) {
+          throw new BadRequestException('Este turno ya ha sido cerrado previamente.');
+        }
+      }
+
+      // Calcular ventas no anuladas del turno con sus productos
+      const sales = await tx.sale.findMany({
+        where: {
+          cashShiftId: shift.id,
+          isVoided: false,
+        },
+        select: {
+          id: true,
+          saleNumber: true,
+          cashPaid: true,
+          digitalPaid: true,
+          changeAmount: true,
+          totalAmount: true,
+          paymentMethod: true,
+          createdAt: true,
+          items: {
+            select: {
+              quantity: true,
+              unitPrice: true,
+              subtotal: true,
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  barcode: true,
+                  unitType: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+        orderBy: { createdAt: 'asc' },
+      });
 
-    const cashFromSales = sales.reduce((acc, s) => acc + calculateNetCashFromSale(s), 0);
-    const digitalFromSales = sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0);
-    const totalSales = sales.reduce((acc, s) => acc + Number(s.totalAmount), 0);
+      const cashFromSales = Number(
+        sales.reduce((acc, s) => acc + calculateNetCashFromSale(s), 0).toFixed(2),
+      );
+      const digitalFromSales = Number(
+        sales.reduce((acc, s) => acc + Number(s.digitalPaid), 0).toFixed(2),
+      );
+      const totalSales = Number(
+        sales.reduce((acc, s) => acc + Number(s.totalAmount), 0).toFixed(2),
+      );
 
-    // Agrupar resumen de productos vendidos en el turno
-    const productsMap = new Map<string, {
-      productId: string;
-      productName: string;
-      barcode?: string | null;
-      unitType: string;
-      quantity: number;
-      totalRevenue: number;
-    }>();
+      // Agrupar resumen de productos vendidos en el turno
+      const productsMap = new Map<
+        string,
+        {
+          productId: string;
+          productName: string;
+          barcode?: string | null;
+          unitType: string;
+          quantity: number;
+          totalRevenue: number;
+        }
+      >();
 
-    for (const s of sales) {
-      for (const it of s.items) {
-        const pId = it.product.id;
-        const qty = Number(it.quantity);
-        const subtotal = Number(it.subtotal);
-        const existing = productsMap.get(pId);
-        if (existing) {
-          existing.quantity += qty;
-          existing.totalRevenue += subtotal;
-        } else {
-          productsMap.set(pId, {
-            productId: pId,
-            productName: it.product.name,
-            barcode: it.product.barcode,
-            unitType: it.product.unitType,
-            quantity: qty,
-            totalRevenue: subtotal,
-          });
+      for (const s of sales) {
+        for (const it of s.items) {
+          const pId = it.product.id;
+          const qty = Number(it.quantity);
+          const subtotal = Number(it.subtotal);
+          const existing = productsMap.get(pId);
+          if (existing) {
+            existing.quantity = Number((existing.quantity + qty).toFixed(3));
+            existing.totalRevenue = Number((existing.totalRevenue + subtotal).toFixed(2));
+          } else {
+            productsMap.set(pId, {
+              productId: pId,
+              productName: it.product.name,
+              barcode: it.product.barcode,
+              unitType: it.product.unitType,
+              quantity: Number(qty.toFixed(3)),
+              totalRevenue: Number(subtotal.toFixed(2)),
+            });
+          }
         }
       }
-    }
 
-    const soldProducts = Array.from(productsMap.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+      const soldProducts = Array.from(productsMap.values()).sort(
+        (a, b) => b.totalRevenue - a.totalRevenue,
+      );
 
-    const salesList = sales.map((s) => ({
-      id: s.id,
-      saleNumber: s.saleNumber,
-      totalAmount: Number(s.totalAmount),
-      paymentMethod: s.paymentMethod,
-      createdAt: s.createdAt,
-    }));
+      const salesList = sales.map((s) => ({
+        id: s.id,
+        saleNumber: s.saleNumber,
+        totalAmount: Number(s.totalAmount),
+        paymentMethod: s.paymentMethod,
+        createdAt: s.createdAt,
+      }));
 
-    // Calcular movimientos de caja chica
-    const incomeMovements = shift.cashMovements
-      .filter((m) => m.type === CashMovementType.INCOME)
-      .reduce((acc, m) => acc + Number(m.amount), 0);
+      // Calcular movimientos de caja chica
+      const incomeMovements = Number(
+        shift.cashMovements
+          .filter((m) => m.type === CashMovementType.INCOME)
+          .reduce((acc, m) => acc + Number(m.amount), 0)
+          .toFixed(2),
+      );
 
-    const expenseMovements = shift.cashMovements
-      .filter((m) => m.type === CashMovementType.EXPENSE)
-      .reduce((acc, m) => acc + Number(m.amount), 0);
+      const expenseMovements = Number(
+        shift.cashMovements
+          .filter((m) => m.type === CashMovementType.EXPENSE)
+          .reduce((acc, m) => acc + Number(m.amount), 0)
+          .toFixed(2),
+      );
 
-    // Saldo esperado en efectivo en gaveta:
-    // Saldo Inicial + Ventas en Efectivo + Ingresos manuales - Egresos manuales
-    const expectedCashInDrawer =
-      Number(shift.initialBalance) + cashFromSales + incomeMovements - expenseMovements;
+      // Saldo esperado en efectivo en gaveta:
+      // Saldo Inicial + Ventas en Efectivo + Ingresos manuales - Egresos manuales
+      const expectedCashInDrawer = Number(
+        (Number(shift.initialBalance) + cashFromSales + incomeMovements - expenseMovements).toFixed(
+          2,
+        ),
+      );
 
-    // Diferencia = Lo que el cajero contó - Lo que el sistema calcula
-    const difference = dto.actualBalance - expectedCashInDrawer;
+      const actualBalanceRounded = Number(dto.actualBalance.toFixed(2));
+      // Diferencia = Lo que el cajero contó - Lo que el sistema calcula
+      const difference = Number((actualBalanceRounded - expectedCashInDrawer).toFixed(2));
 
-    // Actualizar registro en base de datos
-    const updatedShift = await this.prisma.cashShift.update({
-      where: { id: shift.id },
-      data: {
-        status: ShiftStatus.CLOSED,
-        closedAt: new Date(),
-        actualBalance: new Prisma.Decimal(dto.actualBalance),
-        expectedBalance: new Prisma.Decimal(expectedCashInDrawer),
-        difference: new Prisma.Decimal(difference),
-        notes: dto.notes ? `${shift.notes ? shift.notes + ' | ' : ''}${dto.notes}` : shift.notes,
-      },
-      include: {
-        user: { select: { id: true, name: true, username: true } },
-        cashRegister: true,
-      },
-    });
+      // Actualizar registro en base de datos
+      const updatedShift = await tx.cashShift.update({
+        where: { id: shift.id },
+        data: {
+          status: ShiftStatus.CLOSED,
+          closedAt: new Date(),
+          actualBalance: new Prisma.Decimal(actualBalanceRounded),
+          expectedBalance: new Prisma.Decimal(expectedCashInDrawer),
+          difference: new Prisma.Decimal(difference),
+          notes: dto.notes ? `${shift.notes ? shift.notes + ' | ' : ''}${dto.notes}` : shift.notes,
+        },
+        include: {
+          user: { select: { id: true, name: true, username: true } },
+          cashRegister: true,
+        },
+      });
 
-    // 🛡️ REGLA ANTIFRAUDE (Arqueo Ciego):
-    // Si el usuario es CAJERO, no le mostramos si sobró o faltó dinero para evitar manipulaciones.
-    if (userRole === Role.CAJERO) {
+      // 🛡️ REGLA ANTIFRAUDE (Arqueo Ciego):
+      // Si el usuario es CAJERO, no le mostramos si sobró o faltó dinero para evitar manipulaciones.
+      if (userRole === Role.CAJERO) {
+        return {
+          message:
+            'Turno cerrado exitosamente. Su arqueo ha sido registrado para revisión de administración.',
+          shiftId: updatedShift.id,
+          caja: updatedShift.cashRegister.name,
+          cajaIdentifier: updatedShift.cashRegister.identifier,
+          cashierName: updatedShift.user?.name,
+          openedAt: shift.openedAt,
+          closedAt: updatedShift.closedAt,
+          initialBalance: Number(shift.initialBalance),
+          actualBalance: actualBalanceRounded,
+          reportedAmount: actualBalanceRounded,
+          salesCount: sales.length,
+          totalSales,
+          soldProducts,
+          salesList,
+          notes: dto.notes || shift.notes || '',
+          isBlindAudit: true,
+        };
+      }
+
+      // Si es ADMIN, mostramos la auditoría completa
       return {
-        message: 'Turno cerrado exitosamente. Su arqueo ha sido registrado para revisión de administración.',
+        message: 'Turno cerrado y auditado exitosamente por administración',
         shiftId: updatedShift.id,
         caja: updatedShift.cashRegister.name,
         cajaIdentifier: updatedShift.cashRegister.identifier,
@@ -350,45 +429,27 @@ export class CashShiftsService {
         openedAt: shift.openedAt,
         closedAt: updatedShift.closedAt,
         initialBalance: Number(shift.initialBalance),
-        actualBalance: dto.actualBalance,
-        reportedAmount: dto.actualBalance,
-        salesCount: sales.length,
         totalSales,
+        cashFromSales,
+        cashPaidTotal: cashFromSales,
+        digitalFromSales,
+        incomeMovements,
+        expenseMovements,
+        totalIncomeMovements: incomeMovements,
+        totalExpenseMovements: expenseMovements,
+        expectedBalance: expectedCashInDrawer,
+        actualBalance: actualBalanceRounded,
+        reportedAmount: actualBalanceRounded,
+        difference,
+        hasDiscrepancy: difference !== 0,
+        discrepancyType: difference > 0 ? 'SOBRANTE' : difference < 0 ? 'FALTANTE' : 'EXACTO',
+        salesCount: sales.length,
         soldProducts,
         salesList,
         notes: dto.notes || shift.notes || '',
-        isBlindAudit: true,
+        isBlindAudit: false,
       };
-    }
-
-    // Si es ADMIN, mostramos la auditoría completa
-    return {
-      message: 'Turno cerrado y auditado exitosamente por administración',
-      shiftId: updatedShift.id,
-      caja: updatedShift.cashRegister.name,
-      cajaIdentifier: updatedShift.cashRegister.identifier,
-      cashierName: updatedShift.user?.name,
-      openedAt: shift.openedAt,
-      closedAt: updatedShift.closedAt,
-      initialBalance: Number(shift.initialBalance),
-      totalSales,
-      cashFromSales,
-      cashPaidTotal: cashFromSales,
-      digitalFromSales,
-      incomeMovements,
-      expenseMovements,
-      expectedBalance: expectedCashInDrawer,
-      actualBalance: dto.actualBalance,
-      reportedAmount: dto.actualBalance,
-      difference,
-      hasDiscrepancy: difference !== 0,
-      discrepancyType: difference > 0 ? 'SOBRANTE' : difference < 0 ? 'FALTANTE' : 'EXACTO',
-      salesCount: sales.length,
-      soldProducts,
-      salesList,
-      notes: dto.notes || shift.notes || '',
-      isBlindAudit: false,
-    };
+    });
   }
 
   /**
@@ -506,39 +567,66 @@ export class CashShiftsService {
 
     return shifts.map((s) => {
       const sales = s.sales || [];
-      const totalSales = sales.reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
-      const cashFromSales = sales.reduce((acc, sale) => acc + calculateNetCashFromSale(sale), 0);
-      const digitalFromSales = sales.reduce((acc, sale) => acc + Number(sale.digitalPaid), 0);
+      const totalSales = Number(
+        sales.reduce((acc, sale) => acc + Number(sale.totalAmount), 0).toFixed(2),
+      );
+      const cashFromSales = Number(
+        sales.reduce((acc, sale) => acc + calculateNetCashFromSale(sale), 0).toFixed(2),
+      );
+      const digitalFromSales = Number(
+        sales.reduce((acc, sale) => acc + Number(sale.digitalPaid), 0).toFixed(2),
+      );
 
-      const yapePlinSales = sales
-        .filter((sale) => sale.paymentMethod === 'TRANSFER')
-        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
-      const cardSales = sales
-        .filter((sale) => sale.paymentMethod === 'CARD')
-        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
-      const pureCashSales = sales
-        .filter((sale) => sale.paymentMethod === 'CASH')
-        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
-      const mixedSales = sales
-        .filter((sale) => sale.paymentMethod === 'MIXED')
-        .reduce((acc, sale) => acc + Number(sale.totalAmount), 0);
+      const yapePlinSales = Number(
+        sales
+          .filter((sale) => sale.paymentMethod === 'TRANSFER')
+          .reduce((acc, sale) => acc + Number(sale.totalAmount), 0)
+          .toFixed(2),
+      );
+      const cardSales = Number(
+        sales
+          .filter((sale) => sale.paymentMethod === 'CARD')
+          .reduce((acc, sale) => acc + Number(sale.totalAmount), 0)
+          .toFixed(2),
+      );
+      const pureCashSales = Number(
+        sales
+          .filter((sale) => sale.paymentMethod === 'CASH')
+          .reduce((acc, sale) => acc + Number(sale.totalAmount), 0)
+          .toFixed(2),
+      );
+      const mixedSales = Number(
+        sales
+          .filter((sale) => sale.paymentMethod === 'MIXED')
+          .reduce((acc, sale) => acc + Number(sale.totalAmount), 0)
+          .toFixed(2),
+      );
 
-      const incomeMovements = s.cashMovements
-        .filter((m) => m.type === CashMovementType.INCOME)
-        .reduce((acc, m) => acc + Number(m.amount), 0);
-      const expenseMovements = s.cashMovements
-        .filter((m) => m.type === CashMovementType.EXPENSE)
-        .reduce((acc, m) => acc + Number(m.amount), 0);
+      const incomeMovements = Number(
+        s.cashMovements
+          .filter((m) => m.type === CashMovementType.INCOME)
+          .reduce((acc, m) => acc + Number(m.amount), 0)
+          .toFixed(2),
+      );
+      const expenseMovements = Number(
+        s.cashMovements
+          .filter((m) => m.type === CashMovementType.EXPENSE)
+          .reduce((acc, m) => acc + Number(m.amount), 0)
+          .toFixed(2),
+      );
 
       // Resumen de artículos vendidos en el turno
-      const productsMap = new Map<string, {
-        productId: string;
-        productName: string;
-        barcode?: string | null;
-        unitType: string;
-        quantity: number;
-        totalRevenue: number;
-      }>();
+      const productsMap = new Map<
+        string,
+        {
+          productId: string;
+          productName: string;
+          barcode?: string | null;
+          unitType: string;
+          quantity: number;
+          totalRevenue: number;
+        }
+      >();
 
       for (const sale of sales) {
         for (const it of sale.items || []) {
@@ -547,22 +635,24 @@ export class CashShiftsService {
           const subtotal = Number(it.subtotal);
           const existing = productsMap.get(pId);
           if (existing) {
-            existing.quantity += qty;
-            existing.totalRevenue += subtotal;
+            existing.quantity = Number((existing.quantity + qty).toFixed(3));
+            existing.totalRevenue = Number((existing.totalRevenue + subtotal).toFixed(2));
           } else {
             productsMap.set(pId, {
               productId: pId,
               productName: it.product.name,
               barcode: it.product.barcode,
               unitType: it.product.unitType,
-              quantity: qty,
-              totalRevenue: subtotal,
+              quantity: Number(qty.toFixed(3)),
+              totalRevenue: Number(subtotal.toFixed(2)),
             });
           }
         }
       }
 
-      const soldProducts = Array.from(productsMap.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+      const soldProducts = Array.from(productsMap.values()).sort(
+        (a, b) => b.totalRevenue - a.totalRevenue,
+      );
       const salesList = sales.map((sale) => ({
         id: sale.id,
         saleNumber: sale.saleNumber,
@@ -574,15 +664,24 @@ export class CashShiftsService {
       return {
         ...s,
         initialBalance: Number(s.initialBalance),
-        expectedBalance: s.expectedBalance ? Number(s.expectedBalance) : null,
-        actualBalance: s.actualBalance ? Number(s.actualBalance) : null,
-        difference: s.difference ? Number(s.difference) : null,
+        expectedBalance:
+          s.expectedBalance !== null && s.expectedBalance !== undefined
+            ? Number(s.expectedBalance)
+            : null,
+        actualBalance:
+          s.actualBalance !== null && s.actualBalance !== undefined
+            ? Number(s.actualBalance)
+            : null,
+        difference:
+          s.difference !== null && s.difference !== undefined ? Number(s.difference) : null,
         soldProducts,
         salesList,
         metrics: {
           totalSales,
+          cashSales: cashFromSales,
           cashFromSales,
           cashPaidTotal: cashFromSales,
+          digitalSales: digitalFromSales,
           digitalFromSales,
           yapePlinSales,
           cardSales,
@@ -593,6 +692,8 @@ export class CashShiftsService {
           salesList,
           incomeMovements,
           expenseMovements,
+          totalIncomeMovements: incomeMovements,
+          totalExpenseMovements: expenseMovements,
         },
       };
     });

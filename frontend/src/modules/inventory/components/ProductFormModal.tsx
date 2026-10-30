@@ -2,8 +2,21 @@ import React, { useState } from 'react';
 import { X, Calendar } from 'lucide-react';
 import { apiRequest } from '../../../api/client.js';
 import type { Product, Category, UnitType } from '../../../types/index.js';
-import { SUNAT_UNITS } from '../../../lib/units.js';
-import { getProductExpirationInfo } from '../../../lib/utils.js';
+import { SUNAT_UNITS, isDiscreteUnitType } from '../../../lib/units.js';
+import {
+  addPeruDaysYMD,
+  getPeruYMD,
+  getProductExpirationInfo,
+} from '../../../lib/utils.js';
+
+function addMonthsFromPeruToday(monthsToAdd: number): string {
+  const [yStr, mStr, dStr] = getPeruYMD().split('-');
+  const d = new Date(Date.UTC(Number(yStr), Number(mStr) - 1 + monthsToAdd, Number(dStr), 12, 0, 0));
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 export interface ProductFormModalProps {
   isOpen: boolean;
@@ -26,19 +39,29 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     initialData?.categoryId || categories[0]?.id || '',
   );
   const [unitType, setUnitType] = useState<UnitType>(initialData?.unitType || 'NIU');
-  const [costPrice, setCostPrice] = useState(String(initialData?.costPrice || ''));
-  const [retailPrice, setRetailPrice] = useState(String(initialData?.retailPrice || ''));
+  const [costPrice, setCostPrice] = useState(
+    initialData?.costPrice != null ? String(initialData.costPrice) : '',
+  );
+  const [retailPrice, setRetailPrice] = useState(
+    initialData?.retailPrice != null ? String(initialData.retailPrice) : '',
+  );
   const [wholesalePrice, setWholesalePrice] = useState(
     initialData?.wholesalePrice != null ? String(initialData.wholesalePrice) : '',
   );
   const [wholesaleMinQty, setWholesaleMinQty] = useState(
     initialData?.wholesaleMinQty != null ? String(initialData.wholesaleMinQty) : '3',
   );
-  const [currentStock, setCurrentStock] = useState(String(initialData?.currentStock || '0'));
-  const [minStock, setMinStock] = useState(String(initialData?.minStock || '5'));
+  const [currentStock, setCurrentStock] = useState(
+    initialData?.currentStock != null ? String(initialData.currentStock) : '0',
+  );
+  const [minStock, setMinStock] = useState(
+    initialData?.minStock != null ? String(initialData.minStock) : '5',
+  );
   const [expirationDate, setExpirationDate] = useState<string>(
     initialData?.expirationDate
-      ? new Date(initialData.expirationDate).toISOString().split('T')[0]
+      ? typeof initialData.expirationDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(initialData.expirationDate)
+        ? initialData.expirationDate.slice(0, 10)
+        : new Date(initialData.expirationDate).toISOString().split('T')[0]
       : '',
   );
 
@@ -47,10 +70,47 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isDiscrete = isDiscreteUnitType(unitType);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    if (isLoading) return;
     setError(null);
+
+    if (!name.trim()) {
+      setError('El nombre del producto es obligatorio');
+      return;
+    }
+
+    const parsedCost = costPrice.trim() !== '' ? parseFloat(costPrice) : 0;
+    const parsedRetail = retailPrice.trim() !== '' ? parseFloat(retailPrice) : 0;
+    const parsedMinStock = minStock.trim() !== '' ? parseFloat(minStock) : 5;
+    const parsedCurrentStock = currentStock.trim() !== '' ? parseFloat(currentStock) : 0;
+
+    if (Number.isNaN(parsedRetail) || parsedRetail <= 0) {
+      setError('El precio de venta menor debe ser mayor a S/ 0.00');
+      return;
+    }
+    if (Number.isNaN(parsedCost) || parsedCost < 0) {
+      setError('El costo de compra no puede ser negativo');
+      return;
+    }
+    if (Number.isNaN(parsedMinStock) || parsedMinStock < 0) {
+      setError('El stock mínimo no puede ser negativo');
+      return;
+    }
+    if (!initialData) {
+      if (Number.isNaN(parsedCurrentStock) || parsedCurrentStock < 0) {
+        setError('El stock inicial no puede ser negativo');
+        return;
+      }
+      if (isDiscrete && !Number.isInteger(parsedCurrentStock)) {
+        setError(
+          'Las unidades discretas (NIU, Caja, Paquete, Saco) no admiten decimales en el stock inicial',
+        );
+        return;
+      }
+    }
 
     const parsedWholesale =
       wholesalePrice.trim() !== '' && parseFloat(wholesalePrice) > 0
@@ -64,21 +124,23 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         : null;
 
     const payload: any = {
-      barcode: barcode.trim() || undefined,
+      barcode: barcode.trim() ? barcode.trim() : initialData ? null : undefined,
       name: name.trim(),
       categoryId,
       unitType,
-      costPrice: parseFloat(costPrice) || 0,
-      retailPrice: parseFloat(retailPrice) || 0,
-      wholesalePrice: parsedWholesale,
+      costPrice: Number(parsedCost.toFixed(2)),
+      retailPrice: Number(parsedRetail.toFixed(2)),
+      wholesalePrice: parsedWholesale !== null ? Number(parsedWholesale.toFixed(2)) : null,
       wholesaleMinQty: parsedMinQty,
-      minStock: parseFloat(minStock) || 5,
+      minStock: Number(parsedMinStock.toFixed(3)),
       expirationDate: expirationDate.trim() ? expirationDate.trim() : null,
     };
 
     if (!initialData) {
-      payload.currentStock = parseFloat(currentStock) || 0;
+      payload.currentStock = Number(parsedCurrentStock.toFixed(3));
     }
+
+    setIsLoading(true);
 
     try {
       if (initialData) {
@@ -249,7 +311,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 <label className="block font-semibold text-slate-300 mb-1">Stock Inicial:</label>
                 <input
                   type="number"
-                  step="0.1"
+                  step={isDiscrete ? '1' : '0.001'}
                   min="0"
                   value={currentStock}
                   onChange={(e) => setCurrentStock(e.target.value)}
@@ -313,44 +375,28 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               <div className="flex items-center gap-1 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 15);
-                    setExpirationDate(d.toISOString().split('T')[0]);
-                  }}
+                  onClick={() => setExpirationDate(addPeruDaysYMD(15))}
                   className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
                 >
                   +15 días
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setMonth(d.getMonth() + 1);
-                    setExpirationDate(d.toISOString().split('T')[0]);
-                  }}
+                  onClick={() => setExpirationDate(addMonthsFromPeruToday(1))}
                   className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
                 >
                   +1 mes
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setMonth(d.getMonth() + 6);
-                    setExpirationDate(d.toISOString().split('T')[0]);
-                  }}
+                  onClick={() => setExpirationDate(addMonthsFromPeruToday(6))}
                   className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
                 >
                   +6 meses
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setFullYear(d.getFullYear() + 1);
-                    setExpirationDate(d.toISOString().split('T')[0]);
-                  }}
+                  onClick={() => setExpirationDate(addMonthsFromPeruToday(12))}
                   className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium border border-slate-700/60 transition-all cursor-pointer"
                 >
                   +1 año

@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useConfigStore } from '../../store/useConfigStore.js';
-import { formatPeruDate } from '../../lib/utils.js';
+import {
+  escapeHtml,
+  formatPeruDate,
+  formatPeruDateTime,
+  isValidPeruvianRuc,
+} from '../../lib/utils.js';
 import {
   X,
   Store,
@@ -147,16 +152,16 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
         <body>
           <div class="ticket-container">
             <div class="text-center border-b" style="padding-bottom: 5px; margin-bottom: 5px;">
-              <div class="font-extrabold" style="font-size: 13px;">${name || 'COMERCIAL RODRIGO'}</div>
-              <div style="font-size: 10px;">${subtitle || 'VENTA POR MAYOR Y MENOR'}</div>
-              <div style="font-size: 10px;">RUC: ${ruc || '10458923011'} • Tel: ${phone || '(01) 987-654-321'}</div>
-              <div style="font-size: 9px;">${address || 'Av. Principal 1234, Lima'}</div>
+              <div class="font-extrabold" style="font-size: 13px;">${escapeHtml(name || 'COMERCIAL RODRIGO')}</div>
+              <div style="font-size: 10px;">${escapeHtml(subtitle || 'VENTA POR MAYOR Y MENOR')}</div>
+              <div style="font-size: 10px;">RUC: ${escapeHtml(ruc || '10458923011')} • Tel: ${escapeHtml(phone || '(01) 987-654-321')}</div>
+              <div style="font-size: 9px;">${escapeHtml(address || 'Av. Principal 1234, Lima')}</div>
               <div class="font-bold border-t" style="margin-top: 5px; padding-top: 3px;">
-                *** TICKET DE PRUEBA TÉRMICA (${paperWidth}) ***
+                *** TICKET DE PRUEBA TÉRMICA (${escapeHtml(paperWidth)}) ***
               </div>
             </div>
             <div style="font-size: 10px; margin-bottom: 5px;">
-              <div>FECHA: ${new Date().toLocaleString('es-PE')}</div>
+              <div>FECHA: ${escapeHtml(formatPeruDateTime(new Date()))}</div>
               <div>ESTADO: TIQUETERA CALIBRADA</div>
             </div>
             <table>
@@ -170,7 +175,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
               <tbody>
                 <tr>
                   <td>1</td>
-                  <td>PRUEBA DE ANCHO ${paperWidth}</td>
+                  <td>PRUEBA DE ANCHO ${escapeHtml(paperWidth)}</td>
                   <td class="text-right">S/. 12.00</td>
                 </tr>
                 <tr>
@@ -184,7 +189,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
               TOTAL: S/. 30.00
             </div>
             <div class="text-center border-t" style="margin-top: 8px; padding-top: 5px; font-size: 9px;">
-              ${footerText || '¡GRACIAS POR SU COMPRA!'}
+              ${escapeHtml(footerText || '¡GRACIAS POR SU COMPRA!')}
             </div>
           </div>
         </body>
@@ -202,11 +207,19 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading || successMsg) return;
     setError(null);
     setSuccessMsg(null);
 
-    if (!ruc.trim()) {
-      setError('El número de RUC es obligatorio');
+    if (!name.trim()) {
+      setError('La Razón Social o nombre comercial es obligatorio');
+      return;
+    }
+
+    if (!ruc.trim() || !isValidPeruvianRuc(ruc.trim())) {
+      setError(
+        'Ingrese un RUC peruano válido de 11 dígitos (iniciado en 10, 15, 16, 17 o 20 con dígito verificador SUNAT)',
+      );
       return;
     }
 
@@ -382,7 +395,7 @@ export const StoreSettingsModal: React.FC<StoreSettingsModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || Boolean(successMsg)}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />

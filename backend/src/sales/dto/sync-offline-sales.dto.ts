@@ -1,8 +1,10 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -12,6 +14,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaymentMethod, ReceiptType } from '@prisma/client';
+
+const SALE_RECEIPT_TYPES: ReceiptType[] = [
+  ReceiptType.NOTA_VENTA,
+  ReceiptType.BOLETA,
+  ReceiptType.FACTURA,
+];
 
 export class SyncOfflineSaleItemDto {
   @IsString({ message: 'El ID del producto es obligatorio' })
@@ -40,12 +48,20 @@ export class SyncOfflineSaleDto {
   cashShiftId: string;
 
   @IsOptional()
-  @IsEnum(ReceiptType)
+  @IsIn(SALE_RECEIPT_TYPES, {
+    message: 'El tipo de comprobante debe ser NOTA_VENTA, BOLETA o FACTURA',
+  })
   receiptType?: ReceiptType;
 
   @IsOptional()
-  @IsEnum(ReceiptType)
+  @IsIn(SALE_RECEIPT_TYPES, {
+    message: 'El tipo de comprobante destino debe ser NOTA_VENTA, BOLETA o FACTURA',
+  })
   targetReceiptType?: ReceiptType;
+
+  @IsOptional()
+  @IsString()
+  adminPin?: string;
 
   @IsOptional()
   @IsString()
@@ -89,6 +105,7 @@ export class SyncOfflineSaleDto {
   createdAt: string;
 
   @IsArray()
+  @ArrayMinSize(1, { message: 'Cada venta offline debe incluir al menos un ítem' })
   @ValidateNested({ each: true })
   @Type(() => SyncOfflineSaleItemDto)
   items: SyncOfflineSaleItemDto[];
