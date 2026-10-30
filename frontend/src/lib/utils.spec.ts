@@ -5,6 +5,9 @@ import {
   sanitizeExternalUrl,
   getProductExpirationInfo,
   isValidPeruvianRuc,
+  resolveSunatCustomerDocType,
+  isValidBoletaCustomerDoc,
+  isValidOptionalEmail,
 } from './utils.js';
 
 describe('SUNAT utils - numeroALetras (Catálogo 52)', () => {
@@ -76,5 +79,29 @@ describe('Zona horaria Perú (UTC-5) y RUC Módulo 11', () => {
     expect(isValidPeruvianRuc('20100070971')).toBe(false); // Dígito verificador inválido
     // Prefijo 16 con Módulo 11 válido: 1612345678 -> 1*5+6*4+1*3+2*2+3*7+4*6+5*5+6*4+7*3+8*2 = 5+24+3+4+21+24+25+24+21+16 = 167; 11 - (167 % 11 = 2) = 9
     expect(isValidPeruvianRuc('16123456789')).toBe(true);
+  });
+
+  it('resolveSunatCustomerDocType e isValidBoletaCustomerDoc deben rechazar DNIs truncados, ceros y RUCs inválidos', () => {
+    expect(resolveSunatCustomerDocType('45892301')).toBe('1');
+    expect(resolveSunatCustomerDocType('00000000')).toBe('-');
+    expect(resolveSunatCustomerDocType('4589230')).toBe('-'); // DNI de 7 dígitos truncado
+    expect(resolveSunatCustomerDocType('001234567')).toBe('4'); // CE Migraciones 9 dígitos
+    expect(resolveSunatCustomerDocType('20100070970')).toBe('6'); // RUC válido
+    expect(resolveSunatCustomerDocType('20100070971')).toBe('-'); // RUC inválido no debe pasar como CE
+    expect(resolveSunatCustomerDocType('2010007097')).toBe('-'); // RUC de 10 dígitos truncado
+    expect(resolveSunatCustomerDocType('AB123456')).toBe('7'); // Pasaporte alfanumérico
+    expect(resolveSunatCustomerDocType('NINGUNO')).toBe('-'); // Texto sin números no es pasaporte
+
+    expect(isValidBoletaCustomerDoc('45892301')).toBe(true);
+    expect(isValidBoletaCustomerDoc('4589230')).toBe(false);
+    expect(isValidBoletaCustomerDoc('20100070971')).toBe(false);
+  });
+
+  it('isValidOptionalEmail debe validar correos opcionales para Nubefact', () => {
+    expect(isValidOptionalEmail('')).toBe(true);
+    expect(isValidOptionalEmail(null)).toBe(true);
+    expect(isValidOptionalEmail('facturacion@empresa.com.pe')).toBe(true);
+    expect(isValidOptionalEmail('cliente@')).toBe(false);
+    expect(isValidOptionalEmail('correo sin arroba.com')).toBe(false);
   });
 });

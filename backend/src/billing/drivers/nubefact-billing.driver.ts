@@ -5,7 +5,10 @@ import {
   IssueCreditNoteInput,
   BillingIssueResult,
 } from '../billing.types.js';
-import { resolveSunatCustomerDocType } from '../../sales/utils/sales-fiscal.util.js';
+import {
+  resolveSunatCustomerDocType,
+  isValidOptionalEmail,
+} from '../../sales/utils/sales-fiscal.util.js';
 
 /**
  * Formatea una fecha a DD-MM-YYYY usando estrictamente la zona horaria de Perú (America/Lima / UTC-5)
@@ -143,10 +146,258 @@ export function buildNubefactAuthHeader(apiToken: string): string {
 
 const NUBEFACT_TIMEOUT_MS = 15_000;
 
+/**
+ * Sanitiza textos enviados a Nubefact eliminando saltos de línea, tabulaciones, caracteres
+ * de control y tuberías ('|') que rompen el serializador interno UBL/TXT del PSE.
+ */
+export function sanitizeNubefactText(value?: string | null, maxLength = 250): string {
+  if (!value) return '';
+  return String(value)
+    .replace(/[\r\n\t]+/g, ' ')
+    .split('')
+    .map((ch) => (ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127 ? ' ' : ch))
+    .join('')
+    .replace(/\|/g, '-')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+/**
+ * Traduce el método de pago interno del POS a la descripción formal para el PDF/XML de Nubefact.
+ */
+export function mapPaymentMethodToNubefact(paymentMethod?: string | null): string {
+  switch ((paymentMethod || '').toUpperCase()) {
+    case 'CASH':
+      return 'EFECTIVO';
+    case 'TRANSFER':
+      return 'TRANSFERENCIA / BILLETERA DIGITAL';
+    case 'CARD':
+      return 'TARJETA DE DEBITO / CREDITO';
+    case 'MIXED':
+      return 'PAGO MIXTO (CONTADO)';
+    default:
+      return 'CONTADO';
+  }
+}
+
+/**
+ * Resuelve tipo de documento entero (6, 1, 4, 7) o '-' según exigencia estricta de Nubefact JSON V1.
+ * Garantiza que jamás se envíe cliente_tipo_de_documento: '-' acompañado de un número distinto de '-'.
+ */
+export function resolveNubefactCustomerIdentity(
+  isFactura: boolean,
+  rawDocument?: string | null,
+  rawName?: string | null,
+  rawAddress?: string | null,
+): {
+  clienteTipoDoc: number | '-';
+  clienteNumeroDoc: string;
+  clienteDenominacion: string;
+  clienteDireccion: string;
+} {
+  const cleanDoc = sanitizeNubefactText(rawDocument, 15).replace(/\s+/g, '');
+  const cleanName = sanitizeNubefactText(rawName, 100);
+  const cleanAddr = sanitizeNubefactText(rawAddress, 150);
+
+  if (isFactura) {
+    return {
+      clienteTipoDoc: 6,
+      clienteNumeroDoc: cleanDoc,
+      clienteDenominacion: cleanName || 'CLIENTE EMPRESA',
+      clienteDireccion: cleanAddr || '-',
+    };
+  }
+
+  const docTypeCode = resolveSunatCustomerDocType(cleanDoc, '-');
+  if (docTypeCode !== '-') {
+    return {
+      clienteTipoDoc: parseInt(docTypeCode, 10),
+      clienteNumeroDoc: cleanDoc,
+      clienteDenominacion: cleanName || 'CLIENTES VARIOS',
+      clienteDireccion: cleanAddr,
+    };
+  }
+
+  return {
+    clienteTipoDoc: '-',
+    clienteNumeroDoc: '-',
+    clienteDenominacion: cleanName || 'CLIENTES VARIOS',
+    clienteDireccion: cleanAddr,
+  };
+}
+
+function isAlreadyExistsInNubefact(data: any): boolean {
+  if (!data) return false;
+  if (Number(data.codigo) === 23) return true;
+  const errStr = String(data.errors || data.message || '').toLowerCase();
+  return errStr.includes('ya existe') && errStr.includes('nubefact');
+}
+
+function evaluateNubefactApiResponse(
+  httpOk: boolean,
+  data: any,
+  series: string,
+  correlativeNumber: number,
+  docLabel: 'Comprobante' | 'Nota de Crédito',
+  logger: Logger,
+): BillingIssueResult {
+  if (!httpOk || data.errors) {
+    const errorMsg =
+      data.errors ||
+      data.sunat_description ||
+      data.sunat_soap_error ||
+      data.message ||
+      'Error en respuesta de Nubefact / SUNAT';
+    logger.error(`Error de emisión en Nubefact (${docLabel} ${series}-${correlativeNumber}): ${errorMsg}`);
+    return {
+      success: false,
+      hash: data.codigo_hash || '',
+      qrString: data.cadena_para_codigo_qr || '',
+      emissionStatus: 'REJECTED',
+      message: `Rechazado por PSE Nubefact: ${errorMsg}`,
+      rawResponse: data,
+    };
+  }
+
+  if (data.aceptada_por_sunat === false) {
+    const rawCode = String(data.sunat_responsecode || '').trim();
+    const codeNum = rawCode ? parseInt(rawCode, 10) : Number.NaN;
+    const descText = String(data.sunat_description || '').trim();
+    const soapErr = String(data.sunat_soap_error || '').trim();
+
+    // En SUNAT OSE:
+    // - Códigos 2000..3999 o SOAP Fault explícito = RECHAZADO definitivo (invalida el comprobante).
+    // - Sin código (cola asíncrona / modo demo Nubefact) o códigos 0100..1999 (excepción temporal de conexión SUNAT)
+    //   = PENDIENTE de confirmación CDR (se conservan hash, QR, PDF y XML firmados por Nubefact para consulta posterior).
+    const isFormalSunatRejection =
+      (codeNum >= 2000 && codeNum <= 3999) ||
+      Boolean(soapErr) ||
+      (Number.isNaN(codeNum) && Boolean(descText));
+
+    if (!isFormalSunatRejection) {
+      const pendingDetail = descText
+        ? ` (${descText})`
+        : ' (Firmado por Nubefact, en cola de validación CDR ante SUNAT)';
+      logger.warn(
+        `${docLabel} ${series}-${correlativeNumber} recibido por Nubefact y en espera de CDR SUNAT${pendingDetail}.`,
+      );
+      return {
+        success: false,
+        hash: data.codigo_hash || data.hash || '',
+        qrString: data.cadena_para_codigo_qr || '',
+        emissionStatus: 'PENDING',
+        message: `${docLabel} recibido por PSE Nubefact y pendiente de confirmación CDR por SUNAT${pendingDetail}`,
+        externalId: data.enlace || `${series}-${correlativeNumber}`,
+        pdfUrl: data.enlace_del_pdf || null,
+        xmlUrl: data.enlace_del_xml || null,
+        cdrUrl: data.enlace_del_cdr || null,
+        rawResponse: data,
+      };
+    }
+
+    const errorMsg = descText || soapErr || `Código SUNAT ${rawCode}` || 'Observado por SUNAT';
+    logger.error(`Rechazo SUNAT en Nubefact (${docLabel} ${series}-${correlativeNumber}): ${errorMsg}`);
+
+    const isDeadlineError =
+      docLabel === 'Nota de Crédito' &&
+      (errorMsg.includes('2119') ||
+        errorMsg.includes('2223') ||
+        errorMsg.toLowerCase().includes('plazo') ||
+        errorMsg.toLowerCase().includes('fuera de fecha'));
+
+    const friendlyMessage = isDeadlineError
+      ? `Rechazado por SUNAT: Plazo legal de emisión de Nota de Crédito vencido (R.S. 193-2020/SUNAT). Detalle: ${errorMsg}`
+      : `Rechazado por SUNAT: ${errorMsg}`;
+
+    return {
+      success: false,
+      hash: data.codigo_hash || '',
+      qrString: data.cadena_para_codigo_qr || '',
+      emissionStatus: 'REJECTED',
+      message: friendlyMessage,
+      rawResponse: data,
+    };
+  }
+
+  return {
+    success: true,
+    hash: data.codigo_hash || data.hash || '',
+    qrString: data.cadena_para_codigo_qr || '',
+    emissionStatus: 'ACCEPTED',
+    message: `${docLabel} aceptado por SUNAT a través de Nubefact`,
+    externalId: data.enlace || `${series}-${correlativeNumber}`,
+    pdfUrl: data.enlace_del_pdf || null,
+    xmlUrl: data.enlace_del_xml || null,
+    cdrUrl: data.enlace_del_cdr || null,
+    rawResponse: data,
+  };
+}
+
 @Injectable()
 export class NubefactBillingDriver implements IBillingDriver {
   readonly driverName = 'NUBEFACT';
   private readonly logger = new Logger(NubefactBillingDriver.name);
+
+  private async consultExistingNubefactDocument(
+    apiUrl: string,
+    apiToken: string,
+    tipoDeComprobante: number,
+    serie: string,
+    numero: number,
+    docLabel: 'Comprobante' | 'Nota de Crédito',
+  ): Promise<BillingIssueResult> {
+    this.logger.log(
+      `Documento ${serie}-${numero} ya registrado en Nubefact (Código 23). Ejecutando consultar_comprobante para recuperar estado y enlaces...`,
+    );
+
+    const consultRes = await fetch(apiUrl, {
+      method: 'POST',
+      signal: AbortSignal.timeout(NUBEFACT_TIMEOUT_MS),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: buildNubefactAuthHeader(apiToken),
+      },
+      body: JSON.stringify({
+        operacion: 'consultar_comprobante',
+        tipo_de_comprobante: tipoDeComprobante,
+        serie,
+        numero: Number(numero),
+      }),
+    });
+
+    if (consultRes.status >= 500 || consultRes.status === 429) {
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Servicio PSE Nubefact temporalmente no disponible al consultar ${serie}-${numero} (HTTP ${consultRes.status}).`,
+      };
+    }
+
+    let consultData: any;
+    try {
+      consultData = await consultRes.json();
+    } catch {
+      return {
+        success: false,
+        hash: '',
+        qrString: '',
+        emissionStatus: 'PENDING',
+        message: `Respuesta temporal inválida al consultar ${serie}-${numero} en Nubefact.`,
+      };
+    }
+
+    return evaluateNubefactApiResponse(
+      consultRes.ok,
+      consultData,
+      serie,
+      numero,
+      docLabel,
+      this.logger,
+    );
+  }
 
   async issueReceipt(input: IssueReceiptInput): Promise<BillingIssueResult> {
     const apiUrl = process.env.NUBEFACT_URL;
@@ -169,19 +420,30 @@ export class NubefactBillingDriver implements IBillingDriver {
       customerDocument,
       customerAddress,
       customerEmail,
+      paymentMethod,
       items,
       createdAt = new Date(),
     } = input;
 
     // Catálogo Nubefact: 1 = Factura, 2 = Boleta
-    const tipoDeComprobante = receiptType === 'FACTURA' ? 1 : 2;
-    const cleanDoc = (customerDocument || '').trim();
-    const clienteTipoDoc = resolveSunatCustomerDocType(cleanDoc, '-');
+    const isFactura = receiptType === 'FACTURA';
+    const tipoDeComprobante = isFactura ? 1 : 2;
+    const {
+      clienteTipoDoc,
+      clienteNumeroDoc,
+      clienteDenominacion,
+      clienteDireccion,
+    } = resolveNubefactCustomerIdentity(
+      isFactura,
+      customerDocument,
+      customerName,
+      customerAddress,
+    );
 
     // Zona horaria oficial de Perú (America/Lima / UTC-5)
     const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
-    // 1. Procesar ítems línea por línea según UBL 2.1 (valor_unitario hasta 10 decimales sin IGV)
+    // 1. Procesar ítems línea por línea según UBL 2.1 (valor_unitario y precio_unitario hasta 10 decimales)
     let calculatedTotalGravada = 0;
     let calculatedTotalIgv = 0;
     let calculatedTotal = 0;
@@ -193,8 +455,11 @@ export class NubefactBillingDriver implements IBillingDriver {
       const effectiveUnitPrice =
         item.quantity > 0 ? itemSubtotal / item.quantity : item.unitPrice;
       // UBL 2.1 cbc:PriceAmount permite hasta 10 decimales para evitar errores OSE 2027 / 3244
+      // incluso en pesajes fraccionados (ej. 0.333 kg) o precios consolidados.
       const itemValorUnitario =
         item.quantity > 0 ? Number((effectiveUnitPrice / 1.18).toFixed(10)) : 0;
+      const itemPrecioUnitario =
+        item.quantity > 0 ? Number(effectiveUnitPrice.toFixed(10)) : 0;
 
       calculatedTotalGravada += itemValorTotal;
       calculatedTotalIgv += itemIgv;
@@ -202,11 +467,11 @@ export class NubefactBillingDriver implements IBillingDriver {
 
       return {
         unidad_de_medida: mapUnitTypeToSunat(item.unitType),
-        codigo: '',
-        descripcion: item.name,
-        cantidad: item.quantity,
+        codigo: sanitizeNubefactText(item.barcode, 30),
+        descripcion: sanitizeNubefactText(item.name, 250) || 'PRODUCTO',
+        cantidad: Number(Number(item.quantity).toFixed(4)),
         valor_unitario: itemValorUnitario,
-        precio_unitario: Number(effectiveUnitPrice.toFixed(2)),
+        precio_unitario: itemPrecioUnitario,
         subtotal: itemValorTotal,
         tipo_de_igv: 1, // Gravado - Operación Onerosa (Catálogo 07: código 10)
         igv: itemIgv,
@@ -219,18 +484,19 @@ export class NubefactBillingDriver implements IBillingDriver {
     const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
     const finalTotal = Number(calculatedTotal.toFixed(2));
 
-    const cleanEmail = (customerEmail || '').trim();
+    const rawEmail = (customerEmail || '').trim();
+    const cleanEmail = isValidOptionalEmail(rawEmail) ? rawEmail : '';
 
     const payload = {
       operacion: 'generar_comprobante',
       tipo_de_comprobante: tipoDeComprobante,
-      serie: series,
+      serie: String(series).trim(),
       numero: Number(correlativeNumber),
       sunat_transaction: 1,
       cliente_tipo_de_documento: clienteTipoDoc,
-      cliente_numero_de_documento: cleanDoc || '-',
-      cliente_denominacion: customerName || 'CLIENTES VARIOS',
-      cliente_direccion: customerAddress || '-',
+      cliente_numero_de_documento: clienteNumeroDoc,
+      cliente_denominacion: clienteDenominacion,
+      cliente_direccion: clienteDireccion,
       cliente_email: cleanEmail,
       fecha_de_emision: fechaEmision,
       moneda: 1, // PEN Soles
@@ -239,9 +505,10 @@ export class NubefactBillingDriver implements IBillingDriver {
       total_igv: finalTotalIgv,
       total: finalTotal,
       condiciones_de_pago: 'CONTADO', // R.S. 000193-2020/SUNAT
+      medio_de_pago: mapPaymentMethodToNubefact(paymentMethod),
       detraccion: false,
       enviar_automaticamente_a_la_sunat: true,
-      enviar_automaticamente_al_cliente: Boolean(cleanEmail && cleanEmail.includes('@')),
+      enviar_automaticamente_al_cliente: Boolean(cleanEmail),
       items: formattedItems,
     };
 
@@ -287,36 +554,25 @@ export class NubefactBillingDriver implements IBillingDriver {
       };
     }
 
-    if (!response.ok || data.errors || data.aceptada_por_sunat === false) {
-      const errorMsg =
-        data.errors ||
-        data.sunat_description ||
-        data.sunat_soap_error ||
-        data.message ||
-        'Error en respuesta de Nubefact / SUNAT';
-      this.logger.error(`Error de emisión en Nubefact: ${errorMsg}`);
-      return {
-        success: false,
-        hash: data.codigo_hash || '',
-        qrString: data.cadena_para_codigo_qr || '',
-        emissionStatus: 'REJECTED',
-        message: `Rechazado por ${data.aceptada_por_sunat === false ? 'SUNAT' : 'PSE Nubefact'}: ${errorMsg}`,
-        rawResponse: data,
-      };
+    if (isAlreadyExistsInNubefact(data)) {
+      return this.consultExistingNubefactDocument(
+        apiUrl,
+        apiToken,
+        tipoDeComprobante,
+        String(series).trim(),
+        Number(correlativeNumber),
+        'Comprobante',
+      );
     }
 
-    return {
-      success: true,
-      hash: data.codigo_hash || data.hash || '',
-      qrString: data.cadena_para_codigo_qr || '',
-      emissionStatus: 'ACCEPTED',
-      message: 'Comprobante aceptado por SUNAT a través de Nubefact',
-      externalId: data.enlace || `${series}-${correlativeNumber}`,
-      pdfUrl: data.enlace_del_pdf || null,
-      xmlUrl: data.enlace_del_xml || null,
-      cdrUrl: data.enlace_del_cdr || null,
-      rawResponse: data,
-    };
+    return evaluateNubefactApiResponse(
+      response.ok,
+      data,
+      String(series).trim(),
+      Number(correlativeNumber),
+      'Comprobante',
+      this.logger,
+    );
   }
 
   async issueCreditNote(input: IssueCreditNoteInput): Promise<BillingIssueResult> {
@@ -340,6 +596,7 @@ export class NubefactBillingDriver implements IBillingDriver {
       modifiedCorrelative,
       reasonCode,
       reasonDescription,
+      customReason,
       customerName,
       customerDocument,
       customerAddress,
@@ -350,13 +607,23 @@ export class NubefactBillingDriver implements IBillingDriver {
 
     // Catálogo Nubefact: 3 = Nota de Crédito
     const tipoDeComprobante = 3;
-    const cleanDoc = (customerDocument || '').trim();
-    const clienteTipoDoc = resolveSunatCustomerDocType(cleanDoc, '-');
+    const isModifiedFactura = modifiedDocTypeCode === '01';
+    const {
+      clienteTipoDoc,
+      clienteNumeroDoc,
+      clienteDenominacion,
+      clienteDireccion,
+    } = resolveNubefactCustomerIdentity(
+      isModifiedFactura,
+      customerDocument,
+      customerName,
+      customerAddress,
+    );
 
     const fechaEmision = formatPeruDDMMYYYY(createdAt);
 
     // Nubefact: documento_que_se_modifica_tipo: 1 = Factura, 2 = Boleta
-    const docModificaTipo = modifiedDocTypeCode === '01' ? 1 : 2;
+    const docModificaTipo = isModifiedFactura ? 1 : 2;
     const tipoNotaCreditoNum = parseInt(reasonCode, 10) || 1;
 
     let calculatedTotalGravada = 0;
@@ -371,6 +638,8 @@ export class NubefactBillingDriver implements IBillingDriver {
         item.quantity > 0 ? itemSubtotal / item.quantity : item.unitPrice;
       const itemValorUnitario =
         item.quantity > 0 ? Number((effectiveUnitPrice / 1.18).toFixed(10)) : 0;
+      const itemPrecioUnitario =
+        item.quantity > 0 ? Number(effectiveUnitPrice.toFixed(10)) : 0;
 
       calculatedTotalGravada += itemValorTotal;
       calculatedTotalIgv += itemIgv;
@@ -378,11 +647,11 @@ export class NubefactBillingDriver implements IBillingDriver {
 
       return {
         unidad_de_medida: mapUnitTypeToSunat(item.unitType),
-        codigo: '',
-        descripcion: item.name,
-        cantidad: item.quantity,
+        codigo: sanitizeNubefactText(item.barcode, 30),
+        descripcion: sanitizeNubefactText(item.name, 250) || 'PRODUCTO',
+        cantidad: Number(Number(item.quantity).toFixed(4)),
         valor_unitario: itemValorUnitario,
-        precio_unitario: Number(effectiveUnitPrice.toFixed(2)),
+        precio_unitario: itemPrecioUnitario,
         subtotal: itemValorTotal,
         tipo_de_igv: 1,
         igv: itemIgv,
@@ -395,18 +664,23 @@ export class NubefactBillingDriver implements IBillingDriver {
     const finalTotalIgv = Number(calculatedTotalIgv.toFixed(2));
     const finalTotal = Number(calculatedTotal.toFixed(2));
 
-    const cleanEmail = (customerEmail || '').trim();
+    const rawEmail = (customerEmail || '').trim();
+    const cleanEmail = isValidOptionalEmail(rawEmail) ? rawEmail : '';
+    const rawMotivo = customReason
+      ? `${reasonDescription || 'ANULACION DE LA OPERACION'} - ${customReason}`
+      : reasonDescription || 'ANULACION DE LA OPERACION';
+    const cleanMotivo = sanitizeNubefactText(rawMotivo, 250) || 'ANULACION DE LA OPERACION';
 
     const payload = {
       operacion: 'generar_comprobante',
       tipo_de_comprobante: tipoDeComprobante,
-      serie: creditNoteSeries,
+      serie: String(creditNoteSeries).trim(),
       numero: Number(creditNoteCorrelative),
       sunat_transaction: 1,
       cliente_tipo_de_documento: clienteTipoDoc,
-      cliente_numero_de_documento: cleanDoc || '-',
-      cliente_denominacion: customerName || 'CLIENTES VARIOS',
-      cliente_direccion: customerAddress || '-',
+      cliente_numero_de_documento: clienteNumeroDoc,
+      cliente_denominacion: clienteDenominacion,
+      cliente_direccion: clienteDireccion,
       cliente_email: cleanEmail,
       fecha_de_emision: fechaEmision,
       moneda: 1, // Soles
@@ -418,10 +692,11 @@ export class NubefactBillingDriver implements IBillingDriver {
       documento_que_se_modifica_serie: String(modifiedSeries).trim(),
       documento_que_se_modifica_numero: Number(modifiedCorrelative),
       tipo_de_nota_de_credito: tipoNotaCreditoNum,
-      motivo: reasonDescription || 'ANULACION DE LA OPERACION',
+      motivo: cleanMotivo,
+      observaciones: cleanMotivo,
       detraccion: false,
       enviar_automaticamente_a_la_sunat: true,
-      enviar_automaticamente_al_cliente: Boolean(cleanEmail && cleanEmail.includes('@')),
+      enviar_automaticamente_al_cliente: Boolean(cleanEmail),
       items: formattedItems,
     };
 
@@ -462,45 +737,24 @@ export class NubefactBillingDriver implements IBillingDriver {
       };
     }
 
-    if (!response.ok || data.errors || data.aceptada_por_sunat === false) {
-      const errorMsg =
-        data.errors ||
-        data.sunat_description ||
-        data.sunat_soap_error ||
-        data.message ||
-        'Error en respuesta de Nubefact / SUNAT';
-      this.logger.error(`Error de emisión en Nubefact para Nota de Crédito: ${errorMsg}`);
-      const isDeadlineError =
-        String(errorMsg).includes('2119') ||
-        String(errorMsg).includes('2223') ||
-        String(errorMsg).toLowerCase().includes('plazo') ||
-        String(errorMsg).toLowerCase().includes('fuera de fecha');
-
-      const friendlyMessage = isDeadlineError
-        ? `Rechazado por SUNAT: Plazo legal de emisión de Nota de Crédito vencido (R.S. 193-2020/SUNAT). Detalle: ${errorMsg}`
-        : `Rechazado por ${data.aceptada_por_sunat === false ? 'SUNAT' : 'PSE Nubefact'}: ${errorMsg}`;
-
-      return {
-        success: false,
-        hash: data.codigo_hash || '',
-        qrString: data.cadena_para_codigo_qr || '',
-        emissionStatus: 'REJECTED',
-        message: friendlyMessage,
-        rawResponse: data,
-      };
+    if (isAlreadyExistsInNubefact(data)) {
+      return this.consultExistingNubefactDocument(
+        apiUrl,
+        apiToken,
+        tipoDeComprobante,
+        String(creditNoteSeries).trim(),
+        Number(creditNoteCorrelative),
+        'Nota de Crédito',
+      );
     }
 
-    return {
-      success: true,
-      hash: data.codigo_hash || data.hash || '',
-      qrString: data.cadena_para_codigo_qr || '',
-      emissionStatus: 'ACCEPTED',
-      message: 'Nota de Crédito aceptada por SUNAT a través de Nubefact',
-      externalId: data.enlace || `${creditNoteSeries}-${creditNoteCorrelative}`,
-      pdfUrl: data.enlace_del_pdf || null,
-      xmlUrl: data.enlace_del_xml || null,
-      cdrUrl: data.enlace_del_cdr || null,
-      rawResponse: data,
-    };
+    return evaluateNubefactApiResponse(
+      response.ok,
+      data,
+      String(creditNoteSeries).trim(),
+      Number(creditNoteCorrelative),
+      'Nota de Crédito',
+      this.logger,
+    );
   }
 }

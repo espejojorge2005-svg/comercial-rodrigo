@@ -20,23 +20,10 @@ import { BillingService } from '../../billing/billing.service.js';
 import { SalesSequenceService } from './sales-sequence.service.js';
 import { SyncOfflineSalesBatchDto } from '../dto/sync-offline-sales.dto.js';
 import {
-  isValidPeruvianRuc,
   getSunatCompliantEmissionDate,
   isDiscreteUnit,
+  validateFiscalCustomerAndPayment,
 } from '../utils/sales-fiscal.util.js';
-
-const FORBIDDEN_CUSTOMER_PLACEHOLDERS = [
-  'CLIENTE VARIOS',
-  'CLIENTES VARIOS',
-  'EMPRESA',
-  'EMPRESA SAC',
-  'EMPRESA S.A.C.',
-  'EMPRESA SRL',
-  'EMPRESA S.R.L.',
-  'RUC',
-  'SIN NOMBRE',
-  'VARIOS',
-];
 
 @Injectable()
 export class SalesOfflineService {
@@ -432,48 +419,21 @@ export class SalesOfflineService {
             const cleanCustomerName = (offlineSale.customerName || '').trim();
             const cleanCustomerAddress = (offlineSale.customerAddress || '').trim();
 
-            if (receiptType === ReceiptType.FACTURA) {
-              if (!isValidPeruvianRuc(cleanCustomerDoc)) {
+            if (receiptType !== ReceiptType.NOTA_VENTA) {
+              const fiscalCheck = validateFiscalCustomerAndPayment({
+                receiptType,
+                totalAmount: totalCalculated,
+                paymentMethod: offlineSale.paymentMethod,
+                cashPaid: offCash,
+                customerDocument: cleanCustomerDoc,
+                customerName: cleanCustomerName,
+                customerAddress: cleanCustomerAddress,
+                customerEmail: offlineSale.customerEmail,
+              });
+              if (!fiscalCheck.valid) {
                 throw new BadRequestException(
-                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: RUC "${cleanCustomerDoc}" inválido ante SUNAT (dígito verificador incorrecto).`,
+                  `Venta offline [${offlineSale.offlineId}] rechazada por validación fiscal SUNAT: ${fiscalCheck.message}`,
                 );
-              }
-              if (
-                !cleanCustomerName ||
-                cleanCustomerName.length < 2 ||
-                FORBIDDEN_CUSTOMER_PLACEHOLDERS.includes(cleanCustomerName.toUpperCase())
-              ) {
-                throw new BadRequestException(
-                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: Razón Social inválida o genérica.`,
-                );
-              }
-              if (!cleanCustomerAddress || cleanCustomerAddress.length < 3) {
-                throw new BadRequestException(
-                  `Venta offline [${offlineSale.offlineId}] rechazada para Factura: Dirección Fiscal obligatoria.`,
-                );
-              }
-            } else if (receiptType === ReceiptType.BOLETA) {
-              if (cleanCustomerDoc.length === 11 && !isValidPeruvianRuc(cleanCustomerDoc)) {
-                throw new BadRequestException(
-                  `Venta offline [${offlineSale.offlineId}] rechazada: RUC de 11 dígitos en Boleta inválido.`,
-                );
-              }
-              if (totalCalculated >= 700) {
-                if (cleanCustomerDoc.length < 8 || cleanCustomerDoc.length > 12) {
-                  throw new BadRequestException(
-                    `Venta offline [${offlineSale.offlineId}] rechazada: Boleta >= S/ 700.00 requiere documento válido (8 a 12 caracteres).`,
-                  );
-                }
-                if (
-                  !cleanCustomerName ||
-                  cleanCustomerName.length < 3 ||
-                  cleanCustomerName.toUpperCase() === 'CLIENTE VARIOS' ||
-                  cleanCustomerName.toUpperCase() === 'CLIENTES VARIOS'
-                ) {
-                  throw new BadRequestException(
-                    `Venta offline [${offlineSale.offlineId}] rechazada: Boleta >= S/ 700.00 requiere nombre completo del cliente.`,
-                  );
-                }
               }
             }
 
@@ -696,6 +656,7 @@ export class SalesOfflineService {
                 unitPrice: vi.unitPrice,
                 subtotal: vi.subtotalItem,
                 unitType: vi.product.unitType,
+                barcode: vi.product.barcode,
               })),
               createdAt: effectiveCreatedAt,
             });
@@ -894,6 +855,7 @@ export class SalesOfflineService {
         unitPrice: Number(item.unitPrice),
         subtotal: Number(item.subtotal),
         unitType: item.product.unitType,
+        barcode: item.product.barcode,
       })),
       createdAt: effectiveDate,
     });

@@ -18,6 +18,7 @@ export interface IssueReceiptInput {
     unitPrice: number;
     subtotal: number;
     unitType?: string;
+    barcode?: string | null;
   }>;
   companyRuc?: string;
   createdAt?: Date;
@@ -62,6 +63,7 @@ export interface IssueCreditNoteInput {
     unitPrice: number;
     subtotal: number;
     unitType?: string;
+    barcode?: string | null;
   }>;
   companyRuc?: string;
   createdAt?: Date;

@@ -2,7 +2,13 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useCartStore } from '../../store/useCartStore.js';
 import { useShiftStore } from '../../store/useShiftStore.js';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency, isValidPeruvianRuc } from '../../lib/utils.js';
+import {
+  formatCurrency,
+  isValidPeruvianRuc,
+  isValidBoletaCustomerDoc,
+  isValidOptionalEmail,
+  SUNAT_BANCARIZACION_SOLES_LIMIT,
+} from '../../lib/utils.js';
 import {
   X,
   CreditCard,
@@ -87,19 +93,31 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       isSubmittingRef.current = false;
-      setCashPaid(String(totalAmount));
-      setDigitalPaid('0');
       setError(null);
       setLookupBadge(null);
       setIsLoading(false);
       setReceiptType('NOTA_VENTA');
       setPaymentMethod('CASH');
+      setCashPaid(String(totalAmount));
+      setDigitalPaid('0');
       setCustName(customerName || 'Cliente Varios');
       setCustDoc(customerDocument || '');
       setCustAddress('');
       setCustEmail('');
     }
   }, [isOpen, totalAmount, customerName, customerDocument]);
+
+  // Si cambia a Factura o Boleta y aplica Ley de Bancarización (D.L. N° 1529: >= S/ 2,000.00)
+  const isBancarizacionRequired =
+    receiptType === 'FACTURA' && totalAmount >= SUNAT_BANCARIZACION_SOLES_LIMIT;
+
+  useEffect(() => {
+    if (isBancarizacionRequired && (paymentMethod === 'CASH' || paymentMethod === 'MIXED')) {
+      setPaymentMethod('TRANSFER');
+      setCashPaid('0');
+      setDigitalPaid(String(totalAmount));
+    }
+  }, [isBancarizacionRequired, paymentMethod, totalAmount]);
 
   // Función para consultar RUC o DNI en SUNAT / RENIEC automáticamente
   const handleLookupDocument = async (overrideDoc?: string) => {
@@ -189,15 +207,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const safeDoc = custDoc || '';
   const safeName = custName || '';
   const safeAddress = custAddress || '';
+  const safeEmail = custEmail ? custEmail.trim() : '';
 
   const isBoletaOver700 = receiptType === 'BOLETA' && totalAmount >= 700;
   const cleanCustDoc = safeDoc.trim();
+  const isDocProvided = cleanCustDoc.length > 0 && cleanCustDoc !== '-';
 
-  const isDocValidForBoleta =
-    !isBoletaOver700 ||
-    (cleanCustDoc.length >= 8 && cleanCustDoc.length <= 12);
+  const isDocValidForBoleta = isBoletaOver700
+    ? isValidBoletaCustomerDoc(cleanCustDoc)
+    : !isDocProvided || isValidBoletaCustomerDoc(cleanCustDoc);
+
   const isNameValidForBoleta =
-    !isBoletaOver700 ||
+    (!isBoletaOver700 && !isDocProvided) ||
     (safeName.trim().length >= 3 &&
       safeName.trim().toLowerCase() !== 'cliente varios' &&
       safeName.trim().toLowerCase() !== 'clientes varios');
@@ -219,24 +240,46 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   ];
   const isNameValidForFactura =
     receiptType !== 'FACTURA' ||
-    (safeName.trim().length >= 2 &&
+    (safeName.trim().length >= 3 &&
       !forbiddenCompanyNames.includes(safeName.trim().toUpperCase()));
 
   const isAddressValidForFactura =
     receiptType !== 'FACTURA' || safeAddress.trim().length >= 3;
 
+  const isEmailValid = isValidOptionalEmail(safeEmail);
+
   // Determinar si el formulario es válido para procesar cobro
   let isFormValid = true;
   let validationMessage = '';
 
-  if (receiptType === 'BOLETA' && isBoletaOver700) {
-    if (!isDocValidForBoleta) {
-      isFormValid = false;
-      validationMessage =
-        'SUNAT exige DNI, Carnet de Extranjería o RUC (8 a 12 car.) para boletas ≥ S/ 700.00';
-    } else if (!isNameValidForBoleta) {
-      isFormValid = false;
-      validationMessage = 'Ingrese los nombres y apellidos completos del cliente';
+  if (!isEmailValid) {
+    isFormValid = false;
+    validationMessage =
+      'El correo electrónico tiene un formato inválido. Corríjalo (ej: cliente@empresa.com) o déjelo vacío.';
+  } else if (isBancarizacionRequired && (paymentMethod === 'CASH' || paymentMethod === 'MIXED')) {
+    isFormValid = false;
+    validationMessage =
+      'Por Ley de Bancarización (D.L. 1529), las Facturas ≥ S/ 2,000.00 deben pagarse por Transferencia o Tarjeta (sin efectivo).';
+  } else if (receiptType === 'BOLETA') {
+    if (isBoletaOver700) {
+      if (!isDocValidForBoleta) {
+        isFormValid = false;
+        validationMessage =
+          'SUNAT exige DNI (8 dígitos), Carnet de Extranjería (9 dígitos) o RUC válido para boletas ≥ S/ 700.00';
+      } else if (!isNameValidForBoleta) {
+        isFormValid = false;
+        validationMessage = 'Ingrese los nombres y apellidos completos del cliente (mínimo 3 letras)';
+      }
+    } else if (isDocProvided) {
+      if (!isDocValidForBoleta) {
+        isFormValid = false;
+        validationMessage =
+          'El documento opcional ingresado en la boleta es inválido. Ingrese un DNI (8), CE (9) o RUC (11) válido, o bórrelo.';
+      } else if (!isNameValidForBoleta) {
+        isFormValid = false;
+        validationMessage =
+          'Si consigna documento en la Boleta, debe ingresar el nombre real del cliente (no "Cliente Varios").';
+      }
     }
   } else if (receiptType === 'FACTURA') {
     if (cleanCustDoc.length !== 11) {
@@ -250,10 +293,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     } else if (!isNameValidForFactura) {
       isFormValid = false;
       validationMessage =
-        'Ingrese una Razón Social auténtica de la empresa para Factura (no se permiten nombres genéricos como EMPRESA)';
+        'Ingrese una Razón Social auténtica de la empresa para Factura (mínimo 3 caracteres, no "EMPRESA")';
     } else if (!isAddressValidForFactura) {
       isFormValid = false;
-      validationMessage = 'La Dirección Fiscal es obligatoria para Factura';
+      validationMessage = 'La Dirección Fiscal es obligatoria para Factura (mínimo 3 caracteres)';
     }
   }
 
@@ -764,6 +807,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           )}
 
+          {/* ALERTA LEY DE BANCARIZACIÓN (D.L. N° 1529 — S/ 2,000.00) */}
+          {receiptType === 'FACTURA' && totalAmount >= SUNAT_BANCARIZACION_SOLES_LIMIT && (
+            <div className="p-3.5 rounded-2xl bg-purple-900/30 border border-purple-500/40 text-purple-200 text-xs flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+              <div>
+                <strong className="font-bold block text-amber-300">
+                  🛡️ Ley de Bancarización Obligatoria (D.L. N° 1529 — Monto ≥ S/ 2,000.00)
+                </strong>
+                <span>
+                  Por normativa legal tributaria, toda Factura Electrónica igual o mayor a S/ 2,000.00
+                  debe cancelarse íntegramente mediante Medios de Pago del Sistema Financiero
+                  (Transferencia / Yape / Plin o Tarjeta). Los cobros totales o parciales en efectivo
+                  invalidan el Crédito Fiscal y la deducibilidad del gasto ante SUNAT.
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* DATOS DEL CLIENTE (DINÁMICOS SEGÚN COMPROBANTE) */}
           <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
             <span className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
@@ -935,11 +996,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               ].map((m) => {
                 const Icon = m.icon;
                 const isSelected = paymentMethod === m.id;
+                const isMethodDisabled =
+                  isBancarizacionRequired && (m.id === 'CASH' || m.id === 'MIXED');
                 return (
                   <button
                     type="button"
                     key={m.id}
+                    disabled={isMethodDisabled}
+                    title={
+                      isMethodDisabled
+                        ? 'Bloqueado por Ley de Bancarización (D.L. N° 1529): Facturas ≥ S/ 2,000.00 deben pagarse por canal financiero.'
+                        : undefined
+                    }
                     onClick={() => {
+                      if (isMethodDisabled) return;
                       setPaymentMethod(m.id as PaymentMethod);
                       if (m.id === 'CASH') {
                         setCashPaid(String(totalAmount));
@@ -952,19 +1022,36 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         setCashPaid(String(totalAmount));
                       }
                     }}
-                    className={`p-3 rounded-2xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-blue-600 border-blue-500 text-white shadow-sm'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    className={`p-3 rounded-2xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all ${
+                      isMethodDisabled
+                        ? 'opacity-35 cursor-not-allowed bg-slate-950/40 border-slate-900 text-slate-600 line-through'
+                        : isSelected
+                          ? 'bg-blue-600 border-blue-500 text-white shadow-sm cursor-pointer'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer'
                     }`}
                   >
                     <Icon className="w-5 h-5" />
                     <span>{m.label}</span>
+                    {isMethodDisabled && (
+                      <span className="text-[9px] no-underline font-normal text-amber-400">
+                        Bloqueado D.L. 1529
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
           </div>
+
+          {/* NOTA ORIENTATIVA PARA BOLETAS >= S/ 2,000.00 */}
+          {receiptType === 'BOLETA' && totalAmount >= SUNAT_BANCARIZACION_SOLES_LIMIT && (
+            <div className="p-2.5 rounded-xl bg-blue-950/30 border border-blue-900/40 text-[11px] text-blue-200 flex items-center gap-2">
+              <span className="text-blue-400 font-bold shrink-0">ℹ️</span>
+              <span>
+                Operación ≥ S/ 2,000.00: Si el cliente requiere sustento bancarizado de gasto, se recomienda cobrar con Yape/Plin, Transferencia o Tarjeta.
+              </span>
+            </div>
+          )}
 
           {/* Desglose de Pago (Efectivo / Mixto) */}
           {(paymentMethod === 'CASH' || paymentMethod === 'MIXED') && (

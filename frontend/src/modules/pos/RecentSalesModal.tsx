@@ -150,6 +150,7 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
   const [isSearchingExternalTicket, setIsSearchingExternalTicket] = useState<boolean>(false);
   const [searchTicketError, setSearchTicketError] = useState<string | null>(null);
   const [reemittingNcId, setReemittingNcId] = useState<string | null>(null);
+  const [reemittingSaleId, setReemittingSaleId] = useState<string | null>(null);
 
   // Helper para calcular fechas exactas en calendario peruano (America/Lima, UTC-5) sin desfase nocturno
   const getPeriodDates = (period: PeriodType) => {
@@ -271,6 +272,22 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
       setSearchTicketError(err?.message || 'No se pudo reenviar la Nota de Crédito a SUNAT.');
     } finally {
       setReemittingNcId(null);
+    }
+  };
+
+  const handleReemitSale = async (saleId: string) => {
+    if (reemittingSaleId) return;
+    setReemittingSaleId(saleId);
+    try {
+      const res = await apiRequest<any>(`/sales/${saleId}/reemit-pending`, {
+        method: 'POST',
+      });
+      setSuccessToast(res?.message || 'Comprobante reenviado a SUNAT correctamente.');
+      await fetchSales();
+    } catch (err: any) {
+      setSearchTicketError(err?.message || 'No se pudo reenviar el comprobante a SUNAT.');
+    } finally {
+      setReemittingSaleId(null);
     }
   };
 
@@ -696,6 +713,20 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                                     Canjeable a Boleta/Factura
                                   </span>
                                 )}
+                                {(sale.receiptType === 'BOLETA' || sale.receiptType === 'FACTURA') && (
+                                  <>
+                                    {sale.emissionStatus === 'PENDING' && (
+                                      <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-semibold border border-amber-500/30 flex items-center gap-1">
+                                        <Clock className="w-3 h-3 text-amber-400" /> Pendiente SUNAT
+                                      </span>
+                                    )}
+                                    {sale.emissionStatus === 'REJECTED' && (
+                                      <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 text-[10px] font-semibold border border-rose-500/30 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3 text-rose-400" /> Rechazado PSE
+                                      </span>
+                                    )}
+                                  </>
+                                )}
                                 {!sale.isVoided && isVoidDisabledBySunat && (
                                   <span
                                     className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-[10px] font-semibold border border-amber-500/30 flex items-center gap-1"
@@ -756,6 +787,24 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                               <span>Canjear Comprobante</span>
                             </button>
                           )}
+
+                          {/* Botón Reenviar Comprobante a SUNAT si está PENDIENTE o RECHAZADO */}
+                          {(sale.receiptType === 'BOLETA' || sale.receiptType === 'FACTURA') &&
+                            !sale.isVoided &&
+                            (sale.emissionStatus === 'PENDING' || sale.emissionStatus === 'REJECTED') && (
+                              <button
+                                type="button"
+                                onClick={() => handleReemitSale(sale.id)}
+                                disabled={reemittingSaleId === sale.id}
+                                className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold border border-amber-400 transition-all cursor-pointer flex items-center gap-1.5 text-xs shadow-sm disabled:opacity-50"
+                                title="Reintentar transmisión electrónica a SUNAT / PSE"
+                              >
+                                <RefreshCw
+                                  className={`w-3.5 h-3.5 ${reemittingSaleId === sale.id ? 'animate-spin' : ''}`}
+                                />
+                                <span className="hidden sm:inline">Reenviar SUNAT</span>
+                              </button>
+                            )}
 
                           {/* Botón Imprimir Ticket Térmico */}
                           <button
@@ -870,6 +919,16 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                             </div>
                           );
                         })()}
+
+                        {sale.billingMessage && !sale.isVoided && (
+                          <div className="mt-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-slate-300 flex items-start gap-2">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                            <div>
+                              <strong className="text-amber-400">Respuesta PSE / SUNAT:</strong>{' '}
+                              <span className="font-mono">{sale.billingMessage}</span>
+                            </div>
+                          </div>
+                        )}
 
                         {sale.isVoided && (
                           <div className="mt-2 p-2.5 rounded-xl bg-rose-950/40 border border-rose-900/40 text-[11px] text-rose-200 space-y-1">

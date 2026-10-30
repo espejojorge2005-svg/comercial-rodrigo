@@ -31,8 +31,49 @@ export function isDiscreteUnit(unitType?: string | null): boolean {
 }
 
 /**
+ * Tope legal vigente en Soles de la Ley de Bancarización en Perú
+ * (Ley N° 28194 modificada por Decreto Legislativo N° 1529: S/ 2,000.00 o US$ 500.00)
+ */
+export const SUNAT_BANCARIZACION_SOLES_LIMIT = 2000;
+
+export const FORBIDDEN_COMPANY_PLACEHOLDERS = [
+  'CLIENTE VARIOS',
+  'CLIENTES VARIOS',
+  'EMPRESA',
+  'EMPRESA SAC',
+  'EMPRESA S.A.C.',
+  'EMPRESA SRL',
+  'EMPRESA S.R.L.',
+  'RUC',
+  'SIN NOMBRE',
+  'VARIOS',
+  '-',
+  '---',
+];
+
+export const FORBIDDEN_BOLETA_IDENTIFIED_NAMES = [
+  'CLIENTE VARIOS',
+  'CLIENTES VARIOS',
+  'SIN NOMBRE',
+  'VARIOS',
+  '-',
+  '---',
+];
+
+/**
+ * Valida formato de correo electrónico opcional para envío de PDF/XML en Nubefact.
+ * Evita que correos truncados o con caracteres ilegales provoquen rechazo HTTP 400 en el PSE.
+ */
+export function isValidOptionalEmail(email?: string | null): boolean {
+  const clean = (email || '').trim();
+  if (!clean) return true;
+  if (clean.length > 120) return false;
+  return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(clean);
+}
+
+/**
  * Resuelve el código oficial del Catálogo 06 SUNAT (Tipo de Documento de Identidad)
- * evitando asignar RUC ('6') a Carnets de Extranjería o Pasaportes de 11 caracteres.
+ * evitando asignar RUC ('6'), CE ('4') o Pasaporte ('7') a documentos truncados o mal digitados.
  */
 export function resolveSunatCustomerDocType(
   customerDocument?: string | null,
@@ -41,24 +82,162 @@ export function resolveSunatCustomerDocType(
   const clean = (customerDocument || '').trim();
   if (!clean || clean === '-') return fallbackEmpty;
 
-  // 6 = RUC (11 dígitos numéricos con prefijo SUNAT válido)
-  if (/^(10|15|16|17|20)\d{9}$/.test(clean)) {
-    return '6';
+  // 11 dígitos numéricos: únicamente válido si cumple Algoritmo Módulo 11 de RUC SUNAT ('6')
+  if (/^\d{11}$/.test(clean)) {
+    return isValidPeruvianRuc(clean) ? '6' : fallbackEmpty;
   }
-  // 1 = DNI (8 dígitos numéricos)
+
+  // 8 dígitos numéricos (excluyendo puros ceros): DNI ('1')
   if (/^\d{8}$/.test(clean)) {
-    return '1';
+    return clean !== '00000000' ? '1' : fallbackEmpty;
   }
-  // 4 = Carnet de Extranjería (numérico o alfanumérico de 9 a 12 caracteres)
-  if (/^[A-Za-z0-9]{9,12}$/.test(clean)) {
-    return '4';
+
+  // 9 dígitos numéricos (excluyendo puros ceros): Carnet de Extranjería Migraciones Perú ('4')
+  if (/^\d{9}$/.test(clean)) {
+    return !/^0+$/.test(clean) ? '4' : fallbackEmpty;
   }
-  // 7 = Pasaporte (alfanumérico de 6 a 12 caracteres)
-  if (/^[A-Za-z0-9]{6,12}$/.test(clean)) {
-    return '7';
+
+  // Alfanumérico de 6 a 12 caracteres con al menos una letra y un dígito: CE ('4') o Pasaporte ('7')
+  // Exigir letra + dígito impide clasificar palabras ("NINGUNO") o DNIs/RUCs truncados de 6-7 o 10 dígitos como Pasaporte.
+  if (/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{6,12}$/.test(clean)) {
+    return clean.toUpperCase().startsWith('CE') ? '4' : '7';
   }
 
   return fallbackEmpty;
+}
+
+/**
+ * Validador integral de datos del cliente, correo y Ley de Bancarización (D.L. N° 1529)
+ * para Boletas Electrónicas (03) y Facturas Electrónicas (01) antes de emitir en PSE / SUNAT.
+ */
+export function validateFiscalCustomerAndPayment(params: {
+  receiptType: string;
+  totalAmount?: number;
+  paymentMethod?: string;
+  cashPaid?: number;
+  customerDocument?: string | null;
+  customerName?: string | null;
+  customerAddress?: string | null;
+  customerEmail?: string | null;
+}): { valid: boolean; message?: string } {
+  const {
+    receiptType,
+    totalAmount,
+    paymentMethod,
+    cashPaid = 0,
+    customerDocument,
+    customerName,
+    customerAddress,
+    customerEmail,
+  } = params;
+
+  const cleanDoc = (customerDocument || '').trim();
+  const cleanName = (customerName || '').trim();
+  const cleanAddress = (customerAddress || '').trim();
+
+  if (!isValidOptionalEmail(customerEmail)) {
+    return {
+      valid: false,
+      message:
+        'El correo electrónico del cliente tiene un formato inválido. Corríjalo o déjelo vacío para evitar el rechazo del comprobante en el PSE.',
+    };
+  }
+
+  if (receiptType === 'FACTURA') {
+    if (!isValidPeruvianRuc(cleanDoc)) {
+      return {
+        valid: false,
+        message:
+          'Para emitir Factura Electrónica se exige un RUC auténtico de 11 dígitos (que inicie con 10, 20, 15, 16 o 17) con dígito verificador válido ante SUNAT.',
+      };
+    }
+
+    if (
+      !cleanName ||
+      cleanName.length < 3 ||
+      FORBIDDEN_COMPANY_PLACEHOLDERS.includes(cleanName.toUpperCase())
+    ) {
+      return {
+        valid: false,
+        message:
+          'La Razón Social de la empresa es estrictamente obligatoria para emitir Factura (mínimo 3 caracteres). Ingrese una Razón Social auténtica válida ante SUNAT.',
+      };
+    }
+
+    if (!cleanAddress || cleanAddress.length < 3 || /^[-.\s]+$/.test(cleanAddress)) {
+      return {
+        valid: false,
+        message:
+          'La Dirección Fiscal de la empresa es estrictamente obligatoria para emitir Factura.',
+      };
+    }
+
+    if (
+      typeof totalAmount === 'number' &&
+      totalAmount >= SUNAT_BANCARIZACION_SOLES_LIMIT &&
+      (paymentMethod === 'CASH' || paymentMethod === 'MIXED' || Number(cashPaid) > 0)
+    ) {
+      return {
+        valid: false,
+        message: `Por Ley de Bancarización (Ley N° 28194 / D.L. N° 1529), toda Factura Electrónica por monto igual o superior a S/ ${SUNAT_BANCARIZACION_SOLES_LIMIT.toFixed(2)} (Total: S/ ${totalAmount.toFixed(2)}) debe pagarse íntegramente mediante un Medio de Pago del Sistema Financiero (Transferencia / Yape-Plin o Tarjeta, sin efectivo) para no perder el Crédito Fiscal ni la deducción ante SUNAT.`,
+      };
+    }
+  } else if (receiptType === 'BOLETA') {
+    const isHighValue = typeof totalAmount === 'number' && totalAmount >= 700;
+
+    if (cleanDoc.length === 11 && /^\d{11}$/.test(cleanDoc) && !isValidPeruvianRuc(cleanDoc)) {
+      return {
+        valid: false,
+        message:
+          'El RUC de 11 dígitos consignado en la Boleta no tiene un dígito verificador válido ante SUNAT.',
+      };
+    }
+
+    if (isHighValue) {
+      const resolvedDocType = resolveSunatCustomerDocType(cleanDoc, '-');
+      if (!cleanDoc || cleanDoc.length < 8 || cleanDoc.length > 12 || resolvedDocType === '-') {
+        return {
+          valid: false,
+          message: `Para Boletas de Venta con monto igual o superior a S/ 700.00 (Total: S/ ${Number(totalAmount).toFixed(2)}), SUNAT exige identificar al cliente con DNI, Carnet de Extranjería o RUC válido (8 a 12 caracteres).`,
+        };
+      }
+      if (
+        !cleanName ||
+        cleanName.length < 3 ||
+        FORBIDDEN_BOLETA_IDENTIFIED_NAMES.includes(cleanName.toUpperCase())
+      ) {
+        return {
+          valid: false,
+          message:
+            'Para Boletas de Venta con monto igual o superior a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
+        };
+      }
+    } else if (cleanDoc && cleanDoc !== '-') {
+      // Incluso en Boleta < S/ 700, si el cajero ingresa un documento opcional, este debe ser válido
+      // ante SUNAT Catálogo 06 para evitar que Nubefact / SUNAT OSE rechace el comprobante electrónico.
+      const resolvedDocType = resolveSunatCustomerDocType(cleanDoc, '-');
+      if (resolvedDocType === '-') {
+        return {
+          valid: false,
+          message:
+            'El documento opcional ingresado en la Boleta es inválido o está incompleto. Ingrese un DNI (8 dígitos), Carnet de Extranjería (9 dígitos), Pasaporte o RUC válido (11 dígitos), o déjelo vacío si la venta es menor a S/ 700.00.',
+        };
+      }
+      if (
+        !cleanName ||
+        cleanName.length < 3 ||
+        FORBIDDEN_BOLETA_IDENTIFIED_NAMES.includes(cleanName.toUpperCase())
+      ) {
+        return {
+          valid: false,
+          message:
+            'Cuando se consigna el documento del cliente en una Boleta Electrónica, debe ingresar también sus nombres y apellidos reales (no "Cliente Varios").',
+        };
+      }
+    }
+  }
+
+  return { valid: true };
 }
 
 /**

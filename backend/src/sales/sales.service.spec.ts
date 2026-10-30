@@ -115,6 +115,162 @@ describe('SalesService - Triple Vía Series & Fiscal Rules', () => {
         }),
       ).rejects.toThrow('Dirección Fiscal de la empresa es estrictamente obligatoria');
     });
+
+    it('debe rechazar Factura >= S/ 2,000.00 en efectivo por Ley de Bancarización (D.L. N° 1529)', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Saco de Arroz 50kg',
+              isActive: true,
+              currentStock: 100,
+              costPrice: 150,
+            }),
+          },
+        };
+        return callback(tx);
+      });
+
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.FACTURA,
+          customerDocument: '20100070970',
+          customerName: 'SUPERMERCADOS PERUANOS S.A.',
+          customerAddress: 'Calle Las Begonias 450, San Isidro',
+          paymentMethod: 'CASH',
+          cashPaid: 2000,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 10, unitPrice: 200, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('Ley de Bancarización (Ley N° 28194 / D.L. N° 1529)');
+    });
+
+    it('debe aceptar Factura >= S/ 2,000.00 cuando se paga íntegramente por TRANSFERENCIA o TARJETA bancarizada', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Saco de Arroz 50kg',
+              isActive: true,
+              currentStock: 100,
+              costPrice: 150,
+            }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          receiptSequence: {
+            upsert: vi.fn().mockResolvedValue({ currentNumber: 50 }),
+          },
+          sale: {
+            create: vi.fn().mockResolvedValue({
+              id: 'sale-factura-2000',
+              saleNumber: 50,
+              receiptType: ReceiptType.FACTURA,
+              series: 'F001',
+              correlativeNumber: 50,
+              totalAmount: 2000,
+              taxableBase: 1694.92,
+              igvAmount: 305.08,
+              cashPaid: 0,
+              digitalPaid: 2000,
+              changeAmount: 0,
+              items: [],
+            }),
+          },
+          kardexMovement: {
+            create: vi.fn().mockResolvedValue({}),
+          },
+        };
+        return callback(tx);
+      });
+      mockPrisma.storeConfig = {
+        findFirst: vi.fn().mockResolvedValue({ ruc: '10458923011' }),
+      };
+      mockBilling.issueReceipt.mockResolvedValue({
+        success: true,
+        hash: 'hash-f2000',
+        qrString: 'qr-f2000',
+        emissionStatus: 'ACCEPTED',
+      });
+      mockPrisma.sale = {
+        update: vi.fn().mockResolvedValue({
+          id: 'sale-factura-2000',
+          totalAmount: 2000,
+          items: [],
+        }),
+      };
+
+      const res = await salesService.createSale('user-1', {
+        cashShiftId: 'shift-1',
+        receiptType: ReceiptType.FACTURA,
+        customerDocument: '20100070970',
+        customerName: 'SUPERMERCADOS PERUANOS S.A.',
+        customerAddress: 'Calle Las Begonias 450, San Isidro',
+        paymentMethod: 'TRANSFER',
+        cashPaid: 0,
+        digitalPaid: 2000,
+        changeAmount: 0,
+        items: [{ productId: 'p1', quantity: 10, unitPrice: 200, isWholesaleApplied: false }],
+      });
+
+      expect(res.sale).toBeDefined();
+      expect(Number(res.sale.totalAmount)).toBe(2000);
+    });
+
+    it('debe rechazar Boleta con DNI incompleto de 7 dígitos para evitar rechazo en PSE', async () => {
+      mockPrisma.cashShift = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'shift-1',
+          status: 'OPEN',
+          cashRegister: { id: 'reg-1', identifier: 'POS-01', name: 'Caja 1' },
+        }),
+      };
+      mockPrisma.$transaction = vi.fn().mockImplementation(async (callback) => {
+        const tx = {
+          product: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'p1',
+              name: 'Galletas',
+              isActive: true,
+              currentStock: 10,
+              costPrice: 1,
+            }),
+          },
+        };
+        return callback(tx);
+      });
+
+      await expect(
+        salesService.createSale('user-1', {
+          cashShiftId: 'shift-1',
+          receiptType: ReceiptType.BOLETA,
+          customerDocument: '4589230', // 7 dígitos
+          customerName: 'Juan Perez',
+          paymentMethod: 'CASH',
+          cashPaid: 5,
+          digitalPaid: 0,
+          changeAmount: 0,
+          items: [{ productId: 'p1', quantity: 1, unitPrice: 5, isWholesaleApplied: false }],
+        }),
+      ).rejects.toThrow('El documento opcional ingresado en la Boleta es inválido');
+    });
   });
 
   describe('Hallazgo Medio 2.3: Consolidación de Productos Duplicados en una misma Venta', () => {

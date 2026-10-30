@@ -440,6 +440,25 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               : `${fullReceiptNumber} • Formato para tiqueteras térmicas`}
           </p>
 
+          {/* Banner de error / observación de SUNAT o PSE si fue rechazado o está pendiente */}
+          {(isEmissionRejected || isEmissionPending) && saleData?.billingMessage && (
+            <div
+              className={`mt-2.5 p-2 rounded-xl text-left text-xs border ${
+                isEmissionRejected
+                  ? 'bg-rose-950/60 border-rose-800 text-rose-300'
+                  : 'bg-amber-950/60 border-amber-800 text-amber-300'
+              }`}
+            >
+              <div className="font-bold flex items-center gap-1.5 mb-0.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>
+                  {isEmissionRejected ? 'Motivo de Observación / Rechazo PSE:' : 'Estado de Envío SUNAT:'}
+                </span>
+              </div>
+              <p className="font-mono text-[11px] leading-tight break-words">{saleData.billingMessage}</p>
+            </div>
+          )}
+
           {/* Selector de Ancho de Tiquetera y Auto-print */}
           <div className="mt-3 flex items-center justify-between gap-2 flex-wrap bg-slate-950/80 p-2 rounded-2xl border border-slate-800/80">
             <div className="flex items-center gap-1.5">
@@ -773,6 +792,13 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                     : 0;
 
               if (saleData.paymentMethod === 'CASH' || cashReceived > 0) {
+                const digitalAmt = Number(saleData.digitalPaid || 0);
+                const totalSaleAmt = Number(
+                  isCreditNote && creditNote?.totalAmount ? creditNote.totalAmount : saleData.totalAmount || 0,
+                );
+                const netPaid = (cashReceived + digitalAmt) - changeGiven;
+                const bcrpRoundingDiff = Number((netPaid - totalSaleAmt).toFixed(2));
+
                 return (
                   <div className="pt-1 border-t border-dotted border-slate-300 space-y-0.5 text-[10px] text-slate-600">
                     {cashReceived > 0 && (
@@ -785,6 +811,12 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
                       <div className="flex justify-between font-bold text-slate-900">
                         <span>VUELTO:</span>
                         <span>{formatCurrency(changeGiven)}</span>
+                      </div>
+                    )}
+                    {bcrpRoundingDiff < 0 && Math.abs(bcrpRoundingDiff) <= 0.10 && (
+                      <div className="flex justify-between text-slate-700 italic">
+                        <span>REDONDEO BCRP (LEY 29571):</span>
+                        <span className="font-semibold">{formatCurrency(bcrpRoundingDiff)}</span>
                       </div>
                     )}
                   </div>
@@ -825,6 +857,9 @@ export const ReceiptTicketModal: React.FC<ReceiptTicketModalProps> = ({
               {isEmissionRejected ? (
                 <div className="p-2 rounded bg-rose-50 border border-rose-300 text-[9px] text-rose-800 space-y-0.5">
                   <p className="font-extrabold uppercase">COMPROBANTE RECHAZADO / OBSERVADO</p>
+                  {saleData.billingMessage && (
+                    <p className="font-mono text-[8.5px] leading-tight break-words">{saleData.billingMessage}</p>
+                  )}
                   <p>Requiere corrección o reenvío por Administración para validez tributaria ante SUNAT.</p>
                 </div>
               ) : (

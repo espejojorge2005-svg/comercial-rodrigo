@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatCurrency, formatPeruDateTime, isValidPeruvianRuc } from '../../lib/utils.js';
+import {
+  formatCurrency,
+  formatPeruDateTime,
+  isValidPeruvianRuc,
+  isValidBoletaCustomerDoc,
+  isValidOptionalEmail,
+  SUNAT_BANCARIZACION_SOLES_LIMIT,
+} from '../../lib/utils.js';
 import {
   X,
   Building2,
@@ -133,6 +140,12 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
       'VARIOS',
     ];
 
+    const emailTrimmed = custEmail.trim();
+    if (emailTrimmed && !isValidOptionalEmail(emailTrimmed)) {
+      setError('El correo electrónico ingresado no tiene un formato válido (ejemplo: cliente@empresa.com).');
+      return;
+    }
+
     if (targetType === 'FACTURA') {
       if (!isValidPeruvianRuc(docTrimmed)) {
         setError(
@@ -149,9 +162,23 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
         return;
       }
     } else if (targetType === 'BOLETA') {
-      if (/^\d{11}$/.test(docTrimmed) && !isValidPeruvianRuc(docTrimmed)) {
-        setError('El RUC de 11 dígitos no tiene un dígito verificador válido ante SUNAT.');
-        return;
+      if (docTrimmed) {
+        if (!isValidBoletaCustomerDoc(docTrimmed)) {
+          setError(
+            'El documento para Boleta debe ser DNI (8 dígitos), Carnet de Extranjería (9 caracteres) o RUC válido (11 dígitos).',
+          );
+          return;
+        }
+        if (
+          nameTrimmed.length < 3 ||
+          nameTrimmed.toLowerCase() === 'cliente varios' ||
+          nameTrimmed.toLowerCase() === 'clientes varios'
+        ) {
+          setError(
+            'Si especifica un número de documento en la Boleta, debe consignar los nombres y apellidos reales del cliente.',
+          );
+          return;
+        }
       }
       if (isHighValueBoleta) {
         if (!docTrimmed || docTrimmed.length < 8 || docTrimmed.length > 12) {
@@ -301,6 +328,20 @@ export const ConvertReceiptModal: React.FC<ConvertReceiptModalProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Alerta de Bancarización D.L. 1529 si se canjea a Factura habiendo sido pagada en efectivo/mixto */}
+          {targetType === 'FACTURA' &&
+            totalNum >= SUNAT_BANCARIZACION_SOLES_LIMIT &&
+            (sale.paymentMethod === 'CASH' || sale.paymentMethod === 'MIXED') && (
+              <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-2.5 leading-relaxed">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-amber-200">Aviso D.L. N° 1529 (Ley de Bancarización):</strong> Esta venta fue registrada originalmente con{' '}
+                  <span className="font-semibold">{sale.paymentMethod === 'CASH' ? 'Efectivo' : 'Pago Mixto'}</span> por un importe de{' '}
+                  <span className="font-mono font-bold">{formatCurrency(totalNum)}</span> (≥ S/ 2,000.00). Para que su cliente pueda deducir costo, gasto o crédito fiscal ante SUNAT, las operaciones a partir de dicho monto deben pagarse obligatoriamente mediante medios financieros bancarizados (transferencia, tarjeta o depósito en cuenta).
+                </div>
+              </div>
+            )}
 
           {/* Formulario de Datos del Cliente */}
           <form onSubmit={handleConvert} id="convert-receipt-form" className="space-y-3">

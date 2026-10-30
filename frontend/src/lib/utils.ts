@@ -422,4 +422,54 @@ export function isValidPeruvianRuc(ruc: string, allowKnownDemoRucs = true): bool
   return checkDigit === parseInt(clean[10], 10);
 }
 
+/**
+ * Tope legal de la Ley de Bancarización en Perú (Ley N° 28194 / D.L. N° 1529: S/ 2,000.00)
+ */
+export const SUNAT_BANCARIZACION_SOLES_LIMIT = 2000;
+
+/**
+ * Valida formato de correo electrónico opcional para envío de comprobante electrónico
+ */
+export function isValidOptionalEmail(email?: string | null): boolean {
+  const clean = (email || '').trim();
+  if (!clean) return true;
+  if (clean.length > 120) return false;
+  return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(clean);
+}
+
+/**
+ * Resuelve el tipo de documento SUNAT Catálogo 06 ('6' RUC, '1' DNI, '4' CE, '7' Pasaporte, '-' sin doc/inválido)
+ */
+export function resolveSunatCustomerDocType(
+  customerDocument?: string | null,
+  fallbackEmpty: '-' | '0' | '6' = '-',
+): string {
+  const clean = (customerDocument || '').trim();
+  if (!clean || clean === '-') return fallbackEmpty;
+
+  if (/^\d{11}$/.test(clean)) {
+    return isValidPeruvianRuc(clean) ? '6' : fallbackEmpty;
+  }
+  if (/^\d{8}$/.test(clean)) {
+    return clean !== '00000000' ? '1' : fallbackEmpty;
+  }
+  if (/^\d{9}$/.test(clean)) {
+    return !/^0+$/.test(clean) ? '4' : fallbackEmpty;
+  }
+  if (/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{6,12}$/.test(clean)) {
+    return clean.toUpperCase().startsWith('CE') ? '4' : '7';
+  }
+  return fallbackEmpty;
+}
+
+/**
+ * Valida si un documento ingresado en una Boleta Electrónica es válido según Catálogo 06 SUNAT
+ */
+export function isValidBoletaCustomerDoc(doc?: string | null): boolean {
+  const clean = (doc || '').trim();
+  if (!clean || clean === '-') return false;
+  return resolveSunatCustomerDocType(clean, '-') !== '-';
+}
+
+
 

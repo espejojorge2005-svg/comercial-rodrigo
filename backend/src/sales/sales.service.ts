@@ -34,6 +34,7 @@ import {
   getSunatCompliantEmissionDate,
   getSunatCreditNoteDeadline,
   isDiscreteUnit,
+  validateFiscalCustomerAndPayment,
 } from './utils/sales-fiscal.util.js';
 
 export {
@@ -110,43 +111,17 @@ export class SalesService {
       );
     }
 
-    // Validación preliminar estricta para Factura Electrónica (Algoritmo Módulo 11 de SUNAT)
-    if (receiptType === ReceiptType.FACTURA) {
-      const ruc = (dto.customerDocument || '').trim();
-
-      if (!isValidPeruvianRuc(ruc)) {
-        throw new BadRequestException(
-          'Para emitir Factura Electrónica se exige un RUC auténtico de 11 dígitos (que inicie con 10, 20, 15, 16 o 17) con dígito verificador válido ante SUNAT.',
-        );
-      }
-
-      const cleanCustomerName = (dto.customerName || '').trim();
-      const forbiddenPlaceholders = [
-        'CLIENTE VARIOS',
-        'CLIENTES VARIOS',
-        'EMPRESA',
-        'EMPRESA SAC',
-        'EMPRESA S.A.C.',
-        'EMPRESA SRL',
-        'EMPRESA S.R.L.',
-        'RUC',
-        'SIN NOMBRE',
-        'VARIOS',
-      ];
-      if (
-        !cleanCustomerName ||
-        cleanCustomerName.length < 2 ||
-        forbiddenPlaceholders.includes(cleanCustomerName.toUpperCase())
-      ) {
-        throw new BadRequestException(
-          'La Razón Social de la empresa es estrictamente obligatoria para emitir Factura. Ingrese una Razón Social auténtica válida ante SUNAT.',
-        );
-      }
-
-      if (!dto.customerAddress || dto.customerAddress.trim().length < 3) {
-        throw new BadRequestException(
-          'La Dirección Fiscal de la empresa es estrictamente obligatoria para emitir Factura.',
-        );
+    // Validación preliminar estricta para Factura Electrónica y formato de correo
+    if (receiptType === ReceiptType.FACTURA || dto.customerEmail) {
+      const prelimCheck = validateFiscalCustomerAndPayment({
+        receiptType: receiptType === ReceiptType.FACTURA ? 'FACTURA' : 'NOTA_VENTA',
+        customerDocument: dto.customerDocument,
+        customerName: dto.customerName,
+        customerAddress: dto.customerAddress,
+        customerEmail: dto.customerEmail,
+      });
+      if (!prelimCheck.valid) {
+        throw new BadRequestException(prelimCheck.message);
       }
     }
 
@@ -212,8 +187,8 @@ export class SalesService {
             throw new BadRequestException('La cantidad de cada producto debe ser mayor a 0');
           }
           const price = Number(item.unitPrice);
-          if (price < 0) {
-            throw new BadRequestException('El precio unitario no puede ser negativo');
+          if (price <= 0 || Number.isNaN(price)) {
+            throw new BadRequestException('El precio unitario debe ser mayor a S/ 0.00');
           }
 
           if (consolidatedMap.has(item.productId)) {
@@ -319,6 +294,11 @@ export class SalesService {
           }
 
           const subtotalItem = Number((item.quantity * item.unitPrice).toFixed(2));
+          if (subtotalItem < 0.01) {
+            throw new BadRequestException(
+              `El importe subtotal del producto "${product.name}" debe ser al menos S/ 0.01 para emisión válida.`,
+            );
+          }
           // Cálculo fiscal línea por línea (Catálogo 07 SUNAT / Redondeo a 2 decimales por producto)
           const itemValorTotal = Number((subtotalItem / 1.18).toFixed(2));
           const itemIgv = Number((subtotalItem - itemValorTotal).toFixed(2));
@@ -396,33 +376,19 @@ export class SalesService {
           }
         }
 
-        // Validación fiscal para Boletas de Venta: Exigencia de DNI, Carnet de Extranjería o RUC si es >= S/ 700.00
-        if (receiptType === ReceiptType.BOLETA && totalCalculated >= 700) {
-          const doc = (dto.customerDocument || '').trim();
-          // Se permite DNI (8), Carnet de Extranjería / Pasaporte (9 a 12) o RUC (11)
-          if (doc.length < 8 || doc.length > 12) {
-            throw new BadRequestException(
-              `Para Boletas de Venta con monto igual o superior a S/ 700.00 (Total: S/ ${totalCalculated.toFixed(2)}), SUNAT exige identificar al cliente con DNI, Carnet de Extranjería o RUC válido (8 a 12 caracteres).`,
-            );
-          }
-          if (doc.length === 11 && !isValidPeruvianRuc(doc)) {
-            throw new BadRequestException(
-              'El RUC de 11 dígitos consignado en la Boleta no tiene un dígito verificador válido ante SUNAT.',
-            );
-          }
-          const customerNameUpper = (dto.customerName || '').trim().toUpperCase();
-          if (!dto.customerName || dto.customerName.trim().length < 3 || customerNameUpper === 'CLIENTE VARIOS' || customerNameUpper === 'CLIENTES VARIOS') {
-            throw new BadRequestException(
-              'Para Boletas de Venta con monto igual o superior a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
-            );
-          }
-        } else if (receiptType === ReceiptType.BOLETA && dto.customerDocument) {
-          const doc = dto.customerDocument.trim();
-          if (doc.length === 11 && !isValidPeruvianRuc(doc)) {
-            throw new BadRequestException(
-              'El RUC de 11 dígitos consignado en la Boleta no tiene un dígito verificador válido ante SUNAT.',
-            );
-          }
+        // Validación fiscal integral SUNAT (Boletas >= y < S/ 700, Facturas y Ley de Bancarización D.L. N° 1529 >= S/ 2,000.00)
+        const fiscalValidation = validateFiscalCustomerAndPayment({
+          receiptType,
+          totalAmount: totalCalculated,
+          paymentMethod: dto.paymentMethod,
+          cashPaid: cashPaidNum,
+          customerDocument: dto.customerDocument,
+          customerName: dto.customerName,
+          customerAddress: dto.customerAddress,
+          customerEmail: dto.customerEmail,
+        });
+        if (!fiscalValidation.valid) {
+          throw new BadRequestException(fiscalValidation.message);
         }
 
         // 2. Control Concurrente de Correlativos Estrictamente Consecutivos (Bloqueo a nivel de fila)
@@ -599,6 +565,7 @@ export class SalesService {
     // ETAPA 2: INTEGRACIÓN CON MOTOR DE FACTURACIÓN (FUERA DE LA TRANSACCIÓN DB)
     // =========================================================================
     let finalSale: any = txResult.sale;
+    let billingMessage: string | null = null;
 
     if (txResult.isFiscal) {
       const storeConfig = await this.prisma.storeConfig.findFirst();
@@ -624,6 +591,7 @@ export class SalesService {
             unitPrice: vi.unitPrice,
             subtotal: vi.subtotalItem,
             unitType: vi.product.unitType,
+            barcode: vi.product.barcode,
           })),
         });
 
@@ -663,12 +631,18 @@ export class SalesService {
             billingRes.emissionStatus === 'PENDING'
               ? EmissionStatus.PENDING
               : EmissionStatus.REJECTED;
+          billingMessage = billingRes.message || null;
 
           finalSale = await this.prisma.sale.update({
             where: { id: txResult.sale.id },
             data: {
               emissionStatus: targetStatus,
-            },
+              ...(billingRes.hash ? { hash: billingRes.hash } : {}),
+              ...(billingRes.qrString ? { qrString: billingRes.qrString } : {}),
+              ...(billingRes.externalId ? { externalId: billingRes.externalId } : {}),
+              ...(billingRes.pdfUrl ? { pdfUrl: billingRes.pdfUrl } : {}),
+              ...(billingRes.xmlUrl ? { xmlUrl: billingRes.xmlUrl } : {}),
+            } as any,
             include: {
               items: {
                 include: {
@@ -690,6 +664,9 @@ export class SalesService {
           );
         }
       } catch (billingErr: any) {
+        billingMessage =
+          billingErr?.message ||
+          'En cola de transmisión electrónica por intermitencia de conexión con el PSE.';
         // En caso de caída de conexión o timeout con Nubefact, preservar en PENDING para retransmisión
         finalSale = await this.prisma.sale.update({
           where: { id: txResult.sale.id },
@@ -724,6 +701,7 @@ export class SalesService {
         : `Nota de venta interna registrada con éxito: ${txResult.fullReceiptNumber}`,
       sale: {
         ...finalSale,
+        ...(billingMessage ? { billingMessage } : {}),
         totalAmount: Number(finalSale.totalAmount),
         taxableBase: Number(finalSale.taxableBase),
         igvAmount: Number(finalSale.igvAmount),
@@ -1088,6 +1066,7 @@ export class SalesService {
             unitPrice: Number(i.unitPrice),
             subtotal: Number(i.subtotal),
             unitType: i.product.unitType,
+            barcode: i.product.barcode,
           })),
           createdAt: new Date(),
         });
@@ -1122,6 +1101,9 @@ export class SalesService {
             totalAmount: Number(updatedNc.totalAmount),
             hash: updatedNc.hash,
             qrString: updatedNc.qrString,
+            pdfUrl: updatedNc.pdfUrl,
+            xmlUrl: updatedNc.xmlUrl,
+            cdrUrl: updatedNc.cdrUrl,
             emissionStatus: updatedNc.emissionStatus,
             createdAt: updatedNc.createdAt,
           };
@@ -1206,6 +1188,10 @@ export class SalesService {
       };
     }
 
+    const ncDateCheck = getSunatCompliantEmissionDate(
+      cn.createdAt || new Date(),
+      sale.createdAt || null,
+    );
     const storeConfig = await this.prisma.storeConfig?.findFirst?.();
     const billingRes = await this.billingService.issueCreditNote({
       saleId: sale.id,
@@ -1236,8 +1222,9 @@ export class SalesService {
         unitPrice: Number(i.unitPrice),
         subtotal: Number(i.subtotal),
         unitType: i.product.unitType,
+        barcode: i.product.barcode,
       })),
-      createdAt: new Date(),
+      createdAt: ncDateCheck.emissionDate,
     });
 
     if (billingRes.success) {
@@ -1336,62 +1323,22 @@ export class SalesService {
 
     const totalCalculated = Number(sale.totalAmount);
 
-    // 1. Validaciones tributarias según SUNAT
+    // 1. Validaciones tributarias según SUNAT (incluyendo Ley de Bancarización D.L. N° 1529)
     const trimmedDoc = customerDocument ? customerDocument.trim() : '';
     const trimmedName = customerName ? customerName.trim() : '';
 
-    if (targetReceiptType === ReceiptType.FACTURA) {
-      if (!isValidPeruvianRuc(trimmedDoc)) {
-        throw new BadRequestException(
-          'Para emitir una Factura Electrónica se requiere un RUC auténtico de 11 dígitos (que inicie con 10, 20, 15 o 17) con dígito verificador válido ante SUNAT.',
-        );
-      }
-      const cleanCustomerName = trimmedName;
-      const forbiddenPlaceholders = [
-        'CLIENTE VARIOS',
-        'CLIENTES VARIOS',
-        'EMPRESA',
-        'EMPRESA SAC',
-        'EMPRESA S.A.C.',
-        'EMPRESA SRL',
-        'EMPRESA S.R.L.',
-        'RUC',
-        'SIN NOMBRE',
-        'VARIOS',
-      ];
-      if (
-        !cleanCustomerName ||
-        cleanCustomerName.length < 2 ||
-        forbiddenPlaceholders.includes(cleanCustomerName.toUpperCase())
-      ) {
-        throw new BadRequestException(
-          'Para Factura Electrónica es obligatorio ingresar la Razón Social auténtica de la empresa.',
-        );
-      }
-      if (!customerAddress || customerAddress.trim().length < 3) {
-        throw new BadRequestException(
-          'La Dirección Fiscal de la empresa es estrictamente obligatoria para emitir Factura Electrónica.',
-        );
-      }
-    } else if (targetReceiptType === ReceiptType.BOLETA) {
-      if (trimmedDoc.length === 11 && !isValidPeruvianRuc(trimmedDoc)) {
-        throw new BadRequestException(
-          'El RUC de 11 dígitos consignado en la Boleta no tiene un dígito verificador válido ante SUNAT.',
-        );
-      }
-      if (totalCalculated >= 700) {
-        if (!trimmedDoc || trimmedDoc.length < 8 || trimmedDoc.length > 12) {
-          throw new BadRequestException(
-            'Para Boletas con monto mayor o igual a S/ 700.00, es obligatorio consignar el DNI, Carnet de Extranjería o RUC del cliente según normativa SUNAT (8 a 12 caracteres).',
-          );
-        }
-        const trimmedNameUpper = trimmedName.toUpperCase();
-        if (!trimmedName || trimmedName.length < 3 || trimmedNameUpper === 'CLIENTE VARIOS' || trimmedNameUpper === 'CLIENTES VARIOS') {
-          throw new BadRequestException(
-            'Para Boletas con monto mayor o igual a S/ 700.00, se requieren los nombres y apellidos completos del cliente.',
-          );
-        }
-      }
+    const convertValidation = validateFiscalCustomerAndPayment({
+      receiptType: targetReceiptType,
+      totalAmount: totalCalculated,
+      paymentMethod: sale.paymentMethod,
+      cashPaid: Number(sale.cashPaid ?? 0),
+      customerDocument: trimmedDoc,
+      customerName: trimmedName,
+      customerAddress,
+      customerEmail,
+    });
+    if (!convertValidation.valid) {
+      throw new BadRequestException(convertValidation.message);
     }
 
     // 2. Determinar la Caja Registradora para la Serie
@@ -1475,10 +1422,26 @@ export class SalesService {
         const correlativeNumber = sequence.currentNumber;
         const fullReceiptNumber = `${series}-${String(correlativeNumber).padStart(8, '0')}`;
 
-        // Si el ticket original aún está dentro del plazo SUNAT (0-3 días) y respeta cronología,
-        // preservar su fecha; si es antiguo, usar fecha actual para evitar rechazo SUNAT 2324.
-        const dateCheck = getSunatCompliantEmissionDate(sale.createdAt || new Date());
-        const fiscalEmissionDate = dateCheck.wasAdjusted ? new Date() : sale.createdAt || new Date();
+        // Si el ticket original aún está dentro del plazo SUNAT (0-3 días) y respeta la cronología
+        // respecto al comprobante previo en la misma serie, preservar su fecha; de lo contrario ajustar
+        // para evitar rechazos SUNAT (Error 2324 / inconsistencia cronológica de serie).
+        const previousInSeries =
+          typeof tx.sale?.findFirst === 'function'
+            ? await tx.sale.findFirst({
+                where: {
+                  series,
+                  correlativeNumber: { lt: correlativeNumber },
+                },
+                orderBy: { correlativeNumber: 'desc' },
+                select: { createdAt: true },
+              })
+            : null;
+
+        const dateCheck = getSunatCompliantEmissionDate(
+          sale.createdAt || new Date(),
+          previousInSeries?.createdAt || null,
+        );
+        const fiscalEmissionDate = dateCheck.emissionDate;
 
         const updatedSale = await tx.sale.update({
           where: { id: sale.id },
@@ -1531,6 +1494,7 @@ export class SalesService {
 
     // 5. Emisión Electrónica con el Motor PSE / Mock SUNAT (fuera de la transacción DB)
     let finalSale: any = txResult.updatedSale;
+    let convertBillingMessage: string | null = null;
     const storeConfig = await this.prisma.storeConfig.findFirst();
 
     try {
@@ -1555,6 +1519,7 @@ export class SalesService {
           unitPrice: Number(item.unitPrice),
           subtotal: Number(item.subtotal),
           unitType: item.product.unitType,
+          barcode: item.product.barcode,
         })),
         createdAt: txResult.fiscalEmissionDate,
       });
@@ -1594,12 +1559,18 @@ export class SalesService {
           billingRes.emissionStatus === 'PENDING'
             ? EmissionStatus.PENDING
             : EmissionStatus.REJECTED;
+        convertBillingMessage = billingRes.message || null;
 
         finalSale = await this.prisma.sale.update({
           where: { id: sale.id },
           data: {
             emissionStatus: targetStatus,
-          },
+            ...(billingRes.hash ? { hash: billingRes.hash } : {}),
+            ...(billingRes.qrString ? { qrString: billingRes.qrString } : {}),
+            ...(billingRes.externalId ? { externalId: billingRes.externalId } : {}),
+            ...(billingRes.pdfUrl ? { pdfUrl: billingRes.pdfUrl } : {}),
+            ...(billingRes.xmlUrl ? { xmlUrl: billingRes.xmlUrl } : {}),
+          } as any,
           include: {
             items: {
               include: {
@@ -1621,6 +1592,8 @@ export class SalesService {
         );
       }
     } catch (err: any) {
+      convertBillingMessage =
+        err?.message || 'En cola de transmisión electrónica por intermitencia con el PSE.';
       this.logger.error(
         `[convertSaleReceipt] Error emitiendo con PSE/SUNAT para canje ${txResult.fullReceiptNumber}: ${err.message}. Preservado en PENDING.`,
       );
@@ -1629,7 +1602,9 @@ export class SalesService {
     return {
       message: `Ticket ${originalTicketNumber} canjeado exitosamente por ${targetReceiptType === ReceiptType.BOLETA ? 'Boleta Electrónica' : 'Factura Electrónica'} ${finalSale.fullReceiptNumber}`,
       originalTicketNumber,
-      sale: finalSale,
+      sale: convertBillingMessage
+        ? { ...finalSale, billingMessage: convertBillingMessage }
+        : finalSale,
     };
   }
 
